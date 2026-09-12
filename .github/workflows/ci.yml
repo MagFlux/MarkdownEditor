@@ -1,0 +1,125 @@
+# CI for MarkdownEditor — a Tauri v2 desktop app (Rust shell + JS editor).
+#
+# Two jobs:
+#   1. test  — runs the full Node/Playwright verification suite on Ubuntu.
+#              Fast feedback; no Rust required. Runs on every push + PR.
+#   2. build — builds the platform installer(s), one per OS, and appends the
+#              artifacts to a single *draft* GitHub Release named after the
+#              Tauri app version (v0.1.0 today). Runs only after `test` is
+#              green, on pushes to `main` and on manual "Run workflow".
+#
+# Releases are created as DRAFTS on purpose: nothing is published until you
+# open the Release page on GitHub and hit "Publish". This keeps CI safe to
+# run on every push without spamming your followers / triggering auto-updates.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The build job's token must be able to create the release + upload assets.
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------ tests
+  test:
+    name: Test (round-trip + Playwright UI + native-path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Playwright needs a browser. `--with-deps` pulls the system libs on the
+      # Linux runner (WebKitGTK-style deps are irrelevant here — this is just
+      # headless Chromium for the editor UI tests).
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Cheap → expensive. Each Playwright script self-builds (npx vite build)
+      # and serves its own preview on a dedicated port, so they run cleanly.
+      - name: Round-trip invariant (21 cases)
+        run: npm test
+      - name: UI smoke test
+        run: npm run verify
+      - name: Undo/redo UI test (11 cases)
+        run: npm run verify-undo
+      - name: Save / open / close-guard UI test (24 cases)
+        run: npm run verify-save
+      - name: Native Tauri IPC path (32 cases)
+        run: npm run verify-tauri
+
+  # ----------------------------------------------------- build + release
+  build:
+    name: Build ${{ matrix.os }} + release
+    needs: test
+    # Only build when it's a push to main or someone hits the manual button —
+    # skip from PRs so we don't churn draft releases on every pull request.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: "--bundles nsis,msi"
+          - os: macos-14
+            bundles: "--bundles dmg"
+          - os: ubuntu-22.04
+            bundles: "--bundles appimage,deb"
+    runs-on: ${{ matrix.os }}
+    concurrency:
+      # Don't let parallel release-upload jobs collide on the same tag.
+      group: release-${{ github.ref }}-${{ matrix.os }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # OS-level build prerequisites (Tauri/WebKitGTK, WebView2, NSIS).
+      # These are "why" comments: the base GitHub runners do NOT ship them.
+      - name: Linux deps (WebKitGTK 4.1 + GTK3 + tray + rsvg)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Windows deps (NSIS for the installer)
+        if: matrix.os == 'windows-latest'
+        run: choco install nsis -y --no-progress
+
+      - name: Build Tauri + publish draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          project: src-tauri
+          tauriScript: tauri
+          args: ${{ matrix.bundles }}
+          tagName: v__VERSION__
+          releaseName: "Markdown Editor ${{ matrix.os }}"
+          releaseBody: |
+            Markdown Editor desktop build.
+
+            Installers for this OS are listed under **Assets** on the right.
+            Pick the one that matches your platform/arch.
+
+            Built by GitHub Actions from `main`.
+          releaseDraft: true
+          prerelease: false
+          artifactName: markdown-editor
