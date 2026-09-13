@@ -108,8 +108,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          project: src-tauri
-          tauriScript: tauri
+          # The Tauri Rust project lives in src-tauri/ (config + Cargo.toml).
+          projectPath: src-tauri
+          # Run the CLI via npx so it resolves to @tauri-apps/cli from node_modules
+          # (@tauri-apps/cli is installed by `npm ci` above; `tauri` isn't on PATH).
+          tauriScript: npx tauri
           args: ${{ matrix.bundles }}
           tagName: v__VERSION__
           releaseName: "Markdown Editor ${{ matrix.os }}"
