@@ -69,6 +69,8 @@ jobs:
         run: npm run verify-undo
       - name: Save / open / close-guard UI test (24 cases)
         run: npm run verify-save
+      - name: Toolbar active-states track the caret (18 cases)
+        run: npm run verify-toolbar
       - name: Native Tauri IPC path (32 cases)
         run: npm run verify-tauri
 

@@ -112,7 +112,9 @@ body {
    tabbar no matter how high the tabbar's own z-index is. Trapping it at 0
    guarantees the tabbar (z-index 20, root) is always above. */
 .editor-scroll { flex: 1 1 auto; overflow: auto; position: relative; z-index: 0; }
-.editor-col { position: relative; max-width: 880px; min-height: 100%; margin: 0 auto; }
+/* max-width matches .preview (62rem) so edit-only and preview-only modes have identical
+   left/right margins (both are `margin: 0 auto` with the same 28px horizontal padding). */
+.editor-col { position: relative; max-width: 62rem; min-height: 100%; margin: 0 auto; }
 .editor, .input {
   padding: 14px 28px 32vh 28px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;

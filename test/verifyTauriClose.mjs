@@ -192,11 +192,10 @@ await scenario("A2: SAVE → picker cancelled → stays open", async ({ page, st
   ok("A2b picker cancel: nothing written to disk", S.writes.length === 0, JSON.stringify(S.writes));
   const val = await page.evaluate(() => window.editor.activeTab && window.editor.activeTab.input.value);
   ok("A2c picker cancel: tab intact with content", val === "keep me", JSON.stringify({ val }));
-  // A "Save cancelled" message modal should now be showing (with an OK button).
+  // Cancelling the picker must NOT pop a redundant "Save cancelled" message —
+  // the cancel already communicated it. Assert no extra info/error modal remains.
   const hasCancelMsg = !!(await page.$(".savedlg .savedlg-msg"));
-  ok("A2d save-cancelled message modal shown in-app", hasCancelMsg);
-  // Dismiss it.
-  await byRole(page, "button", "OK", true).first().click({ timeout: 3000 }).catch(() => {});
+  ok("A2d picker cancel: no redundant 'save cancelled' message modal", hasCancelMsg === false);
 });
 
 // ---- B: dirty, choose CANCEL at save-discard → window stays, nothing written ----

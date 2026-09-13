@@ -289,11 +289,11 @@ export function createApp(root) {
     <button class="btn" data-action="redo" title="Redo — Ctrl+Shift+Z / Ctrl+Y / Ctrl+&rarr;">${icons.redo}</button>
     <span class="sep"></span>
     <button class="btn" data-action="newtab" title="New tab — ctrl+click anywhere for new">${icons.plus}</button>
-    <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
-    <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>
-    <span class="sep"></span>
     <button class="btn" data-action="open" title="Open file into new tab">${icons.open}</button>
-    <button class="btn" data-action="save" title="Save — Ctrl+S">${icons.save}</button>`;
+    <button class="btn" data-action="save" title="Save — Ctrl+S">${icons.save}</button>
+    <span class="spacer"></span>
+    <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
+    <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>`;
   app.appendChild(toolbar);
 
   /* ---- tab bar ---- */
@@ -445,7 +445,16 @@ export function createApp(root) {
     doc.input.addEventListener("mousedown", () => { if (doc !== activeTab) { activate(doc); } });
     doc.input.addEventListener("click", (ev) => {
       if (ev.ctrlKey || ev.metaKey) openAtCaret();
-      else if (doc === activeTab) requestAnimationFrame(() => { if (doc === activeTab) updateStatus(doc); });
+      else if (doc === activeTab) requestAnimationFrame(() => { if (doc === activeTab) { updateStatus(doc); updateActiveStates(); } });
+    });
+    // Mouse caret placement. On WebKitGTK the "select" event is unreliable (see
+    // the select handler above) and "selectionchange" may not fire either, so we
+    // also refresh on mouseup (always delivered) — after a frame so the selection
+    // has settled. This is what makes the toolbar light up the instant you click
+    // the caret onto formatted text, without having to *change* the text.
+    doc.input.addEventListener("mouseup", () => {
+      if (doc !== activeTab) return;
+      requestAnimationFrame(() => { if (doc === activeTab) { updateStatus(doc); updateActiveStates(); } });
     });
     doc.tab.querySelector(".tname").addEventListener("click", () => activate(doc));
     // Middle-click (button 1) closes the tab, like most editors/browsers.
@@ -1510,8 +1519,8 @@ export function createApp(root) {
    * Why an in-app picker and not the native `save` dialog: tauri-plugin-dialog
    * hands the parent window to rfd on Linux, but rfd's GTK3 backend never calls
    * set_transient_for / CENTER_ON_PARENT, so the OS file-chooser opens wherever
-   * the window manager places it — not over the app. The picker (and the
-   * "Save cancelled" / "Save failed" messages) are rendered inside the webview
+    * the window manager places it — not over the app. The picker (and the
+    * "Save failed" / "Open failed" error modals) are rendered inside the webview
    * and are therefore centered on the app by construction.
    */
   async function save(doc) {
@@ -1534,13 +1543,8 @@ export function createApp(root) {
           filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
         });
         if (!p) {
-          // User cancelled the in-app Save-As picker.
-          await messageModal({
-            title: "Save",
-            message: "Save cancelled — changes not saved.",
-            buttons: [{ label: "OK", kind: "primary", value: "ok" }],
-            kind: "info",
-          });
+          // User cancelled the in-app Save-As picker. No extra prompt — the cancel
+          // already communicates it; just leave the tab dirty and stay put.
           return false;
         }
         await tauriWriteTextFile(p, t);
@@ -1677,6 +1681,36 @@ export function createApp(root) {
     if (k === "t" && !ev.shiftKey) { ev.preventDefault(); newTab("Untitled", ""); return; }
   }
   window.addEventListener("keydown", onGlobalKeyDown);
+
+  // Toolbar active-states must track the caret the INSTANT it moves — on a real
+  // click, arrow/Home/End, paste, undo, etc. — and reflect the formatting at the
+  // caret WITHOUT requiring the text to change. The per-textarea "select"/"keyup"/
+  // "mouseup" catches are each individually unreliable on WebKitGTK (the select
+  // event often never fires there), so the one signal that covers every caret
+  // move regardless of *how* it moved is the document-level selectionchange
+  // event (fired for all text-inputs, selection, caret moves, programmatic
+  // setSelectionRange). We route it to the active tab only, per-frame, so it
+  // stays cheap even when a dialog steals focus.
+  document.addEventListener("selectionchange", () => {
+    const d = activeTab;
+    if (!d) return;
+    // updateActiveStates reads ONLY d.input.selectionStart (the active textarea's
+    // caret), so this is always correct: the buttons reflect the caret of the
+    // active editor, whether the caret moved by click, arrow, paste, undo, tab
+    // switch, or programmatic setSelectionRange — and it fires with NO text
+    // change. Route per-frame to a single queued tick to stay cheap.
+    scheduleButtonUpdate(d);
+  });
+  function scheduleButtonUpdate(d) {
+    if (d.__btnRaf) return;
+    d.__btnRaf = requestAnimationFrame(() => {
+      d.__btnRaf = 0;
+      if (d !== activeTab) return; // a newer tab was activated meanwhile
+      updateStatus(d);
+      updateActiveStates();
+      setUndoRedoState();
+    });
+  }
 
   // Editor-local bindings (only meaningful inside the source textarea).
   async function onKeyDown(ev) {

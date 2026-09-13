@@ -33,6 +33,9 @@ npm test               # 21 round-trip renderer cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
+npm run verify-toolbar # toolbar active-states track the caret (18 cases) — bold/underline/
+                        # code/H2/plain + click, arrow-key, programmatic, and tab-switch
+                        # paths, all with NO text change required.
 npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                         # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
@@ -209,6 +212,17 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   adding a new native feature, add a browser fallback branch.
 - Test-first: when adding editor behavior, extend the relevant `test/verify*.mjs` or
   `test/test.mjs` and confirm it stays green before considering the task done.
+
+- **Toolbar active-states must track the caret, not just text changes** (do not
+  regress). The per-textarea `select` event is unreliable on WebKitGTK — it can
+  never fire for a click or arrow-key move there — and the `click` handler
+  historically refreshed only the status bar, *not* the buttons, so the B/I/U/S/
+  link and H1–H3/quote/list/table buttons stayed stale until the text mutated.
+  The live-tracking fix is a document-level **`selectionchange`** listener on the
+  active tab (fires for every caret move: click, arrows, paste, undo, tab switch),
+  a **`mouseup` + `requestAnimationFrame`** fallback, and re-sync on tab switch via
+  `activate()` → `refresh()`. Do not "simplify" back to `select`/`keyup` only;
+  the WebKitGTK app will regress to stale buttons.
 - All dialogs (save/cancel prompts, open, and any error/info feedback) render
   **in-app** via `showModalBase`/`messageModal`/`pickPath` — NOT `alert`/`confirm`/
   `prompt` (unreliable in WebKitGTK) and NOT the native `tauri-plugin-dialog`
