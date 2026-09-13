@@ -119,12 +119,13 @@ jobs:
           tauriScript: npx tauri
           args: ${{ matrix.bundles }}
           tagName: v__VERSION__
-          releaseName: "Markdown Editor ${{ matrix.os }}"
+          releaseName: "Markdown Editor"
           releaseBody: |
-            Markdown Editor desktop build.
+            Cross-platform installers:
 
-            Installers for this OS are listed under **Assets** on the right.
-            Pick the one that matches your platform/arch.
+            - **Windows**: `*_x64-setup.exe` (NSIS) / `*_x64_en-US.msi`
+            - **macOS**: `*_aarch64.dmg` (Apple Silicon)
+            - **Linux**: `*_amd64.AppImage` / `*_amd64.deb`
 
             Built by GitHub Actions from `main`.
           releaseDraft: true
