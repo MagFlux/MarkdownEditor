@@ -73,6 +73,8 @@ jobs:
         run: npm run verify-toolbar
       - name: Rich-paste HTML→Markdown (18 cases)
         run: npm run verify-paste
+      - name: Export-as-PDF/HTML (30 cases)
+        run: npm run verify-export
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 

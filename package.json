@@ -13,6 +13,7 @@
     "verify-save": "node test/verifySaveOpen.mjs",
     "verify-toolbar": "node test/verifyToolbar.mjs",
     "verify-paste": "node test/verifyPaste.mjs",
+    "verify-export": "node test/verifyExport.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
@@ -28,6 +29,8 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "marked": "^18.0.12"
   }
 }

@@ -9,9 +9,18 @@ import { marked } from "marked";
    browser (they only touch window.__TAURI_INTERNALS__ when called), so importing
    them here is browser-safe. All uses below stay guarded by isTauri(). */
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
+import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile } from "@tauri-apps/plugin-fs";
 import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
 import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
+
+/* Export libraries — STATIC imports, same invariant as the Tauri plugins above:
+   they must hoist into the single main bundle (no runtime code-split chunks),
+   or the Tauri GTK webview fails to load them and export would silently die.
+   Both are pure client-side JS (render to canvas / PDF bytes) with no native
+   counterpart, so importing them in a plain browser is safe too. All uses stay
+   guarded so the browser fallback (Blob download) still works under `vite preview`. */
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -456,7 +465,14 @@ export function createApp(root) {
     <button class="btn" data-action="save" title="Save — Ctrl+S">${icons.save}</button>
     <span class="spacer"></span>
     <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
-    <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>`;
+    <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>
+    <span class="menu-wrap">
+      <button class="btn" data-action="menu" data-menu-open="false" title="More actions" aria-haspopup="true" aria-expanded="false">${icons.menu}</button>
+      <div class="menu-dropdown" role="menu" aria-label="More actions">
+        <button class="menu-item" data-menu="pdf" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as PDF&hellip;</span></button>
+        <button class="menu-item" data-menu="html" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as HTML&hellip;</span></button>
+      </div>
+    </span>`;
   app.appendChild(toolbar);
 
   /* ---- tab bar ---- */
@@ -1704,7 +1720,173 @@ export function createApp(root) {
     * "Save failed" / "Open failed" error modals) are rendered inside the webview
    * and are therefore centered on the app by construction.
    */
-  async function save(doc) {
+   /* ---- Export helpers (PDF / HTML) ----
+      Both take the current document, render it to an offscreen `.preview` node,
+      and either rasterize (PDF) or ship the DOM + standalone CSS (HTML). The
+      preview CSS is duplicated below so a standalone .html file looks like the
+      on-screen preview without needing the app's stylesheet at all — a plain
+      HTML export should be self-contained. */
+   const EXPORT_PREVIEW_CSS = `
+body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px;
+  line-height:1.65;color:#1a1d21;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#fff}
+.preview h1{font-size:30px;line-height:1.25;margin:.2em 0 .5em;font-weight:700}
+.preview h2{font-size:24px;margin:.9em 0 .5em;font-weight:700}
+.preview h3{font-size:19px;margin:.9em 0 .4em;font-weight:600}
+.preview h4{font-size:16px;margin:.9em 0 .4em;font-weight:600}
+.preview p{margin:.55em 0}
+.preview code{background:#eef1f5;color:#c25e4a;padding:1px 5px;border-radius:5px;font-size:.9em}
+.preview pre{background:#eef1f5;padding:12px 14px;border-radius:8px;overflow:auto;margin:.6em 0}
+.preview pre code{background:none;padding:0;color:#1a1d21}
+.preview blockquote{border-left:3px solid #2f6feb;margin:.6em 0;padding:2px 14px;color:#4a5568}
+.preview a{color:#2f6feb}
+.preview hr{border:0;border-top:1px solid #e2e4e9;margin:1em 0}
+.preview ul,.preview ol{padding-left:1.6em;margin:.5em 0}
+.preview li{margin:.15em 0}
+.preview img{max-width:100%;border-radius:6px}
+.preview table{border-collapse:collapse;margin:.7em 0;width:100%}
+.preview th,.preview td{border:1px solid #e2e4e9;padding:6px 12px;text-align:left}
+.preview th{background:#f5f6f8;font-weight:600}
+.preview u{text-decoration:underline}
+.preview s{text-decoration:line-through}
+   `.trim();
+
+   function exportHtmlDoc(text) {
+     const body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
+   }
+
+   async function renderPreviewCanvas(text, width) {
+     // Build an offscreen, visible node: html2canvas cannot rasterize display:none
+     // content, so push it far off the viewport instead of hiding it. Render a
+     // fixed-width `.preview` clone so the output matches the on-screen preview
+     // regardless of the current Split/Edit/Preview mode (the live preview pane may
+     // be collapsed to width:0 in edit-only mode and must not be captured empty).
+     const host = document.createElement("div");
+     host.style.cssText = "position:fixed;left:-100000px;top:0;z-index:99999;pointer-events:none;";
+     const body = document.createElement("div");
+     body.className = "preview";
+     body.style.width = (width || 780) + "px";
+     body.innerHTML = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+     host.appendChild(body);
+     document.body.appendChild(host);
+     try {
+       await new Promise((r) => requestAnimationFrame(r)); // let layout settle
+       return await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false, width: body.clientWidth, height: body.scrollHeight });
+     } finally {
+       document.body.removeChild(host);
+     }
+   }
+
+   function downloadBlob(blob, filename) {
+     const el = document.createElement("a");
+     el.href = URL.createObjectURL(blob);
+     el.download = filename;
+     el.click();
+     setTimeout(() => URL.revokeObjectURL(el.href), 1000);
+   }
+
+   function defaultExportName(d, ext) {
+     const base = (d && d.name) || "untitled";
+     const noExt = base.replace(/\.[^./\\]+$/, "");
+     return noExt + "." + ext;
+   }
+
+   async function exportAsHtml() {
+     const d = activeTab; if (!d) return;
+     const html = exportHtmlDoc(d.input.value);
+     const filename = defaultExportName(d, "html");
+     if (isTauri()) {
+       const { path } = await pickPath({
+         mode: "save",
+         defaultFilename: filename,
+         filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+       });
+       if (!path) return false;
+       try {
+         await tauriWriteTextFile(path, html);
+         return true;
+       } catch (e) {
+         await messageModal({
+           title: "Export failed",
+           message: "Could not save “" + path + "”: " + ((e && (e.message || e)) || "unknown error"),
+           buttons: [{ label: "OK", kind: "primary", value: "ok" }],
+           kind: "error",
+         });
+         return false;
+       }
+     }
+     downloadBlob(new Blob([html], { type: "text/html" }), filename);
+     return true;
+   }
+
+    async function exportAsPdf() {
+      const d = activeTab; if (!d) return;
+      const filename = defaultExportName(d, "pdf");
+      try {
+        // Capture the rendered preview to a canvas, then slice it into A4
+        // page-height bands and lay each band on (possibly many) PDF pages.
+        // We do the pagination explicitly rather than relying on jsPDF's
+        // html() API, which expects `window.html2canvas` to be a global and
+        // paginates with its own heuristics — manual slicing is deterministic
+        // and keeps the full-fidelity raster we already produced.
+        const host = await renderPreviewCanvas(d.input.value, 780);
+        const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const ratio = pageW / host.width;       // PDF points per canvas px
+        const pxPerPage = pageH * (1 / ratio); // px that fit on one page
+        for (let y = 0, pageIndex = 0; ; y += pxPerPage, pageIndex++) {
+          const slicePx = Math.min(pxPerPage, host.height - y);
+          if (slicePx <= 0) break;
+          const slice = document.createElement("canvas");
+          slice.width = host.width;
+          slice.height = slicePx;
+          const ctx = slice.getContext("2d");
+          ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, slice.width, slice.height);
+          ctx.drawImage(host, 0, y, host.width, slicePx, 0, 0, host.width, slicePx);
+          const dataUrl = slice.toDataURL("image/jpeg", 0.92);
+          if (pageIndex > 0) pdf.addPage("a4", "portrait");
+          pdf.addImage(dataUrl, "JPEG", 0, 0, pageW, slicePx * ratio);
+          if (y + pxPerPage >= host.height) break;
+        }
+       if (isTauri()) {
+         const out = pdf.output("arraybuffer");
+         const bytes = new Uint8Array(out);
+         const { path } = await pickPath({
+           mode: "save",
+           defaultFilename: filename,
+           filters: [{ name: "PDF", extensions: ["pdf"] }],
+         });
+         if (!path) return false;
+         try {
+           await tauriWriteFile(path, bytes);
+           return true;
+         } catch (e) {
+           await messageModal({
+             title: "Export failed",
+             message: "Could not save “" + path + "”: " + ((e && (e.message || e)) || "unknown error"),
+             buttons: [{ label: "OK", kind: "primary", value: "ok" }],
+             kind: "error",
+           });
+           return false;
+         }
+       }
+        const blob = pdf.output("blob");
+        downloadBlob(blob, filename);
+        return true;
+     } catch (e) {
+       await messageModal({
+         title: "Export failed",
+         message: "PDF export failed: " + ((e && (e.message || e)) || "unknown error"),
+         buttons: [{ label: "OK", kind: "primary", value: "ok" }],
+         kind: "error",
+       });
+       return false;
+     }
+   }
+
+   /* ==== Export functions above; save() below unchanged ==== */
+   async function save(doc) {
     const d = doc || activeTab;
     if (!d) return false;
     const t = d.input.value;
@@ -2044,11 +2226,42 @@ export function createApp(root) {
   });
 
   /* ---- toolbar click ---- */
+  const menuBtn = toolbar.querySelector('[data-action="menu"]');
+  const menuDropdown = toolbar.querySelector(".menu-dropdown");
+  function setMenuOpen(open) {
+    menuDropdown.classList.toggle("open", open);
+    menuBtn.setAttribute("data-menu-open", String(open));
+    menuBtn.setAttribute("aria-expanded", String(open));
+  }
+  // Close the menu on any click outside it (the item clicks below still fire
+  // first, in the same event round, because this listener is on `document`).
+  // Guard is `.menu-wrap` (wraps BOTH the toggle button and the dropdown),
+  // NOT `.menu-dropdown` — otherwise the button's own click would be treated
+  // as "outside" by the document listener and close the menu right after
+  // the toolbar handler reopened it.
+  document.addEventListener("click", (ev) => {
+    if (!menuDropdown.classList.contains("open")) return;
+    if (ev.target.closest(".menu-wrap")) return;
+    setMenuOpen(false);
+  });
+  // Keyboard: Escape closes the open menu.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && menuDropdown.classList.contains("open")) setMenuOpen(false);
+  });
+
   toolbar.addEventListener("click", (ev) => {
     const btn = ev.target.closest("button"); if (!btn) return;
+    const menuId = btn.getAttribute("data-menu");
     const fmt = btn.getAttribute("data-fmt");
     const block = btn.getAttribute("data-block");
     const action = btn.getAttribute("data-action");
+    if (menuId) {
+      setMenuOpen(false);
+      if (menuId === "pdf") exportAsPdf();
+      else if (menuId === "html") exportAsHtml();
+      if (activeTab) activeTab.input.focus();
+      return;
+    }
     if (fmt) toggleFormat(fmt);
     else if (block) toggleBlock(block);
     else if (action) {
@@ -2059,6 +2272,11 @@ export function createApp(root) {
       else if (action === "newtab") newTab("Untitled", "");
       else if (action === "mode") { const o = ["split", "edit", "preview"]; setMode(o[(o.indexOf(app.dataset.mode) + 1) % 3]); }
       else if (action === "theme") { const dark = document.documentElement.dataset.theme === "dark"; document.documentElement.dataset.theme = dark ? "" : "dark"; }
+      else if (action === "menu") { // toggle; stop the app-level ctrl+click/escape from stealing focus
+        const open = !menuDropdown.classList.contains("open");
+        setMenuOpen(open);
+        return;
+      }
     }
     if (activeTab) activeTab.input.focus();
   });
@@ -2115,6 +2333,7 @@ export function createApp(root) {
     refresh, scheduleRefresh,
     newTab, closeTab, closeApp, activate,
     save, open,
+    exportAsHtml, exportAsPdf,
     openFile,
     toggleFormat, toggleBlock,
     undo, redo, indentLines,

@@ -13,3 +13,6 @@ export const table = wrap(`<rect x="3" y="4" width="18" height="16" rx="1"/><pat
 export const plus = wrap(`<path d="M12 5v14M5 12h14"/>`);
 export const undo = wrap(`<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>`);
 export const redo = wrap(`<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>`);
+export const menu = wrap(`<path d="M4 6h16M4 12h16M4 18h16"/>`);
+export const fileDoc = wrap(`<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>`);
+

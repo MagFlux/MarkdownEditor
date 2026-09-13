@@ -1,0 +1,54 @@
+Markdown Editor
+===============
+
+Copyright (c) 2026 MagFlux
+
+This product bundles and depends on the following third-party
+software. License grants apply to the use, reproduction, and
+distribution of each component. The source of each is available
+from its upstream project and, for the bundled JavaScript, is
+shipped inside `node_modules/` (and inlined into the built
+`dist/` bundle) along with its own license text.
+
+MIT components
+--------------
+marked        — Markdown parser (js)            MIT   (Copyright 2018+ marked authors)
+html2canvas   — HTML-to-canvas renderer (js)    MIT   (Copyright 2012+ Niklas von Hertzen)
+jspdf         — PDF generator (js)              MIT   (Copyright 2010-2025 James Hall / yWorks GmbH)
+vite          — build tooling (js)              MIT   (Copyright 2019-2026 the Vite team)
+@tauri-apps/api
+@tauri-apps/cli
+@tauri-apps/plugin-fs
+@tauri-apps/plugin-dialog
+@tauri-apps/plugin-opener
+                            — Tauri frontend    MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
+tauri         — Rust core (tauri crate)         MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
+wry           — Rust webview wrapper            MIT / Apache-2.0   (Copyright 2020+ Tauri Program)
+
+For the MIT/Apache dual-licensed Tauri stack the project may use
+the MIT grant. If the Apache-2.0 grant is relied on, the Apache
+Software Foundation's Apache License, Version 2.0 applies, and the
+following statement is incorporated by reference:
+
+  Copyright 2017-2026 Tauri Program
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Apache-2.0-only component
+-------------------------
+playwright    — browser automation (test-only)  Apache-2.0   (Copyright 2020-2026 Microsoft Corporation)
+
+  Copyright 2020-2026 Microsoft Corporation
+  Licensed under the Apache License, Version 2.0. This product
+  includes software developed at Microsoft (the "Contribution"),
+  unless otherwise stated.
+
+Runtime (not bundled) — Linux only
+----------------------------------
+The Linux build dynamically links the system-provided WebKitGTK
+library (`libwebkit2gtk-4.1`, LGPL-2.1 with exception / GPL-2.0+).
+It is a system runtime dependency, not redistributed here. This
+product does not copy or modify that library and permits the user
+to replace it with their own compatible build, as LGPL requires.

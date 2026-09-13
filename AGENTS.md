@@ -20,6 +20,49 @@ change** so they stay accurate. Do not leave a doc describing the state before y
 edit. If a change doesn't affect the documented surface, a quick check that neither
 file is now stale is still required before you're done.
 
+**`LICENSE` and `NOTICE` must also stay current** (this is a mandatory todo for every
+change, not optional). Whenever a dependency is **added, removed, or changes
+version or license** — a new `dependencies`/`devDependencies`/`peerDependencies` entry,
+a new Rust crate in `src-tauri/Cargo.toml`, or an upgrade that swaps one license for
+another — **update `NOTICE` in the same change** (add/remove/re-license the line, keep
+it in the right bucket: MIT, MIT/Apache dual, Apache-2.0-only, or runtime-only), and
+confirm `LICENSE` still correctly describes the project. Never let `NOTICE` describe the
+*pre*-change dependency set.
+
+## Licensing (mandatory for every dependency change)
+
+This project is **MIT-licensed** (see `LICENSE`; copyright MagFlux, 2026). That choice
+is only compatible with our dependencies if they are **MIT-compatible** — i.e.
+**permissive, non-copyleft**: `MIT`, `Apache-2.0`, `BSD-*`, or **dual-licensed
+`MIT OR Apache-2.0`** (we may take the MIT side). Everything currently bundled is one
+of these (see `NOTICE`).
+
+**Before you install or import any new library** — any `npm install <pkg>`, a new
+`dependencies`/`devDependencies`/`peerDependencies` entry, or a new Rust crate in
+`src-tauri/Cargo.toml` — **check its license first, before you use it:**
+- JS: `npm info <pkg> license` (or read `node_modules/<pkg>/package.json` → `license`),
+  and also scan for any *nested* dependency that ships a copyleft license.
+- Rust: the crate's `Cargo.toml`/crates.io page → `license` field (many are
+  `MIT OR Apache-2.0`).
+
+**Decision rule:**
+- **Always prefer MIT-compatible (permissive) libraries.** If two libraries solve the
+  same job and one is MIT and the other is not, or one is permissive and the other is
+  copyleft, use the permissive one.
+- **If a candidate is NOT MIT-compatible — `GPL-*`, `AGPL-*`, `LGPL-*` (when its code
+  would be *bundled*), `MPL-2.0`, `SSPL`, `Elastic`, or any other non-permissive
+  license** — **STOP and notify the user before using it. Do not add it, do not import
+  it, do not commit it.** Explain the specific license and why it conflicts with our
+  MIT-licensed bundle, and offer one or more MIT-compatible alternatives that achieve
+  the same thing. Proceed only after the user explicitly approves the exception (and
+  then add it to `NOTICE` in its own "non-permissive (user-approved exception)" bucket).
+
+> Note the distinction that matters here: an **LGPL** *system* runtime we merely link
+> to (WebKitGTK on Linux) is acceptable because we don't bundle it — that's why it's
+> fine to stay MIT. An LGPL/GPL **library we bundle/invoke as code** (e.g. `apt`/`npm`
+> packages pulled into `node_modules` or compiled in) is *not* — that must go through
+> the user.
+
 ## Build / test / run
 
 ```bash
@@ -40,6 +83,10 @@ npm run verify-paste   # rich-paste: an HTML clipboard (Excel/HTML <table>, bold
                         # underline spans, mixed runs) converts to Markdown and commits as
                         # ONE undo-able edit; plain-text pastes fall through to the browser's
                         # default insert (18 cases).
+npm run verify-export  # Export-as-PDF/HTML: hamburger menu open/close/outside-click/Escape,
+                        # HTML save via fs writeFile (in-app picker + blob download fallback),
+                        # PDF save via html2canvas→jsPDF (A4 multi-page), both cancel paths,
+                        # and format-button isolation (30 cases).
 npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                         # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
@@ -59,8 +106,9 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the seven verify scripts (`verify`, `verify-undo`,
-`verify-save`, `verify-toolbar`, `verify-paste`, `verify-tauri`, and `npm test`); all must be green.
+see the invariant below. Then re-run the eight verify scripts (`verify`, `verify-undo`,
+`verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-tauri`, and
+`npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
@@ -75,7 +123,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
 1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
    cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
-   `verify-paste` → `verify-tauri`. No Rust. Runs on PR and on release.
+   `verify-paste` → `verify-export` → `verify-tauri`. No Rust. Runs on PR and on release.
 
 2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
    packages installers via `tauri-apps/tauri-action@v0`:
@@ -120,15 +168,17 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-| `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). |
+ | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
-| `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). |
+| `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
 | `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. Also `plugins.fs.requireLiteralLeadingDot: false` — lets the fs scope `**` match hidden (dot) path segments on Unix so the picker can open `~/.config` etc. (see invariant 7). |
- | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-write-text-file`, `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
+ | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |
+| `LICENSE` | **MIT** — the license for *this* project's code (copyright MagFlux, 2026). |
+| `NOTICE` | Third-party dependency notices: which bundled deps are MIT vs. Apache-2.0 (incl. the dual-licensed Tauri stack), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
 
 ## Hard invariants (do not regress)
 
@@ -201,9 +251,19 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    segments. The Playwright harness in `test/verifyTauriClose.mjs` scenario H
    asserts the *UI* drives `read_dir` into a dot-path; it **stubs** the fs IPC and
    does not enforce the real scope, so only the actual app enforces the ACL.
-   Trade-off: the picker can now reach sensitive dot-dirs (`~/.ssh`, `~/.aws`, …) —
-   an intentional, documented choice. Do not re-add a leading-dot filter to the
-   picker's `render()`/`goToDir()` without also revisiting this config.
+    Trade-off: the picker can now reach sensitive dot-dirs (`~/.ssh`, `~/.aws`, …) —
+    an intentional, documented choice. Do not re-add a leading-dot filter to the
+    picker's `render()`/`goToDir()` without also revisiting this config.
+
+ 8. **The bundle must stay a single JS file.** The GTK webview cannot reliably
+    resolve a second code-split chunk at runtime (same class of failure as
+    invariant 2), so the production build MUST emit exactly one
+    `dist/assets/index-*.js`. jsPDF ships a lazy `await import("dompurify")`
+    internally that would normally produce a separate chunk; we force it inline
+    with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
+    After every `npm run build`, confirm the dist has a single `.js` asset.
+    `jspdf` and `html2canvas` are static top-level imports in `src/markdown.js`
+    (browser-safe — they're inert until called), never `await import(...)`.
 
 ## Conventions
 
@@ -233,6 +293,22 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   `prompt` (unreliable in WebKitGTK) and NOT the native `tauri-plugin-dialog`
   rfd GTK picker (never parents/centers its dialogs, so it drifts off-window).
   The in-app modals are centered by construction inside the single webview.
+- **Export-as-PDF/HTML (hamburger menu).** The PDF/HTML actions live in a `.menu-wrap`
+  dropdown toggled by the hamburger (`data-action="menu"`), with `data-menu="pdf"` /
+  `data-menu="html"` items. HTML export re-renders the markdown to a styled preview and
+  writes it; PDF renders that preview off-screen via `html2canvas` (a 780px-wide host
+  at `fixed; left:-100000px`, `scale:2`, white bg) and slices the canvas into A4
+  (595×842 pt) pages into a `jsPDF` doc. Both save through `pickPath` + Tauri
+  `fs.writeFile` (binary) with a browser `Blob`-download fallback — the SAME in-app
+  picker as save, never a native print dialog. The outside-click close guard must test
+  `ev.target.closest(".menu-wrap")` (the toggle button is a *sibling* of the
+  `.menu-dropdown`; testing `.menu-dropdown` treats the button's own click as
+  "outside" and closes the menu the instant the toolbar handler opens it).
+- **`test/test.mjs` polyfills the browser env for Node.** It stubs `globalThis.window`
+  (with `document`, `location.href`, `atob`, `btoa`) so jsPDF's UMD wrapper and
+  html2canvas's `CacheStorage.setContext` don't throw when `markdown.js`'s static
+  imports load under Node. If you add another browser-global library import, extend the
+  same stubs there rather than making it a dynamic import.
 
 ## Known limitations (browser fallback)
 

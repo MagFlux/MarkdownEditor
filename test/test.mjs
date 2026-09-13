@@ -12,8 +12,16 @@ globalThis.document = {
   addEventListener() {},
   querySelector: () => null,
 };
-globalThis.window = { __TAURI__: false, addEventListener() {} };
+globalThis.window = { __TAURI__: false, addEventListener() {}, document: globalThis.document, location: { href: "about:blank" } };
 globalThis.localStorage = { getItem: () => null, setItem: () => {} };
+// jsPDF's UMD wrapper resolves its global scope as:
+//   window || global || self || this
+// and then calls `r.atob.bind(r)` / `r.btoa.bind(r)`. Since this test
+// defines a fake `globalThis.window` (to stub the browser environment),
+// jsPDF picks *that* object — which would otherwise lack `atob`/`btoa`.
+// Add them to the fake window so jsPDF's UMD init succeeds under Node.
+globalThis.window.atob = (b64) => Buffer.from(b64, "base64").toString("binary");
+globalThis.window.btoa = (bin) => Buffer.from(bin, "binary").toString("base64");
 
 const m = await import("../src/markdown.js");
 

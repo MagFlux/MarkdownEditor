@@ -15,6 +15,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables
 - **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. They do not require you to select or change the text first.
 - **Rich paste** — paste an HTML clipboard (an Excel/Word table, a bold/italic/underline span, or a mix) and it converts to Markdown (`<table>` → GFM table, `<b>` → `**…**`, `<i>` → `*…*`, `<u>` → `<u>…</u>`), committed as a single undo-able edit. Plain-text pastes are left to the browser.
+- **Export as PDF / HTML** — via the hamburger menu (top-right of the toolbar). Renders your live preview and saves it as a self-contained `.html` or a multi-page A4 `.pdf` (via `jsPDF` + `html2canvas`). Uses the same in-app save dialog as Save — pick a location and the file is written there; in a plain browser it falls back to a download.
 - **Drag-and-drop** `.md` files straight onto the window (opens them in a new tab)
 - **Ctrl+click a link** in the source to open it in the default browser
 - **Tab / Shift+Tab** to indent / outdent list & code lines
@@ -32,7 +33,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - The renderer is in `src/markdown.js` — `computeBlocks()` classifies each line (heading, list, quote, code, table…) and `lineToHtml()` turns a line into highlighted spans.
 - **Invariant**: stripping every `<span>` tag out of the produced HTML must reproduce the exact source text. This is what keeps the caret aligned; all renderer changes must preserve it. There is a round-trip test that checks this.
 - The DOM (the textarea) is the single source of truth. The "overlay" and the "preview" are both re-rendered from it on every change — the reverse direction never happens, so undo/redo is a simple stack of text snapshots.
-- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle are **statically imported** at the top of `src/markdown.js` (they are pure JS until called), and every call is guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported plugin chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import guarantees the code is always in the bundle. The **real** gate is `isTauri()` itself: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
+- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle — plus the PDF/HTML export libraries `jsPDF` and `html2canvas` — are all **statically imported** at the top of `src/markdown.js` (they are pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import also keeps the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
 
 ---
 
@@ -55,11 +56,14 @@ MarkdownEditor/
 │   ├── src/main.rs             # tauri::Builder + plugin init
 │   └── icons/                  # .png / .ico / .icns bundle icons
 ├── .github/workflows/ci.yml    # CI: test suite + 3-OS build → draft GitHub Release
+├── LICENSE                     # MIT (copyright MagFlux, 2026)
+├── NOTICE                      # third-party dependency notices
 └── test/
     ├── test.mjs                # round-trip invariant (no server, instant)
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
+    ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -193,6 +197,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-paste
   ```
 
+- **Export-as-PDF/HTML test** — 30 assertions on the hamburger **Export** menu and its two save paths: the menu opens / closes / closes on outside-click / closes on Escape; **Export as HTML** re-renders the preview and, in-app, saves through `pickPath` + Tauri `fs.writeFile` (binary) to the chosen path — with a browser `Blob`-download fallback — and **Export as PDF** rasterizes the preview off-screen via `html2canvas` (scale 2, white bg, 780 px wide) and slices the canvas into A4 pages into a `jsPDF` doc (multi-page), again saving through the in-app picker. Both cancel paths leave the doc untouched and close the dialog, and the B/I/U/S formatting buttons stay **de-activated** after an export (exporting never selects or mutates the text).
+
+  ```bash
+  npm run verify-export
+  ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -247,6 +257,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
+| `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |
@@ -268,6 +279,15 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 - Every native call is wrapped in `isTauri()` so the same file still runs in a plain browser (where save uses a file download and there is no window-close interceptor).
 - **Toolbar active-states must track the caret, not just text changes.** The per-textarea `select` event is **unreliable on WebKitGTK** — it can silently never fire for a click or arrow-key move there (it fired fine under Chromium while developing), and the `click` handler historically only refreshed the status bar, *not* the buttons. So the buttons used to flip only when the text changed. The fix listens to the document-level `selectionchange` event (fires for *every* caret move, regardless of mechanism) on the active tab, with a `mouseup` + `requestAnimationFrame` refresh as a fallback, and re-syncs on tab switch via `activate()` → `refresh()`. Don't "simplify" by relying on `select`/`keyup` alone.
 -- `src/markdown.js:closeApp()` is the single source of truth for the "prompt for every dirty tab before the window closes" walk. `removeTab`, a `beforeunload` listener, and the `onCloseRequested` handler all funnel through it, so the prompt order (save order = tab DOM order) is guaranteed.
+
+---
+
+## License
+
+- **License**: [MIT](LICENSE) — copyright 2026 MagFlux.
+- **Third-party notice**: [NOTICE](NOTICE) lists bundled dependencies and which license each is under (MIT vs. Apache-2.0), the test-only `playwright` (Apache-2.0), and the Linux-only system WebKitGTK runtime (LGPL, not bundled).
+- **Compatibility note**: the project's dependencies are all permissive (MIT or Apache-2.0), so an MIT license on *this* code base imposes no copyleft conflict. The only LGPL piece — WebKitGTK — is a Linux **system** runtime that you link to but do not bundle or modify, so it does not force this project to be GPL'd.
+- **Adding a dependency?** Per [AGENTS.md](AGENTS.md), prefer MIT-compatible libraries, and if a candidate isn't MIT-compatible, notify the maintainer before using it. Then update `NOTICE` in the same change.
 
 ---
 
