@@ -53,22 +53,27 @@ For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
 
-The pipeline lives in `.github/workflows/ci.yml`. Two jobs:
+The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
-1. **`test`** (ubuntu-latest) — runs the full suite, cheap → expensive:
-   `npm test` → `verify` → `verify-undo` → `verify-save` → `verify-tauri`.
-   No Rust required. Runs on every push to `main`, every PR, and manual dispatch.
+**Triggers** (deliberately *not* on every push, to save runner compute):
+- `pull_request` — `opened | synchronize | reopened | ready_for_review`
+- `release` — `created`
 
-2. **`build`** (3-OS matrix) — gated on `test` passing; runs only on push to
-   `main` or manual dispatch (skipped on PRs). Builds each platform installer via
-   `tauri-apps/tauri-action@v0`:
+**Jobs**:
+
+1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
+   cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
+   `verify-tauri`. No Rust. Runs on PR and on release.
+
+2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
+   packages installers via `tauri-apps/tauri-action@v0`:
    - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`)
    - `macos-14`: `--bundles dmg`
    - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg)
 
-   Artifacts are uploaded to a **draft** GitHub Release named `v<version>`
-   (version pulled from `tauri.conf.json`). Drafts are safe to run on every push;
-   nothing is published until you open the Release page and hit "Publish".
+   Gated on `test` passing **and** `github.event_name == 'release'` (so it
+   never runs on PRs or plain pushes). Installers attach to the exact
+   `v<version>` release that was just created — see below for the recipe.
 
 ### `tauri-action` inputs (what actually works)
 

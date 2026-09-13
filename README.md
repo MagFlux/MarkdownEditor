@@ -191,21 +191,24 @@ All of these exit non-zero on any failure or console error, so they can be wired
 
 ## CI / Releases
 
-The GitHub Actions pipeline (`.github/workflows/ci.yml`) does two things:
+The GitHub Actions pipeline (`.github/workflows/ci.yml`) does **not** run on
+every push (saves runner compute). It runs on:
 
-1. **Tests on every push and pull request** (Ubuntu): the full suite above —
-   `npm test`, `verify`, `verify-undo`, `verify-save`, `verify-tauri`. No Rust needed.
-2. **Builds installers + a draft release** (3-OS matrix), but **only on pushes to
-   `main` or a manual "Run workflow"** (not on PRs). It builds via
-   `tauri-apps/tauri-action@v0`:
-   - **Windows** (`windows-latest`) → `nsis` (installer `.exe`) + `msi`
+| Event | Triggers | What it does |
+|---|---|---|
+| A new or updated PR | `pull_request: opened, synchronize, reopened, ready_for_review` | `test` only — the full Playwright suite (no installers) |
+| You cut a release | `release: created` | `test` first; if green, three `build` jobs in parallel → installers attached to the release |
+
+### Cut a release
+
+1. Bump `version` in `src-tauri/tauri.conf.json` (e.g. `0.1.0` → `0.1.1`), commit & push to `main`.
+2. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` (must match the version in `tauri.conf.json` plus a `v` prefix) → **Publish** (or `git tag v0.1.1 && git push --tags`).
+3. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0`:
+   - **Windows** (`windows-latest`) → `nsis` (`.exe`) + `msi`
    - **macOS** (`macos-14`) → `dmg`
    - **Linux** (`ubuntu-22.04`) → `appimage` + `deb`
 
-   Installers are attached to a **draft** GitHub Release named `v<version>` (version
-   from `src-tauri/tauri.conf.json`, `0.1.0` today). Drafts are deliberately used
-   so CI can run on every push without publishing — open the Releases page and hit
-   **Publish** to make it go live.
+   Installers are attached to the same `v<version>` release you just cut.
 
 ### Signing
 

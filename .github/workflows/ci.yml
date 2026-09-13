@@ -1,24 +1,38 @@
 # CI for MarkdownEditor — a Tauri v2 desktop app (Rust shell + JS editor).
 #
 # Two jobs:
-#   1. test  — runs the full Node/Playwright verification suite on Ubuntu.
-#              Fast feedback; no Rust required. Runs on every push + PR.
-#   2. build — builds the platform installer(s), one per OS, and appends the
-#              artifacts to a single *draft* GitHub Release named after the
-#              Tauri app version (v0.1.0 today). Runs only after `test` is
-#              green, on pushes to `main` and on manual "Run workflow".
+# Computed only on PR + Release (not on every push, to save runner time).
 #
-# Releases are created as DRAFTS on purpose: nothing is published until you
-# open the Release page on GitHub and hit "Publish". This keeps CI safe to
-# run on every push without spamming your followers / triggering auto-updates.
+#   1. test  — runs the full Node/Playwright verification suite on Ubuntu.
+#              Fast feedback, no Rust. Runs on every PR and on release.
+#   2. build — builds platform installers (one per OS) and attaches them to
+#              a GitHub Release. Runs only after `test` is green AND only on
+#              the `release.created` event (i.e. when you actually cut a release).
+#              Skipped on PRs and plain pushes to main.
+#
+# How to cut a release: bump `version` in `src-tauri/tauri.conf.json`, commit
+# & push, then create a Release at that exact `v<version>` tag (e.g. `v0.1.0`)
+# via the Releases page. CI picks it up on `release.created`, tests, builds all
+# three platforms, and attaches the installers to that release.
 
 name: CI
 
+# Triggered only on:
+#   • pull_request  opened | synchronize | reopened | ready_for_review
+#     (new PRs + every updated commit on the PR branch + a draft PR
+#      becoming ready + a closed PR being reopened)
+#   • release created
+#     (you bump the version, cut the release, and CI builds &
+#     attaches the installers to it)
+#
+# NOTE: not run on `push` to main, to save compute. To bump a version or
+# cut a new release, open Settings → Releases and hit "Create a release"
+# (or the Releases → Add a tag dialog).
 on:
-  push:
-    branches: [main]
   pull_request:
-  workflow_dispatch:
+    types: [opened, synchronize, reopened, ready_for_review]
+  release:
+    types: [created]
 
 # The build job's token must be able to create the release + upload assets.
 permissions:
@@ -62,9 +76,10 @@ jobs:
   build:
     name: Build ${{ matrix.os }} + release
     needs: test
-    # Only build when it's a push to main or someone hits the manual button —
-    # skip from PRs so we don't churn draft releases on every pull request.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Build installers ONLY when a Release is cut (event `release.created`) —
+    # not on PRs and not on plain pushes to main. That's the whole point of
+    # the new trigger set: saves runner compute on every commit.
+    if: github.event_name == 'release'
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +142,9 @@ jobs:
             - **macOS**: `*_aarch64.dmg` (Apple Silicon)
             - **Linux**: `*_amd64.AppImage` / `*_amd64.deb`
 
-            Built by GitHub Actions from `main`.
+            Built by GitHub Actions.
+          # If the action ends up *creating* a new release (e.g. the user's
+          # release tag didn't match `v<version>` and the action's
+          # `tagName: v__VERSION__` lookup missed it), make it a draft so
+          # we don't silently publish an unreleased build.
           releaseDraft: true
-          prerelease: false
