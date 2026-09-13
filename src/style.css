@@ -236,11 +236,13 @@ body {
 .savedlg .picker-pathbar [data-crumb]:hover { background: var(--bg-hover); color: var(--fg); }
 .savedlg .picker-pathbar .sep { color: var(--fg-dim); opacity: .5; padding: 0 2px; user-select: none; }
 .savedlg .picker-pathbar .crumb-cur { color: var(--fg); font-weight: 600; }
-.savedlg .picker-pathbar .up { padding: 4px 8px; border-radius: 6px; cursor: pointer;
-  color: var(--fg-dim); font-size: 14px; line-height: 1; user-select: none; }
-.savedlg .picker-pathbar .up:hover { background: var(--bg-hover); color: var(--fg); }
-.savedlg .picker-list { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border);
-  border-radius: 8px; max-height: 260px; overflow-y: auto; background: var(--bg-panel); }
+.savedlg .picker-pathbar .ctrl { display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 6px; cursor: pointer;
+  color: var(--fg-dim); flex: none; user-select: none; }
+.savedlg .picker-pathbar .ctrl svg { width: 14px; height: 14px; display: block; }
+.savedlg .picker-pathbar .ctrl:hover { background: var(--bg-hover); color: var(--fg); }
+ .savedlg .picker-list { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border);
+   border-radius: 8px; height: 260px; overflow-y: auto; background: var(--bg-panel); }
 .savedlg .picker-list li { padding: 5px 8px; border-radius: 6px; cursor: pointer;
   font-size: 13px; display: flex; align-items: center; gap: 8px; color: var(--fg); }
 .savedlg .picker-list li:hover { background: var(--bg-hover); }
@@ -248,7 +250,7 @@ body {
 .savedlg .picker-list li .dir { font-weight: 600; }
 .savedlg .picker-list li .glyph { width: 14px; display: inline-block; text-align: center;
   color: var(--fg-dim); flex: none; }
-.savedlg .picker-name { display: flex; gap: 8px; align-items: center; }
+ .savedlg .picker-name { display: flex; gap: 8px; align-items: center; height: 38px; }
 .savedlg .picker-name input { flex: 1; appearance: none; background: var(--bg-panel);
   color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; font-size: 13.5px; min-width: 0; }

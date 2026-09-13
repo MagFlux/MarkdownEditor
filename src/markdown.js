@@ -800,10 +800,35 @@ export function createApp(root) {
        const h = document.createElement("h3");
        h.textContent = mode === "save" ? "Save to…" : "Open…";
 
-       const pathbar = document.createElement("div");
-       pathbar.className = "picker-pathbar";
+        const pathbar = document.createElement("div");
+        pathbar.className = "picker-pathbar";
 
-       const list = document.createElement("ul");
+        // A small interactive control button that renders consistently across
+        // both light and dark themes (WebKitGTK renders emoji as flat/missing
+        // glyphs; an inline SVG with `currentColor` always matches the text
+        // color and stays visible). Used for the Home / Up navigation buttons.
+        if (!window.__pickCtrlGlyphs) {
+          window.__pickCtrlGlyphs = {
+            HOME: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-7 9 7v11a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg>',
+            UP: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+          };
+        }
+        const makeCtrl = (glyphKey, label, onClick) => {
+          const el = document.createElement("span");
+          el.className = "ctrl";
+          el.setAttribute("role", "button");
+          el.tabIndex = 0;
+          el.title = label;
+          el.setAttribute("aria-label", label);
+          el.innerHTML = window.__pickCtrlGlyphs[glyphKey];
+          el.addEventListener("click", onClick);
+          el.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(); }
+          });
+          return el;
+        };
+
+        const list = document.createElement("ul");
        list.className = "picker-list";
        list.setAttribute("role", "listbox");
 
@@ -862,28 +887,27 @@ export function createApp(root) {
          resolve(result);
        };
 
-       const renderCrumb = () => {
-         pathbar.innerHTML = "";
-         const up = document.createElement("span");
-         up.className = "up"; up.textContent = "\u2191"; up.title = "Go up";
-         up.setAttribute("role", "button");
-         up.addEventListener("click", () => goToUp());
-         up.tabIndex = 0;
-         up.addEventListener("keydown", (ev) => {
-           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); goToUp(); }
-         });
-         pathbar.appendChild(up);
-         const parts = state.cwd.split("/").filter(Boolean);
-         if (state.cwd === "/" || parts.length === 0) {
-           const c = document.createElement("span");
-           c.textContent = "\u2302";
-           c.dataset.crumb = "/";
-           c.className = "crumb-cur";
-           c.addEventListener("click", () => goToDir("/"));
-           pathbar.appendChild(c);
-           return;
-         }
-         for (let i = 0; i < parts.length; i++) {
+        const renderCrumb = () => {
+          pathbar.innerHTML = "";
+          // Home and Up are ALWAYS present: the Home button is the "escape hatch"
+          // back to the user's home dir no matter how deep (or how far off home)
+          // the user has navigated. Up is inert at "/" (no parent to go to).
+          const homeBtn = makeCtrl("HOME", "Home directory", () => goToHome());
+          const upBtn = makeCtrl("UP", "Go up", () => goToUp());
+          pathbar.appendChild(homeBtn);
+          pathbar.appendChild(upBtn);
+          const parts = state.cwd.split("/").filter(Boolean);
+          if (state.cwd === "/" || parts.length === 0) {
+            // We're at the filesystem root: show it as a plain current-location
+            // label (not a button — there's nothing above it and Home already
+            // covers "escape to a useful place").
+            const c = document.createElement("span");
+            c.textContent = "/";
+            c.className = "crumb-cur";
+            pathbar.appendChild(c);
+            return;
+          }
+          for (let i = 0; i < parts.length; i++) {
            const c = document.createElement("span");
            c.textContent = parts[i];
            c.dataset.crumb = "/" + parts.slice(0, i + 1).join("/");
@@ -946,32 +970,54 @@ export function createApp(root) {
           setStatus(dirs.length + " folder" + (dirs.length === 1 ? "" : "s"), "ok");
         };
 
-        const goToDir = async (dir) => {
-          const token = ++listToken;
-          setStatus("Loading…");
-          let entries;
-          try { entries = await tauriReadDir(dir); }
-          catch (e) {
-            if (token !== listToken) return;
-            // Read failed (e.g. a forbidden path). Keep state.cwd and the crumb
-            // on the last readable directory — do NOT adopt the failed path.
-            setStatus("Cannot read " + dir + " — " + ((e && (e.message || e)) || "error"), "error");
-            return;
-          }
-          if (token !== listToken) return;
-          // Only commit the path after a successful read.
-          state.cwd = dir;
-          state.picked = null;
-          renderCrumb();
-          render(entries);
-          setStatus("");
+         const goToDir = async (dir) => {
+           const token = ++listToken;
+           // Only surface "Loading…" once a read has been in flight >2s. Fast
+           // (local) loads then never flash it — this kills the status text
+           // jitter when navigating between directories.
+           const loadingTimer = setTimeout(() => {
+             if (token === listToken) setStatus("Loading…");
+           }, 2000);
+           let entries;
+           try { entries = await tauriReadDir(dir); }
+           catch (e) {
+             clearTimeout(loadingTimer);
+             if (token !== listToken) return;
+             // Read failed (e.g. a forbidden path). Keep state.cwd and the crumb
+             // on the last readable directory — do NOT adopt the failed path.
+             setStatus("Cannot read " + dir + " — " + ((e && (e.message || e)) || "error"), "error");
+             return;
+           }
+           clearTimeout(loadingTimer);
+           if (token !== listToken) return;
+           // Only commit the path after a successful read.
+           state.cwd = dir;
+           state.picked = null;
+           renderCrumb();
+           render(entries);
+           setStatus("");
+         };
+
+        const goToUp = () => {
+          if (state.cwd === "/") return;
+          const dir = state.cwd.split("/").slice(0, -1).join("/") || "/";
+          goToDir(dir);
         };
 
-       const goToUp = () => {
-         if (state.cwd === "/") return;
-         const dir = state.cwd.split("/").slice(0, -1).join("/") || "/";
-         goToDir(dir);
-       };
+        // Jump the picker to the user's home directory. Resolved lazily so the
+        // home is always the caller's real $HOME, however deep we've navigated.
+        // Guarded by isTauri() because homeDir() is a Tauri IPC call (in a plain
+        // browser it would reject); the button is still shown — tapping it in a
+        // browser simply no-ops (the picker only exists in the Tauri build anyway).
+        const goToHome = async () => {
+          if (!isTauri()) return;
+          let home = null;
+          try { home = await tauriHomeDir(); } catch (_) { home = null; }
+          if (!home) return;
+          try { home = decodeURIComponent(String(home)); } catch (_) {}
+          home = String(home).replace(/\/+$/, "") || "/";
+          goToDir(home);
+        };
 
        const confirmFile = (name) => {
          const full = state.cwd + "/" + name;

@@ -20,7 +20,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Session persistence** — tabs and their contents are saved to `localStorage` so a crash or close does not lose work
 - **Unsaved-changes guard** — confirms before closing a tab or window with uncommitted edits
 - **Light / Dark** theme
-- Saves & opens from the filesystem via Tauri's `fs` plugin, using an **in-app file picker** (centered over the window; the native rfd GTK picker drifts off-window) with a browser-file-input fallback so the web app still works in the browser
+- Saves & opens from the filesystem via Tauri's `fs` plugin, using an **in-app file picker** (centered over the window; the native rfd GTK picker drifts off-window) with a browser-file-input fallback so the web app still works in the browser. The picker has a clickable path breadcrumb plus an **always-visible Home button** (and Up) so you can jump back to your home directory no matter how far you have navigated. Hidden (dot-prefixed) folders are reachable on Unix — the fs scope's `**` glob matches dot-path segments (via `plugins.fs.requireLiteralLeadingDot: false` in `src-tauri/tauri.conf.json`), so you can open/save inside `~/.config`, `~/dev/.github`, etc.
 
 ---
 
@@ -179,7 +179,7 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-save
   ```
 
-- **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 32 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); and navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path). Needs the built `dist/`; no Rust toolchain required.
+- **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
   npm run verify-tauri
@@ -232,7 +232,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
-| `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 32 cases) |
+| `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |
 

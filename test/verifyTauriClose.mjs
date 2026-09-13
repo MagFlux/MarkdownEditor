@@ -85,9 +85,9 @@ function installInternals() {
           }
           // Fake an FS listing; used by the in-app save/open picker.
           // A couple of plausible entries so the list isn't empty.
-          const root = p || "/home/user";
           return [
             { name: "notes", isDirectory: true, isFile: false, isSymlink: false },
+            { name: ".config", isDirectory: true, isFile: false, isSymlink: false },
             { name: "existing.md", isDirectory: false, isFile: true, isSymlink: false },
           ];
         }
@@ -299,6 +299,75 @@ await scenario("F: forbidden dir → UI keeps last readable path", async ({ page
   const rows = await page.locator(".picker-list li").count();
   ok("F4 list still shows the last readable dir's entries", rows >= 2, JSON.stringify({ rows }));
   // Cleanup: dismiss the picker.
+  await byRole(page, "button", "Cancel", true).first().click({ timeout: 3000 }).catch(() => {});
+});
+
+// ---- G: Home button always present + jumps back to the home dir from anywhere ----
+await scenario("G: Home button always available + returns to home", async ({ page, st, ok, wait }) => {
+  await page.evaluate(() => { window.editor.open(); return true; });
+  await page.waitForSelector(".picker-list", { timeout: 2500 });
+  const homeBtn = page.locator('.picker-pathbar .ctrl[aria-label="Home directory"]');
+  const upBtn = page.locator('.picker-pathbar .ctrl[aria-label="Go up"]');
+
+  // G1/G2: both navigation controls render at the opening (home) directory.
+  ok("G1 Home button present at opening (home) dir", (await homeBtn.count()) === 1, "n=" + (await homeBtn.count()));
+  ok("G2 Up button present alongside Home", (await upBtn.count()) === 1, "n=" + (await upBtn.count()));
+
+  // Navigate INTO a subdir to prove the controls are not location-dependent.
+  await page.locator(".picker-list li", { hasText: "notes" }).first().click({ timeout: 3000 });
+  await wait(200);
+  const G3st = await st();
+  ok("G3 navigated into subdir (read_dir hit /home/user/notes)", G3st.readDir.includes("/home/user/notes"), JSON.stringify(G3st.readDir));
+  ok("G4 Home button STILL present after navigating away from home", (await homeBtn.count()) === 1);
+  const cur = await page.locator(".picker-pathbar .crumb-cur").first().textContent();
+  ok("G5 crumb current is the notes subdir", /notes$/.test(cur.trim()), JSON.stringify(cur));
+
+  // Click Home → picker must jump back to the user's home directory.
+  await homeBtn.first().click({ timeout: 3000 });
+  await wait(200);
+  const G6st = await st();
+  const homeReads = G6st.readDir.filter((p) => p === "/home/user");
+  ok("G6 Home click re-loaded the home dir (read_dir /home/user again)", homeReads.length >= 2, JSON.stringify(G6st.readDir));
+  const cur2 = await page.locator(".picker-pathbar .crumb-cur").first().textContent();
+  ok("G7 crumb current back on the home dir", /user$/.test(cur2.trim()) && !/notes/.test(cur2.trim()), JSON.stringify(cur2));
+
+  // Cleanup: cancel.
+  await byRole(page, "button", "Cancel", true).first().click({ timeout: 3000 }).catch(() => {});
+});
+
+// ---- H: picker must be able to ENTER a hidden (leading-dot) folder ----
+// Regression guard for the fs-scope fix in src-tauri/tauri.conf.json:
+// `plugins.fs.requireLiteralLeadingDot: false` makes the scope's `**` glob
+// match dot-path segments on Unix. The stub doesn't enforce the real scope,
+// so we assert the UI-level contract instead: the picker lists dot-dirs and
+// drives read_dir() into a dot-path without hiding or refusing them. A future
+// change that re-adds a leading-dot filter (in render() or goToDir()) will
+// break this, so it surfaces here.
+await scenario("H: hidden (dot) folder is navigable in the picker", async ({ page, st, ok, wait }) => {
+  await page.evaluate(() => { window.editor.open(); return true; });
+  await page.waitForSelector(".picker-list", { timeout: 2500 });
+  // Clear any fault injection from an earlier scenario.
+  await page.evaluate(() => { window.__state.failingDirs = []; });
+
+  // H1: the listing includes a dot-prefixed directory (not filtered out).
+  const dotRow = page.locator(".picker-list li", { hasText: ".config" });
+  ok("H1 dot folder listed in the picker", (await dotRow.count()) >= 1, "n=" + (await dotRow.count()));
+
+  // H2: clicking it drives read_dir on the dot-path (state.cwd adopts it).
+  await dotRow.first().click({ timeout: 3000 });
+  await wait(200);
+  const H2st = await st();
+  ok("H2 read_dir was invoked on the dot-path",
+     H2st.readDir.some((p) => p === "/home/user/.config"),
+     JSON.stringify(H2st.readDir));
+  // H3: the crumb adopts the dot-folder as the current dir (not stuck on home).
+  const cur = await page.locator(".picker-pathbar .crumb-cur").first().textContent();
+  ok("H3 crumb current is the dot-folder", /\.config$/.test(cur.trim()), JSON.stringify(cur));
+  // H4: no error status — the read succeeded.
+  const status = await page.locator(".picker-status").first().textContent();
+  ok("H4 no read error shown for the dot-folder", !/cannot read/i.test(status || ""), JSON.stringify(status));
+
+  // Cleanup: cancel.
   await byRole(page, "button", "Cancel", true).first().click({ timeout: 3000 }).catch(() => {});
 });
 

@@ -34,10 +34,14 @@ npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
 npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
-                        # real api/IPC (32 cases) — save→in-app picker→write+close,
+                        # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
-                        # navigate-into-forbidden-dir→crumb stays on last readable.
+                        # navigate-into-forbidden-dir→crumb stays on last readable,
+                        # Home button always present in the picker pathbar and jumps
+                        # back to the home dir even after navigating deep, and the
+                        # picker ENTERS a hidden (dot) folder (read_dir on the dot-path) —
+                        # the UI-level guard for the fs requireLiteralLeadingDot:false fix.
                         # Needs the built dist.
 
 # Native app (needs Rust + WebKitGTK; make sure `cargo` is on PATH,
@@ -112,7 +116,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). |
-| `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. |
+| `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. Also `plugins.fs.requireLiteralLeadingDot: false` — lets the fs scope `**` match hidden (dot) path segments on Unix so the picker can open `~/.config` etc. (see invariant 7). |
  | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-write-text-file`, `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
@@ -178,6 +182,20 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 6. **New tab, not reuse.** `open()` always opens a fresh tab. A blank `Untitled` tab
    is never reused for the just-opened document.
+
+7. **fs scope must reach hidden (dot) paths.** The in-app picker lists whatever
+   `read_dir` returns — that includes dot-dirs like `~/.config`. On Unix the Tauri
+   fs-plugin scope defaults to `requireLiteralLeadingDot: true`, whose glob rule
+   makes `*`/`**` *not* match path segments that begin with `.`, so navigating into
+   a dot-dir is scope-denied (`forbidden path: … allow-read-dir …`) while the very
+   dir that *listed* it was allowed. We set `plugins.fs.requireLiteralLeadingDot: false`
+   in `src-tauri/tauri.conf.json` so the `fs:scope: ["**"]` pattern matches dot
+   segments. The Playwright harness in `test/verifyTauriClose.mjs` scenario H
+   asserts the *UI* drives `read_dir` into a dot-path; it **stubs** the fs IPC and
+   does not enforce the real scope, so only the actual app enforces the ACL.
+   Trade-off: the picker can now reach sensitive dot-dirs (`~/.ssh`, `~/.aws`, …) —
+   an intentional, documented choice. Do not re-add a leading-dot filter to the
+   picker's `render()`/`goToDir()` without also revisiting this config.
 
 ## Conventions
 
