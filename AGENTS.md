@@ -36,6 +36,10 @@ npm run verify-save    # save / close-guard UI test (24 cases)
 npm run verify-toolbar # toolbar active-states track the caret (18 cases) — bold/underline/
                         # code/H2/plain + click, arrow-key, programmatic, and tab-switch
                         # paths, all with NO text change required.
+npm run verify-paste   # rich-paste: an HTML clipboard (Excel/HTML <table>, bold/italic/
+                        # underline spans, mixed runs) converts to Markdown and commits as
+                        # ONE undo-able edit; plain-text pastes fall through to the browser's
+                        # default insert (18 cases).
 npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                         # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
@@ -55,7 +59,8 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the three verify scripts; all must be green.
+see the invariant below. Then re-run the seven verify scripts (`verify`, `verify-undo`,
+`verify-save`, `verify-toolbar`, `verify-paste`, `verify-tauri`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
@@ -70,7 +75,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
 1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
    cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
-   `verify-tauri`. No Rust. Runs on PR and on release.
+   `verify-paste` → `verify-tauri`. No Rust. Runs on PR and on release.
 
 2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
    packages installers via `tauri-apps/tauri-action@v0`:
@@ -115,7 +120,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-| `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). |
+| `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). |

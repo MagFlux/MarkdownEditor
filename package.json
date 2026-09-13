@@ -12,6 +12,7 @@
     "verify-undo": "node test/verifyUndo.mjs",
     "verify-save": "node test/verifySaveOpen.mjs",
     "verify-toolbar": "node test/verifyToolbar.mjs",
+    "verify-paste": "node test/verifyPaste.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "tauri": "tauri",
     "app": "tauri dev",

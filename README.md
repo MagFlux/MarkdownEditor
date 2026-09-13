@@ -14,6 +14,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — toggled on a selection or the current word (Ctrl+B / I / U / K)
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables
 - **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. They do not require you to select or change the text first.
+- **Rich paste** — paste an HTML clipboard (an Excel/Word table, a bold/italic/underline span, or a mix) and it converts to Markdown (`<table>` → GFM table, `<b>` → `**…**`, `<i>` → `*…*`, `<u>` → `<u>…</u>`), committed as a single undo-able edit. Plain-text pastes are left to the browser.
 - **Drag-and-drop** `.md` files straight onto the window (opens them in a new tab)
 - **Ctrl+click a link** in the source to open it in the default browser
 - **Tab / Shift+Tab** to indent / outdent list & code lines
@@ -186,6 +187,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-toolbar
   ```
 
+- **Rich-paste test** — 18 assertions that pasting an **HTML clipboard** converts to Markdown and commits as a single undo-able edit: an Excel/HTML `<table>` becomes a GFM table (header + separator + rows, bold cells kept as `**…`), a `<b>`/`<i>`/`<u>` span becomes `**…**` / `*…*` / `<u>…</u>`, and a mixed run like `plain <b>bold</b> after` keeps only the bold part wrapped. Plain-text pastes (no `text/html`) are **not** intercepted, so the browser inserts the raw text unchanged.
+
+  ```bash
+  npm run verify-paste
+  ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -239,6 +246,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
+| `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |

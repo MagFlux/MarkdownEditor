@@ -241,6 +241,169 @@ function wrapFor(kind, inner) {
   return inner;
 }
 
+/* ================= Rich-paste conversion (HTML clipboard → Markdown) =================
+   Pure helpers, no DOM globals beyond `document` (which exists in both the browser
+   and the Tauri webview, so these are safe to call from anywhere in the app).
+
+   The goal: when the user Ctrl+V's rich content (Excel table, Word bolded
+   paragraph, web snippet) into the Markdown editor, we convert the `text/html`
+   clipboard payload to a readable Markdown representation and commit it as a
+   single, undo-able edit. If there is no recognised HTML, we fall through to
+   the browser's default paste (plain text still works).
+
+   Cell text: whitespace is normalised (tabs, newlines → space) so the output
+   fits on one line. Cells that carry `**` / `*` / `<u>` markers keep them so
+   the preview renders them.
+*/
+function mdCellText(node) {
+  // Collect textContent (incl. nested styled children) but normalise runs of
+  // whitespace and turn embedded newlines into a single space. Returns {bold,
+  // italic, underline, text}.
+  let bold = false, italic = false, underline = false;
+  let text = "";
+  (function walk(n) {
+    if (n.nodeType === 3) { text += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    const tag = n.tagName && n.tagName.toUpperCase();
+    if (tag === "B" || tag === "STRONG") bold = true;
+    if (tag === "I" || tag === "EM") italic = true;
+    if (tag === "U") underline = true;
+    const st = n.getAttribute && n.getAttribute("style") || "";
+    if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(st)) bold = true;
+    if (/font-style\s*:\s*italic/i.test(st)) italic = true;
+    if (/text-decoration:\s*[^;]*underline/i.test(st)) underline = true;
+    for (let c = n.firstChild; c; c = c.nextSibling) walk(c);
+  })(node);
+  text = text.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  let out = text;
+  if (underline) out = `<u>${out}</u>`;
+  if (italic) out = `*${out}*`;
+  if (bold) out = `**${out}**`;
+  return out.replace(/\|/g, "\\|");
+}
+
+function mdTableFromHtml(root) {
+  // Walk the first <table> descendant, build the same GFM layout the in-app
+  // "table" toolbar button produces, but with the real cell contents in it.
+  const tbl = root.tagName === "TABLE" ? root : root.querySelector("table");
+  if (!tbl) return null;
+  // Build a 2-D grid: for each visual row, list of cell texts. Cells may span
+  // multiple <tr> rows (rowspan) but Excel rarely uses that; we treat each
+  // <tr> as one grid row and each cell as one column.
+  const rows = [];
+  const trs = tbl.querySelectorAll("tr");
+  trs.forEach((tr) => {
+    const cells = [];
+    tr.querySelectorAll("td, th").forEach((c) => cells.push(mdCellText(c)));
+    if (cells.length) rows.push(cells);
+  });
+  if (!rows.length) return null;
+  // Normalise: all rows must have the same column count. Pad with "".
+  const cols = Math.max(...rows.map((r) => r.length));
+  const grid = rows.map((r) => r.concat(new Array(cols - r.length).fill("")));
+  const line = (r) => `| ` + r.map((c) => (c === "" ? " " : c)).join(" | ") + ` |`;
+  const sepLine = `| ` + new Array(cols).fill("------").join(" | ") + ` |`;
+  const body = grid.slice(1).map(line).join("\n");
+  return line(grid[0]) + "\n" + sepLine + (body ? "\n" + body : "");
+}
+
+function mdStyleOf(node) {
+  // Inherited bold / italic / underline for a text node: the union of the flags
+  // carried by the node's ancestors (its own tag plus the style attribute, where
+  // common — this mirrors how mdCellText detects styling). Walk up the chain so
+  // e.g. "bi" inside <b>…</b> inherits bold.
+  let b = false, i = false, u = false;
+  for (let n = node && node.parentElement; n && n.nodeType === 1; n = n.parentElement) {
+    const tag = n.tagName && n.tagName.toUpperCase();
+    if (tag === "B" || tag === "STRONG") b = true;
+    if (tag === "I" || tag === "EM") i = true;
+    if (tag === "U") u = true;
+    const st = n.getAttribute && n.getAttribute("style") || "";
+    if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(st)) b = true;
+    if (/font-style\s*:\s*italic/i.test(st)) i = true;
+    if (/text-decoration:[^;]*underline/i.test(st)) u = true;
+  }
+  return { b, i, u };
+}
+
+function mdInlineMd(root) {
+  // Flatten an inline subtree into Markdown, preserving bold / italic /
+  // underline. Walks the DOM in document order, records each text node's style
+  // (bold, italic, underline) and then merges adjacent text nodes that share the
+  // same style so we can wrap each *run* once (e.g. "plain **bold** after").
+  //
+  // Returns a string, or null when there is no visible text.
+  const runs = [];
+  (function walk(n) {
+    if (n.nodeType === 3) {
+      const s = mdStyleOf(n);
+      const text = (n.nodeValue || "").replace(/\s+/g, " ");
+      // Merge with the previous run if identical style.
+      const key = s.b + "|" + s.i + "|" + s.u;
+      const last = runs[runs.length - 1];
+      if (last && last.key === key) last.text += text;
+      else runs.push({ key, text, b: s.b, i: s.i, u: s.u });
+      return;
+    }
+    if (n.nodeType !== 1) return;
+    // Skip table children — those are handled separately by mdFromHtml.
+    if (n.querySelector && n.querySelector("table")) return;
+    for (let c = n.firstChild; c; c = c.nextSibling) walk(c);
+  })(root);
+  if (!runs.length) return null;
+  const out = runs.map((r) => {
+    const t = r.text.trim();
+    if (!t) return "";
+    let md = t;
+    if (r.u) md = `<u>${md}</u>`;
+    if (r.i) md = `*${md}*`;
+    if (r.b) md = `**${md}**`;
+    return md;
+  }).filter((s) => s !== "");
+  return out.length ? out.join(" ") : null;
+}
+
+function mdFromHtml(html) {
+  // Best-effort conversion of a clipboard HTML blob to Markdown. Returns a
+  // string on success, or null when there is nothing recognisable, in which case
+  // the caller must fall back to the browser's default paste (plain text still
+  // works, and the tab is untouched).
+  //
+  //   - any <table> element → a GFM table block
+  //   - the rest (top-level inline content) → one line with bold / italic /
+  //     underline preserved per the in-editor style (mdInlineMd)
+  //
+  // Mixed content (e.g. "intro **bold** body then a table") is legal Markdown:
+  // a paragraph followed by a table, blank line between.
+  if (!html || !/</.test(html)) return null;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const blocks = [];
+  const seen = new Set();
+  // Tables first (in document order). We walk the body's children; any <table>
+  // that is a direct child or nested one level deep is converted.
+  const inlineNodes = [];
+  doc.body.childNodes.forEach((n) => {
+    if (n.nodeType !== 1) { inlineNodes.push(n); return; }
+    if (n.tagName === "TABLE" || (n.querySelector && n.querySelector("table"))) {
+      const tbl = n.tagName === "TABLE" ? n : n.querySelector("table");
+      if (tbl && !seen.has(tbl)) {
+        seen.add(tbl);
+        const md = mdTableFromHtml(tbl);
+        if (md) blocks.push(md);
+      }
+      return;
+    }
+    inlineNodes.push(n);
+  });
+  if (inlineNodes.length) {
+    const parts = inlineNodes.map((n) => mdInlineMd(n)).filter(Boolean);
+    if (parts.length) blocks.push(parts.join(" "));
+  }
+  if (!blocks.length) return null;
+  return blocks.join("\n\n");
+}
+
 /* ================= App factory (multi-tab, undo/redo, tabs, tabs, drag-drop, Tauri opener) ================= */
 const LS_KEY = "mdeditor.session.v2";
 let uid = 0, docId = 0;
@@ -455,6 +618,24 @@ export function createApp(root) {
     doc.input.addEventListener("mouseup", () => {
       if (doc !== activeTab) return;
       requestAnimationFrame(() => { if (doc === activeTab) { updateStatus(doc); updateActiveStates(); } });
+    });
+    // Rich paste: if the clipboard carries an HTML fragment we can turn into
+    // Markdown (a table, or a bold/italic/underline-wrapped span), commit it as
+    // a single undo-able edit instead of dropping raw HTML into the textarea.
+    // Plain-text pastes fall through to the browser's default insert, which is
+    // exactly what we want.
+    doc.input.addEventListener("paste", (ev) => {
+      if (performance.now() < midClosePasteBlock) return; // mid-click-close guard
+      if (doc !== activeTab) return;
+      const html = ev.clipboardData && ev.clipboardData.getData && ev.clipboardData.getData("text/html");
+      if (!html) return;
+      const md = mdFromHtml(html);
+      if (!md) return;
+      ev.preventDefault();
+      const a = doc.input.selectionStart, b = doc.input.selectionEnd;
+      const text = doc.input.value;
+      const to = text.slice(0, a) + md + text.slice(b);
+      commit("paste", to, a + md.length, a + md.length);
     });
     doc.tab.querySelector(".tname").addEventListener("click", () => activate(doc));
     // Middle-click (button 1) closes the tab, like most editors/browsers.
@@ -1938,5 +2119,6 @@ export function createApp(root) {
     toggleFormat, toggleBlock,
     undo, redo, indentLines,
     openAtCaret,
+    mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf,
   };
 }

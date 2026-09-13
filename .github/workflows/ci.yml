@@ -71,7 +71,9 @@ jobs:
         run: npm run verify-save
       - name: Toolbar active-states track the caret (18 cases)
         run: npm run verify-toolbar
-      - name: Native Tauri IPC path (32 cases)
+      - name: Rich-paste HTML→Markdown (18 cases)
+        run: npm run verify-paste
+      - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 
   # ----------------------------------------------------- build + release
