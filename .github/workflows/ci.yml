@@ -108,10 +108,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # The Tauri Rust project lives in src-tauri/ (config + Cargo.toml).
-          projectPath: src-tauri
-          # Run the CLI via npx so it resolves to @tauri-apps/cli from node_modules
-          # (@tauri-apps/cli is installed by `npm ci` above; `tauri` isn't on PATH).
+          # projectPath is the cwd for both tauri build AND beforeBuildCommand
+          # (npm run build → vite build). It must be the repo root, NOT src-tauri,
+          # because @tauri-apps/cli is installed in the root node_modules and
+          # frontendDist in tauri.conf.json is "../dist" (root-relative).
+          # tauri-action auto-discovers src-tauri/ by globbing for tauri.conf.json.
+          projectPath: .
+          # Run the CLI via npx so it resolves @tauri-apps/cli from the root
+          # node_modules (installed above by `npm ci`). `tauri` is not on PATH.
           tauriScript: npx tauri
           args: ${{ matrix.bundles }}
           tagName: v__VERSION__
@@ -125,4 +129,3 @@ jobs:
             Built by GitHub Actions from `main`.
           releaseDraft: true
           prerelease: false
-          artifactName: markdown-editor

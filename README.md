@@ -52,6 +52,7 @@ MarkdownEditor/
 │   ├── capabilities/default.json  # permissions (fs, dialog, opener)
 │   ├── src/main.rs             # tauri::Builder + plugin init
 │   └── icons/                  # .png / .ico / .icns bundle icons
+├── .github/workflows/ci.yml    # CI: test suite + 3-OS build → draft GitHub Release
 └── test/
     ├── test.mjs                # round-trip invariant (no server, instant)
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
@@ -185,6 +186,38 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   ```
 
 All of these exit non-zero on any failure or console error, so they can be wired into CI.
+
+---
+
+## CI / Releases
+
+The GitHub Actions pipeline (`.github/workflows/ci.yml`) does two things:
+
+1. **Tests on every push and pull request** (Ubuntu): the full suite above —
+   `npm test`, `verify`, `verify-undo`, `verify-save`, `verify-tauri`. No Rust needed.
+2. **Builds installers + a draft release** (3-OS matrix), but **only on pushes to
+   `main` or a manual "Run workflow"** (not on PRs). It builds via
+   `tauri-apps/tauri-action@v0`:
+   - **Windows** (`windows-latest`) → `nsis` (installer `.exe`) + `msi`
+   - **macOS** (`macos-14`) → `dmg`
+   - **Linux** (`ubuntu-22.04`) → `appimage` + `deb`
+
+   Installers are attached to a **draft** GitHub Release named `v<version>` (version
+   from `src-tauri/tauri.conf.json`, `0.1.0` today). Drafts are deliberately used
+   so CI can run on every push without publishing — open the Releases page and hit
+   **Publish** to make it go live.
+
+### Signing
+
+With no secrets set, builds produce **unsigned** installers (fine for personal use;
+macOS Gatekeeper / SmartScreen will warn). To produce signed, notarised / update-able
+releases, add these to **Settings → Secrets and variables → Actions**:
+
+| Secret | Purpose |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | Enables the updater JSON (auto-update) |
+| `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_CERTIFICATES`, `APPLE_SIGNING_PASSWORD` | macOS Developer ID + notarisation |
+| `CSC_LINK`, `CSC_KEY_PASSWORD` | Windows SmartCard / code-signing cert |
 
 ## Handy scripts
 

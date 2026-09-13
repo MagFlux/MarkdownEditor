@@ -51,6 +51,49 @@ still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks
 see the invariant below. Then re-run the three verify scripts; all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
+## CI/CD (GitHub Actions)
+
+The pipeline lives in `.github/workflows/ci.yml`. Two jobs:
+
+1. **`test`** (ubuntu-latest) — runs the full suite, cheap → expensive:
+   `npm test` → `verify` → `verify-undo` → `verify-save` → `verify-tauri`.
+   No Rust required. Runs on every push to `main`, every PR, and manual dispatch.
+
+2. **`build`** (3-OS matrix) — gated on `test` passing; runs only on push to
+   `main` or manual dispatch (skipped on PRs). Builds each platform installer via
+   `tauri-apps/tauri-action@v0`:
+   - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`)
+   - `macos-14`: `--bundles dmg`
+   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg)
+
+   Artifacts are uploaded to a **draft** GitHub Release named `v<version>`
+   (version pulled from `tauri.conf.json`). Drafts are safe to run on every push;
+   nothing is published until you open the Release page and hit "Publish".
+
+### `tauri-action` inputs (what actually works)
+
+| Input | Value | Why |
+|---|---|---|
+| `projectPath` | `.` (repo root) | The action uses this as the **cwd** for both `tauri build` and `beforeBuildCommand: npm run build`. It also auto-discovers `src-tauri/` by globbing for `tauri.conf.json` (glob: `**/tauri.conf.json`). Setting it to `src-tauri` would make both commands run inside `src-tauri/` where there is no `package.json` → instant failure. |
+| `tauriScript` | `npx tauri` | Bare `tauri` is not on PATH. `npx` resolves `@tauri-apps/cli` from the root `node_modules/`. The action's auto-detect would work too, but being explicit avoids the `install -g` fallback. |
+| `args` | `--bundles <list>` | Passes through to `tauri build`. Without it, all platforms would attempt `targets: "all"`. |
+| `tagName` | `v__VERSION__` | `__VERSION__` is replaced by the action with the version from `tauri.conf.json` (`0.1.0` today). The `v` prefix is literal. |
+| `releaseDraft` | `true` | Keeps the release hidden until you manually publish. |
+
+**Do NOT add**: `project` (rejected — use `projectPath`), `artifactName` (rejected),
+`releaseCommitish`, or any input not in the action's `action.yml`. The action validates
+inputs strictly; an unrecognised key fails the step immediately.
+
+### Optional signing secrets (not set)
+
+Without these the build produces **unsigned** installers:
+- `TAURI_SIGNING_PRIVATE_KEY` — for the updater JSON (auto-update)
+- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_CERTIFICATES`, `APPLE_SIGNING_PASSWORD` — macOS Developer ID
+- `CSC_LINK`, `CSC_KEY_PASSWORD` — Windows SmartCard cert
+
+Set them in **Settings → Secrets and variables → Actions** (repo level) or
+**Organization → Secrets** (org level). They are available to the `build` job only.
+
 ## Files that matter
 
 | Path | Role |
@@ -64,10 +107,11 @@ For Tauri-native changes also run `npm run verify-tauri`.
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). |
-| `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `devUrl`, identifier `com.markdowneditor.desktop`. |
+| `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. |
  | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-write-text-file`, `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
+| `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |
 
 ## Hard invariants (do not regress)
 
