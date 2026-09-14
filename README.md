@@ -64,8 +64,11 @@ MarkdownEditor/
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
+    ├── verifyToolbar.mjs       # toolbar active-states track the caret (18 cases)
+    ├── verifyPaste.mjs         # rich-paste HTML→Markdown (18 cases)
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
+    ├── verifyModeScroll.mjs    # mode-switch scroll-PRESERVING (8 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -211,6 +214,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-scroll
   ```
 
+- **Mode-switch scroll-preservation** — 8 assertions that switching view mode via the toolbar's split/edit/preview button preserves the vertical scroll *ratio* instead of jumping the new view to the document bottom. The bug: the mode button refocusses the textarea, so with the caret at the end the browser auto-scrolls to the caret (bottom) and the split-view `followScroll` ratchet drags the other pane along — the user always landed at the bottom after a mode switch. The fix (`setMode` in `src/markdown.js`) records the leaving-mode ratio *before* applying the mode class, then re-asserts it on the newly-visible pane(s) after two nested `requestAnimationFrame` ticks (which beats the focus-auto-scroll race), stamping the value-based echo guard so the reflow can't ratchet a different value in. A stale-reassert guard skips the correction if the user switched modes (or tabs) again inside the rAF window, so fast split→edit→preview triple-taps don't leave a stale value. Covers: split→edit / edit→preview / →split at the top with the caret at the end (stays near the top, **not** the bottom — 3 cases), ratio carry-over split→edit at 55% and at 50%-with-caret-mid, and preview→split at 30% (3 cases), plus the "back at split after 3 fast clicks" mode assertion and the fast-triple-switch no-stale-overwrite guard (2 cases).
+
+  ```bash
+  npm run verify-modescroll
+  ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -264,9 +273,11 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
+| `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic (18 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |
+| `npm run verify-modescroll` | Headless mode-switch test: split/edit/preview preserves the scroll ratio (8 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |

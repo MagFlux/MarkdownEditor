@@ -119,8 +119,15 @@ npm run verify-export  # Export-as-PDF/HTML: hamburger menu open/close/outside-c
 npm run verify-scroll  # Split-view scroll-sync regression: a genuine user scroll on the
                         # FOLLOW pane (while its ECHO_MS deadline is still live) is accepted
                         # as a fresh lead immediately — the old time-only window swallowed it
-                        # for ~800 ms ("the left side lags / catches up"); value-based echo
-                        # matching fixes this (5 cases).
+                         # for ~800 ms ("the left side lags / catches up"); value-based echo
+                         # matching fixes this (5 cases).
+npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scroll RATIO:
+                         # previously the mode button refocused the textarea and the browser
+                         # caret-follow snap + followScroll ratchet jumped the view to the
+                         # BOTTOM when the caret was at the end. setMode now records the
+                         # leaving-mode ratio and restores it on the entering panes after two
+                         # rAF ticks; covers split->edit (caret-end stays near top), 55%/50%/
+                         # 30% ratio preservation, and the fast-triple-switch race (8 cases).
 npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                         # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
@@ -140,9 +147,9 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the nine verify scripts (`verify`, `verify-undo`,
+see the invariant below. Then re-run the ten verify scripts (`verify`, `verify-undo`,
 `verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-scroll`,
-`verify-tauri`, and `npm test`); all must be green.
+`verify-modescroll`, `verify-tauri`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
@@ -156,8 +163,9 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 **Jobs**:
 
  1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
-    cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
-    `verify-paste` → `verify-export` → `verify-scroll` → `verify-tauri`. No Rust.
+     cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
+     `verify-toolbar` → `verify-paste` → `verify-export` → `verify-scroll` →
+     `verify-modescroll` → `verify-tauri`. No Rust.
     Runs on PR and on release.
 
 2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
@@ -203,7 +211,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
- | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). |
+  | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -331,8 +339,22 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   live* AND the pane's `scrollTop` equals the stamped value within `ECHO_EPS`
   (1px). A genuine user scroll lands at a different offset → it is accepted
   immediately even inside the window. A time-only gate (the old bug) swallowed real
-  scrolls for up to `ECHO_MS` (~800 ms), producing the "left side lags and catches
-  up" symptom. See `test/verifyScroll.mjs` (5 cases).
+   scrolls for up to `ECHO_MS` (~800 ms), producing the "left side lags and catches
+   up" symptom. See `test/verifyScroll.mjs` (5 cases).
+ - **Mode-switch must preserve the scroll RATIO (do not regress).** Switching view
+   modes (split↔edit↔preview) via the mode button refocuses the textarea
+   (`activeTab.input.focus()` in the toolbar handler) *and* changes the layout;
+   with the caret at the end of the document the browser's scroll-to-caret then
+   snaps the visible pane to the BOTTOM, and `followScroll` ratchets the other
+   pane with it — previously this read as "switching modes always starts at the
+   bottom." `setMode` (in `src/markdown.js`) now records the leaving-mode scroll
+   *ratio* **before** the class toggle and re-asserts it on the entering panes
+   after two nested `requestAnimationFrame` ticks (wins the race against the focus
+   auto-scroll), stamping the value-based `__suppE`/`__suppP` guard on each pane
+   so the reflow's scroll event can't ratchet a different value in. A guard skips a
+   stale `apply` if the tab or mode changed again inside the rAF window (fast
+   double/triple switches). Do not remove those rAF re-asserts or the guard.
+   See `test/verifyModeScroll.mjs` (8 cases).
 - All dialogs (save/cancel prompts, open, and any error/info feedback) render
   **in-app** via `showModalBase`/`messageModal`/`pickPath` — NOT `alert`/`confirm`/
   `prompt` (unreliable in WebKitGTK) and NOT the native `tauri-plugin-dialog`

@@ -77,6 +77,8 @@ jobs:
         run: npm run verify-export
       - name: Scroll-sync lag fix (5 cases)
         run: npm run verify-scroll
+      - name: Mode-switch scroll-preserving (8 cases)
+        run: npm run verify-modescroll
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 

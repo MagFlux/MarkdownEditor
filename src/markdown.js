@@ -1810,6 +1810,25 @@ export function createApp(root) {
   }
 
   function setMode(m) {
+    const doc = activeTab;
+    const paneOf = (d) => ({ split: [d.editorScroll, d.previewScroll], edit: [d.editorScroll], preview: [d.previewScroll] });
+    // Capture the scroll RATIO of the pane(s) currently visible (i.e. those
+    // in the mode we are LEAVING). When switching to a single-pane mode the
+    // focused textarea may be snapped to the caret by the browser's
+    // scroll-into-view, and the followScroll chain then drags the OTHER pane
+    // with it — in practice this reads as "the view jumped to the bottom"
+    // when the caret is at the end. Restore the pre-switch ratio AFTER the
+    // class change + the auto-scroll settle (two rAF ticks; mirrors openAtTop).
+    const prevMode = app.dataset.mode || "split";
+    let keep = null;
+    if (doc) {
+      let bestMax = 0;
+      for (const sc of paneOf(doc)[prevMode]) {
+        const max = sc.scrollHeight - sc.clientHeight;
+        if (max <= 0) continue;
+        if (max > bestMax) { bestMax = max; keep = sc.scrollTop / max; }
+      }
+    }
     app.dataset.mode = m;
     // The layout hooks are the class selectors .mode-edit / .mode-preview
     // (style.css), so the class must be toggled too — data-mode alone does nothing.
@@ -1818,6 +1837,31 @@ export function createApp(root) {
     if (m === "preview") app.classList.add("mode-preview");
     const label = toolbar.querySelector(".mode-label");
     if (label) label.textContent = { split: "Split", edit: "Edit", preview: "Preview" }[m];
+    if (doc && keep !== null) {
+      const targets = paneOf(doc)[m];
+      const apply = () => {
+        // Guard against a fast second mode-switch in the rAF window: only
+        // apply if this mode is still the active one and the tab is still
+        // the active tab — otherwise a stale closure would overwrite the
+        // newer ratio the user is now at.
+        if (doc !== activeTab || app.dataset.mode !== m) return;
+        for (const sc of targets) {
+          const max = sc.scrollHeight - sc.clientHeight;
+          if (max <= 0) continue;
+          const value = keep * max;
+          // Stamp the value-based echo suppression with EXACTLY this offset
+          // (ECHO_EPS will treat ≈-equal realScroll events as programmatic)
+          // so the reflow's scroll event cannot ratchet a different value
+          // into the other pane before we assert ours.
+          doc[sc === doc.editorScroll ? "__suppE" : "__suppP"] =
+            { deadline: performance.now() + ECHO_MS, value };
+          sc.scrollTop = value;
+        }
+      };
+      // rAF#1 lets the new mode's CSS reflow settle; rAF#2 runs after the
+      // focus auto-scroll has had a chance to land, so we win the race.
+      requestAnimationFrame(() => { requestAnimationFrame(apply); });
+    }
   }
 
   /* ---- save / open ----
