@@ -603,14 +603,18 @@ export function createApp(root) {
   const TABS = [];
   let activeTab = null;
   let raf = 0, suppressInput = false;
-  // Duration (ms) during which a follower pane's own scroll events are treated
-  // as the ECHO of our programmatic scrollTop assignment, not as a fresh user
-  // scroll. Must outlast the async delivery of that scroll event in WebKitGTK.
-  // Older WebKitGTK (2.28) has noticeably slower event delivery than Chromium/
-  // modern WebKit, so use a generous window. The cost is negligible — we only
-  // suppress scroll events on the pane we *just* drove; any user input on that
-  // pane during the window is re-armed on the next tick, not lost.
+  // Deadline (ms) bounding echo detection: realScroll drops a scroll event only
+  // while the pane is still within ECHO_MS of the moment we last assigned it AND
+  // its offset equals the value we wrote (± ECHO_EPS). So ECHO_MS guards against
+  // a LATE async echo re-flipping __lead, not against delaying genuine user
+  // scrolls — those land at a different offset and are accepted on the spot.
+  // Keep it generous: older WebKitGTK (~2.28) delivers scrollTop-change events
+  // noticeably later than Chromium/modern WebKit.
   const ECHO_MS = 800;
+  // Tolerance (px) for "this scroll offset is the one we assigned" when telling
+  // our programmatic echo apart from a real user scroll. A genuine scroll lands
+  // >1px away and is never suppressed; only an exact (± rounding) echo is.
+  const ECHO_EPS = 1;
   // Consecutive keystrokes within this window (ms) count as a SINGLE undo step.
   // A pause longer than this finalizes the step so Ctrl+Z reverts it as one unit.
   const COALESCE_MS = 500;
@@ -785,26 +789,29 @@ export function createApp(root) {
     // A genuine user scroll on a pane makes the OTHER pane follow it. The trap
     // is that followScroll programmatically sets the follower's scrollTop, and
     // the scroll event that fires for that assignment reaches us ASYNCHRONOUSLY
-    // (a queued task) — so by the time it lands we can't tell it apart from the
-    // user. Value-matching the assignment fails on WebKitGTK (the value read
-    // back isn't the value we wrote), so we suppress the follower's echo with a
-    // TIME WINDOW instead: right after we set the follower we mark it "being
-    // driven", and any scroll event from it inside that window is our echo and
-    // is dropped. Without this, the echoed event flips which pane is leading,
-    // and the ratio→pixel→ratio round-trip between two panes of different
-    // heights ratchets the value down frame-by-frame — the "keeps scrolling to
-    // the top" drift. Suppression breaks the feedback loop the instant it forms.
-    // Window must outlast the async delivery of the follower's scroll event.
-    // In WebKitGTK this can be noticeably slower than in Chromium/Blink, and the
-    // user's reported symptom (lead:e ↔ lead:p flicker) indicates the echo event
-    // is arriving later than in Chromium. Use a generous window; this only
-    // suppresses scroll events on the pane we JUST drove, so any user scroll in
-    // that span is re-armed on the very next tick — not lost, just delayed.
+    // (a queued task), so we must tell it apart from a real user scroll on the
+    // same pane. We do it by VALUE, not by time alone: followScroll records
+    // {deadline, value} per driven pane, and realScroll drops an event only
+    // while it's still within the deadline AND at (≈) the value we assigned
+    // (± ECHO_EPS). A genuine user scroll on that pane lands at a different
+    // offset, so it passes the value check and is accepted immediately — fixing
+    // the old bug where a blind time window delayed every real scroll on the
+    // *other* pane for up to ECHO_MS after a lead flip. (A pure time window —
+    // "the" prior approach — correctly suppressed the echo but also swallowed
+    // every real scroll on the follow pane inside the window, which read as the
+    // left/right lag.) Dropping the echo still matters: an echoed event flips
+    // which pane is leading, and the ratio→pixel→ratio round-trip between two
+    // panes of different heights ratchets the value down frame-by-frame — the
+    // "keeps scrolling to the top" drift.
     function realScroll(letter) {
       if (doc !== activeTab) return;
       const now = performance.now();
       const key = letter === "e" ? "__suppE" : "__suppP";
-      if (doc[key] > now) return; // we just drove this pane → it's our echo
+      const s = doc[key];
+      // Echo of OUR assignment: within the deadline AND at ≈ the offset we
+      // wrote. (scrollTop can be fractional; ECHO_EPS absorbs rounding.)
+      const pane = letter === "e" ? doc.editorScroll : doc.previewScroll;
+      if (s && s.deadline > now && Math.abs(pane.scrollTop - s.value) <= ECHO_EPS) return;
       doc.__lead = letter;
       kickScrollSync();
     }
@@ -828,15 +835,15 @@ export function createApp(root) {
   // overlay padding lets the webview park the scroll at the bottom.
   function openAtTop(doc) {
     // Mark our programmatic resets as echoes so the resulting scroll events are
-    // treated as our own and can't kick off the two-pane sync.
-    doc.__suppE = performance.now() + ECHO_MS;
-    doc.__suppP = performance.now() + ECHO_MS;
+    // treated as our own (≈scrollTop 0) and can't kick off the two-pane sync.
+    doc.__suppE = { deadline: performance.now() + ECHO_MS, value: 0 };
+    doc.__suppP = { deadline: performance.now() + ECHO_MS, value: 0 };
     doc.editorScroll.scrollTop = 0;
     doc.previewScroll.scrollTop = 0;
     doc.input.setSelectionRange(0, 0);
     requestAnimationFrame(() => {
-      doc.__suppE = performance.now() + ECHO_MS;
-      doc.__suppP = performance.now() + ECHO_MS;
+      doc.__suppE = { deadline: performance.now() + ECHO_MS, value: 0 };
+      doc.__suppP = { deadline: performance.now() + ECHO_MS, value: 0 };
       doc.editorScroll.scrollTop = 0;
       doc.previewScroll.scrollTop = 0;
     });
@@ -1469,11 +1476,14 @@ export function createApp(root) {
     if (maxA <= 0) return;
     const ratio = src.scrollTop / maxA;
     const target = ratio * (dst.scrollHeight - dst.clientHeight);
-    // Suppress this pane's echo scroll event for ECHO_MS so it does NOT flip
-    // the lead and start driving the OTHER pane (the feedback ratchet). Store a
-    // deadline; realScroll drops any event from this pane while now < deadline.
+    // Record, for THIS pane, the deadline and the exact offset we're about to
+    // drive it to. realScroll later drops a scroll event from this pane only
+    // while it's still within the deadline AND at ≈ this value — so a genuine
+    // user scroll (a different offset) is accepted immediately. Suppressing the
+    // echo by this value+deadline check is what stops it flipping the lead back
+    // and start driving the OTHER pane (the feedback ratchet).
     const dstKey = doc.__lead === "e" ? "__suppP" : "__suppE";
-    doc[dstKey] = performance.now() + ECHO_MS;
+    doc[dstKey] = { deadline: performance.now() + ECHO_MS, value: target };
     dst.scrollTop = target;
   }
   let scrollRaf = 0;

@@ -75,6 +75,8 @@ jobs:
         run: npm run verify-paste
       - name: Export-as-PDF/HTML (30 cases)
         run: npm run verify-export
+      - name: Scroll-sync lag fix (5 cases)
+        run: npm run verify-scroll
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 

@@ -15,6 +15,7 @@
     "verify-toolbar": "node test/verifyToolbar.mjs",
     "verify-paste": "node test/verifyPaste.mjs",
     "verify-export": "node test/verifyExport.mjs",
+    "verify-scroll": "node test/verifyScroll.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "tauri": "tauri",
     "app": "tauri dev",

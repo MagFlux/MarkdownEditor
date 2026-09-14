@@ -65,6 +65,7 @@ MarkdownEditor/
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
+    ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -204,6 +205,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-export
   ```
 
+- **Scroll-sync lag fix** — 5 assertions that, in split view, a genuine scroll on the *follow* pane — the one that was driven by our last programmatic `scrollTop` assignment — is accepted as a fresh lead **immediately**. The old time-only echo window treated every scroll event on that pane within `ECHO_MS` as our own echo, so a real user scroll was swallowed for ~800 ms ("the left side lags and catches up"). The fix records the exact offset we wrote; `realScroll` suppresses a match **only** while the deadline is live AND the offset equals the assigned value (± 1 px), so a genuine scroll (a different offset) passes on the spot. Both directions are covered: scroll editor → 0.50 (stamps the preview echo), then scroll preview → 0.85 while the window is still hot, and assert the editor follows to the ratio-matched offset instantly; the mirror (preview → 0.30 → editor → 0.72) is likewise asserted.
+
+  ```bash
+  npm run verify-scroll
+  ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -259,6 +266,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
+| `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |
