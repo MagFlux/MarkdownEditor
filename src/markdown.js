@@ -21,10 +21,105 @@ import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
    guarded so the browser fallback (Blob download) still works under `vite preview`. */
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
+/* Mermaid — STATIC import, same invariant as the lines above: hoisted into the
+   single main bundle (no runtime code-split chunk, which the GTK webview can't
+   resolve). Mermaid v12's `import` resolves to `dist/mermaid.core.mjs` whose
+   top-level init only needs `window.addEventListener`/`removeEventListener`
+   (both present in the test.mjs Node stubs), so importing under Node in
+   test.mjs is safe. Actual diagram rendering (mermaid.render) is browser-only —
+   it needs a real layout DOM — and is always guarded so the headless/Node path
+   never calls it. */
+import mermaid from "mermaid";
 
 marked.setOptions({ gfm: true, breaks: false });
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+/* ================= Mermaid diagram rendering =================
+   marked turns a ` ```mermaid ` fence into
+   `<pre><code class="language-mermaid">…</code></pre>`. We detect those and swap
+   the `<pre>` for the rendered SVG (inline, so both the live preview and the
+   html2canvas PDF export capture it; the exported HTML doc inlines the same SVG).
+   renderMermaidSvg is the single source: it asks mermaid for the SVG string. */
+let _mmSeq = 0;
+function mermaidTheme() {
+  let theme = "default";
+  try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
+  return theme;
+}
+/* Ask mermaid for a rendered SVG string. Safe under Node (returns {svg:"",bindFunctions:null}). */
+async function renderMermaidSvg(text) {
+  if (typeof document === "undefined" || !document.body) { return { svg: "", bindFunctions: null }; } // Node/headless: never render
+  let theme = "default";
+  try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
+  try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
+  const id = "md-mermaid-" + (++_mmSeq);
+  // Mermaid measures against a real (visible) node, so mount it off-screen in the
+  // doc, render into it, then fully clean up. Never left behind.
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;visibility:hidden;";
+  document.body.appendChild(container);
+  try {
+    const res = await mermaid.render(id, text, container);
+    let svg = (typeof res === "string") ? res : ((res && (res.svg || res.str)) || (container && container.innerHTML) || "");
+    // Make the inline SVG scale to its container width rather than a fixed
+    // mermaid width, so narrow diagrams don't overflow the preview column.
+    svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;"');
+    return { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
+  } finally {
+    if (container.parentNode) container.parentNode.removeChild(container);
+    const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
+    if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
+  }
+}
+
+/* Render the mermaid fences inside a LIVE DOM node in place (preview + PDF host).
+   Safe to call when there are no fences (querySelectorAll is empty → no-op). */
+async function renderMermaidInNode(node) {
+  if (!node) return;
+  const blocks = Array.from(node.querySelectorAll("pre > code.language-mermaid"));
+  if (!blocks.length) return;
+  for (const code of blocks) {
+    const pre = code.closest ? code.closest("pre") : code.parentNode;
+    const text = code.textContent; // textContent is already entity-decoded
+    let out = { svg: "", bindFunctions: null };
+    try { out = await renderMermaidSvg(text); }
+    catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    const holder = document.createElement("div");
+    holder.className = "mermaid-diagram";
+    holder.innerHTML = out.svg;
+    if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
+    else node.appendChild(holder);
+    if (out.bindFunctions) { try { out.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
+  }
+}
+
+/* Render the mermaid fences inside an HTML *string* (export path). marked had
+   escaped `<`/`>`, so decode the entities before handing the source to mermaid. */
+async function renderMermaidInHtml(html) {
+  const re = /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g;
+  if (!re.test(html)) { re.lastIndex = 0; return html; }
+  const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const out = [];
+  let last = 0, m;
+  while ((m = re.exec(html))) {
+    out.push(html.slice(last, m.index));
+    let svg;
+    try { svg = (await renderMermaidSvg(decode(m[1]))).svg; }
+    catch (e) { svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    out.push(`<div class="mermaid-diagram">${svg}</div>`);
+    last = m.index + m[0].length;
+  }
+  out.push(html.slice(last));
+  return out.join("");
+}
+
+/* Debounced preview render: syncDom runs on every keystroke, so only fire one
+   mermaid pass per settle window and drop the timer on the next one. */
+function scheduleMermaidRender(d) {
+  if (d.__mmTimer) clearTimeout(d.__mmTimer);
+  d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
+}
 
 /* ================= Inline Markdown → highlight spans =================
    Invariant: stripping every <span> tag out of the produced HTML must reproduce the
@@ -590,6 +685,7 @@ export function createApp(root) {
     const text = d.input.value;
     d.editor.innerHTML = highlightToHtml(text);
     d.preview.innerHTML = text.trim() ? marked.parse(text) : `<div class="empty">Nothing to preview yet&hellip;</div>`;
+    if (text.trim()) scheduleMermaidRender(d); // replace ``mermaid`` fences with rendered SVG (debounced)
     d.editor.classList.toggle("placeholder", !text.trim());
     d.tab.classList.toggle("dirty", d.dirty);
     d.tab.querySelector(".tname").textContent = d.name;
@@ -1746,12 +1842,16 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
 .preview table{border-collapse:collapse;margin:.7em 0;width:100%}
 .preview th,.preview td{border:1px solid #e2e4e9;padding:6px 12px;text-align:left}
 .preview th{background:#f5f6f8;font-weight:600}
-.preview u{text-decoration:underline}
-.preview s{text-decoration:line-through}
-   `.trim();
+ .preview u{text-decoration:underline}
+ .preview s{text-decoration:line-through}
+ .preview .mermaid-diagram{margin:.8em 0;text-align:center}
+ .preview .mermaid-diagram svg{max-width:100%;height:auto}
+ .preview .mermaid-diagram-err{background:#fdecec;border-left:3px solid #d73a49;padding:8px 14px;border-radius:6px;font-size:.9em;color:#b02a37;margin:.6em 0}
+    `.trim();
 
-   function exportHtmlDoc(text) {
-     const body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+    async function exportHtmlDoc(text) {
+      let body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+      try { body = await renderMermaidInHtml(body); } catch { /* mermaid failed — export the raw fence */ }
      return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
    }
 
@@ -1767,10 +1867,11 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      body.className = "preview";
      body.style.width = (width || 780) + "px";
      body.innerHTML = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
-     host.appendChild(body);
-     document.body.appendChild(host);
-     try {
-       await new Promise((r) => requestAnimationFrame(r)); // let layout settle
+      host.appendChild(body);
+      document.body.appendChild(host);
+      try {
+        await renderMermaidInNode(body); // replace ```mermaid``` fences with rendered SVG
+        await new Promise((r) => requestAnimationFrame(r)); // let layout settle
        return await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false, width: body.clientWidth, height: body.scrollHeight });
      } finally {
        document.body.removeChild(host);
@@ -1791,9 +1892,9 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      return noExt + "." + ext;
    }
 
-   async function exportAsHtml() {
-     const d = activeTab; if (!d) return;
-     const html = exportHtmlDoc(d.input.value);
+    async function exportAsHtml() {
+      const d = activeTab; if (!d) return;
+      const html = await exportHtmlDoc(d.input.value);
      const filename = defaultExportName(d, "html");
      if (isTauri()) {
        const { path } = await pickPath({

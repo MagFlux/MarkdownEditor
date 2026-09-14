@@ -16,6 +16,7 @@ marked        — Markdown parser (js)            MIT   (Copyright 2018+ marked 
 html2canvas   — HTML-to-canvas renderer (js)    MIT   (Copyright 2012+ Niklas von Hertzen)
 jspdf         — PDF generator (js)              MIT   (Copyright 2010-2025 James Hall / yWorks GmbH)
 vite          — build tooling (js)              MIT   (Copyright 2019-2026 the Vite team)
+mermaid       — diagram renderer (js)           MIT   (Copyright 2014-2026 knsv / mermaid.js authors)
 @tauri-apps/api
 @tauri-apps/cli
 @tauri-apps/plugin-fs
@@ -44,6 +45,28 @@ playwright    — browser automation (test-only)  Apache-2.0   (Copyright 2020-2
   Licensed under the Apache License, Version 2.0. This product
   includes software developed at Microsoft (the "Contribution"),
   unless otherwise stated.
+
+Copyleft (user-approved, AGPL-compatible)
+-----------------------------------------
+This project is **AGPL-3.0-licensed** and, per its own licensing policy,
+prefers permissive (MIT / Apache-2.0 / BSD) dependencies and treats any
+copyleft or non-permissive dependency as a deliberate, user-approved
+exception. The package below is that one deliberate exception:
+
+elkjs       — ELK layout engine (js)   EPL-2.0   (Copyright 2018-2026 Eclipse Foundation / Eclipse Source)
+  Transitive hard dependency of `mermaid`; provides the ELK.js
+  layout for mermaid's "layout: elk" diagrams. EPL-2.0 is a weak
+  copyleft — because we ship elkjs *unmodified*, the only obligation
+  is the attribution below (plus, if you ever modify the elkjs file
+  itself, re-licensing that modified file under EPL-2.0).
+
+  Copyright (c) 2018-2026 Eclipse Foundation
+  elkjs is licensed under the Eclipse Public License, Version 2.0.
+  You may obtain a copy at
+    https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt
+
+  (No other bundled dependency is non-permissive; the rest of the
+  mermaid runtime is MIT / Apache-2.0 / ISC / BSD-3-Clause.)
 
 Runtime (not bundled) — Linux only
 ----------------------------------

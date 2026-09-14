@@ -25,43 +25,60 @@ change, not optional). Whenever a dependency is **added, removed, or changes
 version or license** — a new `dependencies`/`devDependencies`/`peerDependencies` entry,
 a new Rust crate in `src-tauri/Cargo.toml`, or an upgrade that swaps one license for
 another — **update `NOTICE` in the same change** (add/remove/re-license the line, keep
-it in the right bucket: MIT, MIT/Apache dual, Apache-2.0-only, or runtime-only), and
+it in the right bucket: MIT, MIT/Apache dual, Apache-2.0-only, other copyleft,
+or runtime-only), and
 confirm `LICENSE` still correctly describes the project. Never let `NOTICE` describe the
 *pre*-change dependency set.
 
 ## Licensing (mandatory for every dependency change)
 
-This project is **MIT-licensed** (see `LICENSE`; copyright MagFlux, 2026). That choice
-is only compatible with our dependencies if they are **MIT-compatible** — i.e.
-**permissive, non-copyleft**: `MIT`, `Apache-2.0`, `BSD-*`, or **dual-licensed
-`MIT OR Apache-2.0`** (we may take the MIT side). Everything currently bundled is one
-of these (see `NOTICE`).
+This project is **AGPL-3.0-licensed** (see `LICENSE`; copyright MagFlux, 2026). We chose
+**strong copyleft deliberately**: *everything we ship, and anything run over a network,
+stays free and open-source* — no one can take our code (or a fork served by it) and
+produce a closed-source product. That is heavier than MIT (we can no longer release a
+proprietary fork), and that cost is the price of the guarantee the project wants.
+
+Because the **top-level is copyleft**, the old "permissive-only" framing inverts for
+dependencies:
+
+- **Permissive libraries** — `MIT`, `Apache-2.0`, `BSD-*`, or **dual-licensed
+  `MIT OR Apache-2.0`** (we take the MIT side) — are **freely bundleable and the
+  default / preferred choice.** AGPL is the umbrella; permissive code joins the
+  combined work under AGPL terms while keeping its own notice. If two libraries solve
+  the same job and one is permissive and the other copyleft, use the permissive one.
+- **Compatible strong-copyleft** — `GPL-3.0`, `AGPL-3.0`, `EPL-2.0`, `MPL-2.0`, `LGPL-3.0`
+  — **may be bundled**; the result is still a single AGPL-3.0 work. Heavier than
+  permissive, so make it a *deliberate, user-reviewed* call rather than a default.
+  (Current example: `elkjs` is `EPL-2.0` — the DAG-layout engine Mermaid inlines; kept
+  as a user-approved, user-reviewed exception, see `NOTICE`.) Re-review before adding
+  any new non-permissive one.
+- **Source-available / non-free** — `SSPL`, `BUSL`/`BSL`, Elastic, Commons Clause, or any
+  *non-OSI* "free" license, or any copyleft whose own text is a **further restriction**
+  AGPL §7/§10 treats as incompatible — **STOP and notify the user before using it. Do
+  not add it, do not import it, do not commit it.** Explain the specific license and why
+  it is not compatible with an AGPL-3.0 bundle, and offer one or more permissive (or
+  AGPL-compatible copyleft) alternatives that do the same job. Proceed only after the
+  user explicitly approves the exception (and then log it in `NOTICE` in its own
+  "non-permissive (user-approved exception)" bucket).
 
 **Before you install or import any new library** — any `npm install <pkg>`, a new
 `dependencies`/`devDependencies`/`peerDependencies` entry, or a new Rust crate in
 `src-tauri/Cargo.toml` — **check its license first, before you use it:**
 - JS: `npm info <pkg> license` (or read `node_modules/<pkg>/package.json` → `license`),
-  and also scan for any *nested* dependency that ships a copyleft license.
+  and also scan *nested* dependencies for anything non-permissive that ships inside.
 - Rust: the crate's `Cargo.toml`/crates.io page → `license` field (many are
   `MIT OR Apache-2.0`).
 
-**Decision rule:**
-- **Always prefer MIT-compatible (permissive) libraries.** If two libraries solve the
-  same job and one is MIT and the other is not, or one is permissive and the other is
-  copyleft, use the permissive one.
-- **If a candidate is NOT MIT-compatible — `GPL-*`, `AGPL-*`, `LGPL-*` (when its code
-  would be *bundled*), `MPL-2.0`, `SSPL`, `Elastic`, or any other non-permissive
-  license** — **STOP and notify the user before using it. Do not add it, do not import
-  it, do not commit it.** Explain the specific license and why it conflicts with our
-  MIT-licensed bundle, and offer one or more MIT-compatible alternatives that achieve
-  the same thing. Proceed only after the user explicitly approves the exception (and
-  then add it to `NOTICE` in its own "non-permissive (user-approved exception)" bucket).
-
-> Note the distinction that matters here: an **LGPL** *system* runtime we merely link
-> to (WebKitGTK on Linux) is acceptable because we don't bundle it — that's why it's
-> fine to stay MIT. An LGPL/GPL **library we bundle/invoke as code** (e.g. `apt`/`npm`
-> packages pulled into `node_modules` or compiled in) is *not* — that must go through
-> the user.
+> Two distinctions that still matter:
+> - **A shared *system* runtime we merely link to** (WebKitGTK on Linux, LGPL) is
+>   allowed by AGPL-3.0 because it's a System Library we do **not** bundle — the app is
+>   "the work" and the runtime merely hosts it. An LGPL/GPL **library we bundle as code**
+>   (pulled into `node_modules` or compiled in) falls under the copyleft rule above.
+> - **AGPL §13 (Remote Network Interaction):** if this ever runs as a *network service*
+>   other users touch over a server, we must offer that service's **Corresponding Source**
+>   to those users at no charge. Right now this is a local desktop editor (the browser
+>   fallback is local too), so §13 is largely moot — but the moment it's hosted, that
+>   obligation kicks in. Don't build in a back-end without flagging it.
 
 ## Build / test / run
 
@@ -177,8 +194,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |
-| `LICENSE` | **MIT** — the license for *this* project's code (copyright MagFlux, 2026). |
-| `NOTICE` | Third-party dependency notices: which bundled deps are MIT vs. Apache-2.0 (incl. the dual-licensed Tauri stack), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
+| `LICENSE` | **AGPL-3.0** — the license for *this* project's code (copyright MagFlux, 2026). |
+| `NOTICE` | Third-party dependency notices: which bundled deps are permissive (MIT vs. Apache-2.0, incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
 
 ## Hard invariants (do not regress)
 
@@ -262,7 +279,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     internally that would normally produce a separate chunk; we force it inline
     with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
-    `jspdf` and `html2canvas` are static top-level imports in `src/markdown.js`
+    `jspdf`, `html2canvas`, and `mermaid` are static top-level imports in `src/markdown.js`
     (browser-safe — they're inert until called), never `await import(...)`.
 
 ## Conventions

@@ -13,6 +13,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Custom undo / redo stack** — per-tab, with `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` and `Ctrl+Left` / `Ctrl+Right` aliases
 - **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — toggled on a selection or the current word (Ctrl+B / I / U / K)
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables
+- **Mermaid diagrams** — a `` ```mermaid `` fence renders as a live SVG diagram in the preview (and is captured in HTML/PDF export). Rendered with [mermaid](https://mermaid.js.org) using the current app theme; a syntax error shows an inline red error box with the failing source.
 - **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. They do not require you to select or change the text first.
 - **Rich paste** — paste an HTML clipboard (an Excel/Word table, a bold/italic/underline span, or a mix) and it converts to Markdown (`<table>` → GFM table, `<b>` → `**…**`, `<i>` → `*…*`, `<u>` → `<u>…</u>`), committed as a single undo-able edit. Plain-text pastes are left to the browser.
 - **Export as PDF / HTML** — via the hamburger menu (top-right of the toolbar). Renders your live preview and saves it as a self-contained `.html` or a multi-page A4 `.pdf` (via `jsPDF` + `html2canvas`). Uses the same in-app save dialog as Save — pick a location and the file is written there; in a plain browser it falls back to a download.
@@ -33,7 +34,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - The renderer is in `src/markdown.js` — `computeBlocks()` classifies each line (heading, list, quote, code, table…) and `lineToHtml()` turns a line into highlighted spans.
 - **Invariant**: stripping every `<span>` tag out of the produced HTML must reproduce the exact source text. This is what keeps the caret aligned; all renderer changes must preserve it. There is a round-trip test that checks this.
 - The DOM (the textarea) is the single source of truth. The "overlay" and the "preview" are both re-rendered from it on every change — the reverse direction never happens, so undo/redo is a simple stack of text snapshots.
-- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle — plus the PDF/HTML export libraries `jsPDF` and `html2canvas` — are all **statically imported** at the top of `src/markdown.js` (they are pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import also keeps the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
+- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle — plus the PDF/HTML export libraries `jsPDF` and `html2canvas`, and the diagram renderer `mermaid` — are all **statically imported** at the top of `src/markdown.js` (they are pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import also keeps the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
 
 ---
 
@@ -56,7 +57,7 @@ MarkdownEditor/
 │   ├── src/main.rs             # tauri::Builder + plugin init
 │   └── icons/                  # .png / .ico / .icns bundle icons
 ├── .github/workflows/ci.yml    # CI: test suite + 3-OS build → draft GitHub Release
-├── LICENSE                     # MIT (copyright MagFlux, 2026)
+├── LICENSE                     # AGPL-3.0 (copyright MagFlux, 2026)
 ├── NOTICE                      # third-party dependency notices
 └── test/
     ├── test.mjs                # round-trip invariant (no server, instant)
@@ -284,10 +285,10 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 
 ## License
 
-- **License**: [MIT](LICENSE) — copyright 2026 MagFlux.
-- **Third-party notice**: [NOTICE](NOTICE) lists bundled dependencies and which license each is under (MIT vs. Apache-2.0), the test-only `playwright` (Apache-2.0), and the Linux-only system WebKitGTK runtime (LGPL, not bundled).
-- **Compatibility note**: the project's dependencies are all permissive (MIT or Apache-2.0), so an MIT license on *this* code base imposes no copyleft conflict. The only LGPL piece — WebKitGTK — is a Linux **system** runtime that you link to but do not bundle or modify, so it does not force this project to be GPL'd.
-- **Adding a dependency?** Per [AGENTS.md](AGENTS.md), prefer MIT-compatible libraries, and if a candidate isn't MIT-compatible, notify the maintainer before using it. Then update `NOTICE` in the same change.
+- **License**: [AGPL-3.0](LICENSE) — copyright 2026 MagFlux. We chose a strong copyleft deliberately: everything we ship, and anything run over a network, stays free and open-source. You may not take this code (or a fork) into a proprietary product.
+- **Third-party notice**: [NOTICE](NOTICE) lists bundled dependencies and which license each is under — permissive (MIT / Apache-2.0 / BSD, incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0) — plus the test-only `playwright` (Apache-2.0) and the Linux-only system WebKitGTK runtime (LGPL, not bundled).
+- **Compatibility note**: the top-level AGPL-3.0 license is the umbrella. Permissive dependencies join the combined work under AGPL terms while keeping their own notice; the compatible copyleft exceptions (`elkjs`, EPL-2.0) and the unmodified shared runtime WebKitGTK (LGPL) do not conflict with AGPL-3.0. The **LGPL** system WebKitGTK we merely link to is a System Library we don't bundle, and it therefore does not force any additional copyleft on this project.
+- **Adding a dependency?** Per [AGENTS.md](AGENTS.md), prefer permissive (MIT / Apache-2.0 / BSD) libraries. Copyleft (GPL-3.0, AGPL-3.0, EPL-2.0, MPL-2.0, LGPL-3.0) is *compatible with AGPL-3.0* but should still be a deliberate, user-reviewed call. Source-available / non-free (SSPL, BUSL, Elastic, Commons Clause) and any license with further restrictions AGPL §7/§10 treats as incompatible must be flagged to the maintainer before use. Then update `NOTICE` in the same change.
 
 ---
 

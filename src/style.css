@@ -194,6 +194,9 @@ body {
 .preview li { margin: .15em 0; }
 .preview img { max-width: 100%; border-radius: 6px; }
 .preview .empty { color: var(--fg-dim); }
+.preview .mermaid-diagram { margin: .8em 0; text-align: center; }
+.preview .mermaid-diagram svg { max-width: 100%; height: auto; }
+.preview .mermaid-diagram-err { background: #fdecec; border-left: 3px solid #d73a49; padding: 8px 14px; border-radius: 6px; font-size: .9em; color: #b02a37; margin: .6em 0; }
 .preview table { border-collapse: collapse; margin: .7em 0; width: 100%; max-width: 100%; }
 .preview th, .preview td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
 .preview th { background: var(--bg-panel); font-weight: 600; }
