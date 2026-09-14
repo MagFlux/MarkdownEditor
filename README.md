@@ -69,6 +69,7 @@ MarkdownEditor/
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
     ├── verifyModeScroll.mjs    # mode-switch scroll-PRESERVING (8 cases)
+    ├── verifyTabClick.mjs      # redundant tab-click is a no-op (6 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -220,6 +221,24 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-modescroll
   ```
 
+ - **Mode-click focus is skipped only when the mode hides the editor** — 13 assertions for the toolbar's mode (Split/Edit/Preview) button. The bug: the toolbar click handler ends with a trailing `activeTab.input.focus()` that runs after *every* action; when the mode action targets **preview** the editor pane becomes zero-width (`.mode-preview .pane-editor{flex:0;width:0}`), so that focus lands on the hidden textarea and — on WebKitGTK — an eager scroll-into-view is picked up by `realScroll`→`kickScrollSync`→`followScroll` and ratcheted onto the *preview* pane (the user saw "edit stays top, preview jumps to bottom"). The fix is **surgical**: the mode action does `if (next === "preview") return;` so the trailing focus is skipped *only* for the preview target, while split/edit targets still keep the normal caret-follow focus (keeping the editor focused there is expected, and it's what the `verify-modescroll` caret-mid cases depend on). A blanket `return` would have regressed those cases, so the guard is preview-only. The test blurs `document.activeElement` *before* each click to measure *causative* focus, then asserts: for edit→preview the textarea is **not** focused, while for split→edit and preview→split it **is** focused; the scroll ratio is preserved at the top and ~35% mid-doc. Headless Chromium does not reproduce the scroll-into-view quirk (its scroll assertions pass either way), so the focus assertions are the cross-platform discriminator — they fail the moment the `if` is dropped.
+
+  ```bash
+  npm run verify-modefocus
+  ```
+
+- **Redundant tab-click is a no-op** — 6 assertions that clicking a tab that is *already active* changes nothing. The bug: an already-active tab re-click ran the full `activate()` path — `input.focus()` (whose browser scroll-into-view snap moved both panes to the caret, e.g. 90% → ~bottom) then `refresh()` → `syncDom()`, which rewrote both panes' innerHTML and re-triggered the mermaid render — so flicking the active tab made the view jump and re-rendered any diagram on the page. The fix (`activate` in `src/markdown.js`) short-circuits with `if (doc === activeTab) return;` so a self-re-click is a pure no-op. Coverage: both panes scrolled to ~90% stay within 5% after three redundant clicks (2 cases), a probe attribute on the live preview node survives (proof the preview DOM was *not* rewritten — 1 case), and the mermaid diagram is still rendered with an unchanged count (1 case). The session-restore init path keeps working because `activeTab` is still `null` when the first tab activates (it uses a `restoreActive` temp instead of pre-assigning), so that legitimate first-activate still runs its class-toggle + focus.
+
+  ```bash
+  npm run verify-tabclick
+  ```
+
+- **Cross-tab scroll persistence** — a tab's vertical scroll position must *survive* switching away and back. The bug: hiding a tab uses `.pane-group { display: none }` (`src/style.css`), and the browser resets a `display:none`→shown scroll container's `scrollTop` to `0` — so a tab scrolled to 50% read 0 (top) on return. The fix (`activate` in `src/markdown.js`) captures the *leaving* tab's editor + preview scroll **ratios** while that tab is still laid out, then — after the entering tab becomes visible and `refresh()` has run — re-asserts the entering tab's remembered ratios on both panes after two rAF ticks (mirroring `setMode`/`openAtTop`), stamping the value-based `__suppE`/`__suppP` echo guard on each so the programmatic restore can't be misread as a user scroll or kick the split-view follow. A guard (`if (doc !== activeTab) return`) drops a stale re-assert if the tab changed again inside the rAF window. Coverage: both panes of a tall tab (with a rendered mermaid diagram) scrolled to ~50% (1 case) stay within 5% of 50% after switching to Beta and back (2 cases), a second tab Beta holds a *different* ~25% ratio (1 case) through its own round trip (1 case), while Alpha still holds its ~50% afterwards — proving no cross-tab clobber (1 case), plus a scrollability sanity probe (1 case).
+
+  ```bash
+  npm run verify-tabscroll
+  ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -278,6 +297,9 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |
 | `npm run verify-modescroll` | Headless mode-switch test: split/edit/preview preserves the scroll ratio (8 cases, needs Playwright) |
+ | `npm run verify-modefocus` | Headless mode-click focus test: the mode button skips its trailing focus *only* when entering preview (the hidden textarea's scroll-into-view); split/edit targets still get caret-follow focus (13 cases, needs Playwright) |
+| `npm run verify-tabclick` | Headless redundant-tab-click test: an already-active tab re-click is a no-op (scroll preserved, preview DOM untouched, mermaid not re-rendered) (6 cases, needs Playwright) |
+| `npm run verify-tabscroll` | Headless cross-tab scroll-persistence test: a tab's editor + preview scroll survive leaving and returning (no cross-tab clobber) (7 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |

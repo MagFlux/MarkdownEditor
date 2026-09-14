@@ -820,6 +820,30 @@ export function createApp(root) {
   }
 
   function activate(doc) {
+    // Clicking a tab that is ALREADY active is a no-op. The old unconditional
+    // input.focus() + refresh() below had two visible side effects on such a
+    // click: (1) refocusing the textarea re-ran the browser's scroll-into-view
+    // and could ratchet both panes off their current position (scroll jumped,
+    // e.g. 90% → ~25%), and (2) refresh() → syncDom() rewrote the preview DOM
+    // and re-did the debounced mermaid render (a mermaid diagram on that tab
+    // visibly re-rendered on every click). Neither is needed when the tab is
+    // already the active one, so short-circuit. Cross-tab switches (doc is a
+    // different tab) fall through as below.
+    if (doc === activeTab) return;
+    // Capture the LEAVING tab's scroll RATIO while its panes are still laid
+    // out. The class toggle below hides them via .pane-group{display:none}
+    // (style.css), and hiding→reshowing a scroll container resets its scrollTop
+    // to 0 — so without this capture, returning to a tab would drop you at the
+    // top instead of where you left off. We store a ratio (not pixels) because
+    // the panes may re-lay-out to a different height while hidden (mermaid SVG
+    // sizing, font metrics), which is exactly why openAtTop/setMode also restore
+    // by ratio. This is the ONLY thing that differs from the old code: a fresh
+    // activation (activeTab was null) has nothing to capture and skips it.
+    if (activeTab) {
+      const ratio = (el) => { const m = el.scrollHeight - el.clientHeight; return m > 0 ? el.scrollTop / m : 0; };
+      activeTab.__scrollE = ratio(activeTab.editorScroll);
+      activeTab.__scrollP = ratio(activeTab.previewScroll);
+    }
     activeTab = doc;
     for (const d of TABS) {
       d.pane.classList.toggle("active", d === doc);
@@ -828,6 +852,33 @@ export function createApp(root) {
     doc.input.focus();
     refresh();
     saveSessionSoon();
+    // Restore the ENTERING tab's remembered position. The display:none→flex
+    // reflow already zeroed its scrollTop (and refresh() re-laid-out the
+    // content); after two rAF ticks — once that reflow + the focus auto-scroll
+    // have settled — put both panes back to their stored ratios. Stamp the
+    // value-based echo guard on each pane so restoring a pane can't be misread
+    // as a user scroll and kick off the lead/ratchet sync (mirrors setMode and
+    // openAtTop). The guard skips a stale restore if the active tab changed
+    // again inside the rAF window (a fast A→B→A tap). Tabs with no remembered
+    // position (a brand-new tab, or one freshly opened at top) skip this and
+    // stay at the top, exactly as before.
+    if (doc.__scrollE != null || doc.__scrollP != null) {
+      const eKeep = doc.__scrollE || 0;
+      const pKeep = doc.__scrollP || 0;
+      const apply = () => {
+        if (doc !== activeTab) return;
+        const targets = [[doc.editorScroll, eKeep, "__suppE"], [doc.previewScroll, pKeep, "__suppP"]];
+        for (const [sc, keep, key] of targets) {
+          const max = sc.scrollHeight - sc.clientHeight;
+          if (max <= 0) continue;
+          const value = keep * max;
+          doc[key] = { deadline: performance.now() + ECHO_MS, value };
+          sc.scrollTop = value;
+        }
+        doc.__lead = null; // a programmatic restore is not a user scroll
+      };
+      requestAnimationFrame(() => { requestAnimationFrame(apply); });
+    }
   }
 
   // A freshly opened tab must always read from the top. Without this, focusing
@@ -2432,7 +2483,21 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
       else if (action === "undo") undo();
       else if (action === "redo") redo();
       else if (action === "newtab") newTab("Untitled", "");
-      else if (action === "mode") { const o = ["split", "edit", "preview"]; setMode(o[(o.indexOf(app.dataset.mode) + 1) % 3]); }
+      else if (action === "mode") {
+        const o = ["split", "edit", "preview"];
+        const next = o[(o.indexOf(app.dataset.mode) + 1) % 3];
+        setMode(next);
+        // Only "preview" hides the editor pane (style.css .mode-preview
+        // .pane-editor{flex:0;width:0}). Focusing the zero-width textarea there
+        // fires WebKitGTK's EAGER scroll-into-view, and realScroll→kickScrollSync
+        // →followScroll ratchets that phantom offset onto the PREVIEW pane — the
+        // user sees "edit stays at top but preview lands at the bottom". So for a
+        // preview target, skip the trailing activeTab.input.focus() below and let
+        // setMode's own ratio-restore drive the entering pane. For split/edit the
+        // textarea stays visible and the trailing focus is the normal caret-follow
+        // behavior — so we deliberately fall through to it (do NOT return).
+        if (next === "preview") return;
+      }
       else if (action === "theme") { const dark = document.documentElement.dataset.theme === "dark"; document.documentElement.dataset.theme = dark ? "" : "dark"; }
       else if (action === "menu") { // toggle; stop the app-level ctrl+click/escape from stealing focus
         const open = !menuDropdown.classList.contains("open");
@@ -2456,18 +2521,22 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   let started = false;
   if (session && Array.isArray(session.tabs) && session.tabs.length) {
     let activeId = session.activeTab;
+    let restoreActive = null;
     for (const t of session.tabs) {
       const doc = makeTab(t.name || "Untitled", typeof t.text === "string" ? t.text : "");
       doc.id = t.id || doc.id;
       doc.path = t.path || null;
       doc.dirty = !!t.dirty;
-      if (t.id === activeId) activeTab = doc;
+      if (t.id === activeId) restoreActive = doc;
     }
-    if (!activeTab) activeTab = TABS[0];
+    // Don't pre-assign activeTab here: activate() short-circuits when its arg is
+    // already activeTab, so we hand it a distinct doc and let it do the class-
+    // toggle + focus + refresh for the restored tab.
+    const toActivate = restoreActive || TABS[0];
     // Ensure a restored long doc opens at the top (Webkit auto-scrolls the
     // focused textarea to the caret, which sits at the end = bottom).
-    openAtTop(activeTab);
-    activate(activeTab);
+    openAtTop(toActivate);
+    activate(toActivate);
     started = true;
   }
   if (!started) {

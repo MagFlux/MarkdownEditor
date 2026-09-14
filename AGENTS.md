@@ -122,14 +122,43 @@ npm run verify-scroll  # Split-view scroll-sync regression: a genuine user scrol
                          # for ~800 ms ("the left side lags / catches up"); value-based echo
                          # matching fixes this (5 cases).
 npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scroll RATIO:
-                         # previously the mode button refocused the textarea and the browser
-                         # caret-follow snap + followScroll ratchet jumped the view to the
-                         # BOTTOM when the caret was at the end. setMode now records the
-                         # leaving-mode ratio and restores it on the entering panes after two
-                         # rAF ticks; covers split->edit (caret-end stays near top), 55%/50%/
-                         # 30% ratio preservation, and the fast-triple-switch race (8 cases).
-npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
-                        # real api/IPC (43 cases) — save→in-app picker→write+close,
+                          # previously the mode button refocused the textarea and the browser
+                          # caret-follow snap + followScroll ratchet jumped the view to the
+                          # BOTTOM when the caret was at the end. setMode now records the
+                          # leaving-mode ratio and restores it on the entering panes after two
+                           # rAF ticks; covers split->edit (caret-end stays near top), 55%/50%/
+                           # 30% ratio preservation, and the fast-triple-switch race (8 cases).
+   npm run verify-modefocus # Mode-click does NOT causatively focus the editor textarea when
+                           # it HIDEs (entering preview): the old handler fell through to
+                           # activeTab.input.focus() after every action including mode — in
+                           # preview mode the hidden textarea (flex:0, width:0) scroll-into-
+                           # view fired an eager scroll event on WebKitGTK that followScroll
+                           # ratcheted onto the preview pane (user sees "edit stays top,
+                           # preview jumps to bottom"). The mode action now does
+                           # if (next === "preview") return; (surgical — split/edit targets
+                           # still get the normal trailing caret-follow focus), and this test
+                           # blurs before each click so it measures CAUSATIVE focus: the
+                           # textarea is NOT focused only for edit→preview, IS focused for the
+                           # other targets — passing headlessly even where Chromium does not
+                           # reproduce the scroll-into-view quirk (13 cases).
+ npm run verify-tabclick # Clicking an ALREADY-ACTIVE tab is a no-op: it must not move the
+                         # scroll (the old activate did input.focus()+refresh, which refocused
+                         # the textarea and scrolled it into view — both panes jumped 90%→~25%)
+                         # and must not rewrite the preview DOM (old refresh→syncDom re-ran
+                         # marked + the mermaid render). activate() now short-circuits when
+                          # doc === activeTab (6 cases).
+  npm run verify-tabscroll # Cross-tab scroll PERSISTENCE: switching away from a tab and
+                          # coming back must restore that tab's remembered EDITOR and PREVIEW
+                          # scroll positions — previously .pane-group{display:none} (style.css)
+                          # reset a tab's scrollTop to 0 when it was hidden, so a tab scrolled
+                          # to 50% read 0 (top) on return. activate() now captures the leaving
+                          # tab's ratios while it's still laid out and re-asserts the entering
+                          # tab's remembered ratios after two rAF ticks (mirrors setMode /
+                          # openAtTop), stamping the value-based echo guard so the restore
+                           # reads as a programmatic write (7 cases: scrollability probe +
+                           # Alpha@50% round trip, Beta@25% independence, no cross-tab clobber).
+  npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
+                         # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
                         # navigate-into-forbidden-dir→crumb stays on last readable,
@@ -147,9 +176,9 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the ten verify scripts (`verify`, `verify-undo`,
+see the invariant below. Then re-run the thirteen verify/test steps (`verify`, `verify-undo`,
 `verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-scroll`,
-`verify-modescroll`, `verify-tauri`, and `npm test`); all must be green.
+`verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-tauri`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
@@ -163,9 +192,9 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 **Jobs**:
 
  1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
-     cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
-     `verify-toolbar` → `verify-paste` → `verify-export` → `verify-scroll` →
-     `verify-modescroll` → `verify-tauri`. No Rust.
+      cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
+       `verify-toolbar` → `verify-paste` → `verify-export` → `verify-scroll` →
+       `verify-modescroll` → `verify-modefocus` → `verify-tabclick` → `verify-tabscroll` → `verify-tauri`. No Rust.
     Runs on PR and on release.
 
 2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
@@ -211,7 +240,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-  | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). |
+  | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -352,10 +381,39 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    after two nested `requestAnimationFrame` ticks (wins the race against the focus
    auto-scroll), stamping the value-based `__suppE`/`__suppP` guard on each pane
    so the reflow's scroll event can't ratchet a different value in. A guard skips a
-   stale `apply` if the tab or mode changed again inside the rAF window (fast
-   double/triple switches). Do not remove those rAF re-asserts or the guard.
-   See `test/verifyModeScroll.mjs` (8 cases).
-- All dialogs (save/cancel prompts, open, and any error/info feedback) render
+    stale `apply` if the tab or mode changed again inside the rAF window (fast
+    double/triple switches). Do not remove those rAF re-asserts or the guard.
+    See `test/verifyModeScroll.mjs` (8 cases).
+  - **Clicking an already-active tab is a no-op (do not regress).** `activate(doc)`
+    (in `src/markdown.js`) must short-circuit with `if (doc === activeTab) return;`
+    so an already-active tab re-click does not call `input.focus()` (whose
+    browser scroll-into-view scrolled the pane to the caret — both panes jumped,
+    e.g. 90% → ~bottom) nor `refresh()` → `syncDom()` (which rewrites both panes'
+    innerHTML and re-runs the mermaid render). The session-restore init block relies
+    on `activeTab` still being `null` (it stashes the first doc in a `restoreActive`
+    temp, never pre-assigns `activeTab`), so that path still falls through and does
+    its class-toggle + focus. The same is true for `closeTab` (it passes a *different*
+    doc than the stale `activeTab`). Do not re-add a post-return branch that re-fires
+     `refresh()` for the self case. See `test/verifyTabClick.mjs` (6 cases).
+  - **The mode button must NOT causatively focus the editor textarea when it
+    HIDEs (do not regress).** The toolbar click handler ends with a trailing
+    `activeTab.input.focus()` that runs after *every* action. When the mode action
+    targets **preview** the editor pane is hidden (`.mode-preview .pane-editor
+    {flex:0;width:0}` in `style.css`), so keeping that trailing focus call lands a
+    focus on a zero-width textarea; on WebKitGTK that fires an EAGER scroll-into-view,
+    which `realScroll`→`kickScrollSync`→`followScroll` ratchets onto the *preview*
+    pane (the user sees "edit stays top, preview jumps to the bottom"). So the mode
+    action does `if (next === "preview") return;` after `setMode(...)` — **skipping
+    the trailing focus ONLY for the preview target** while split/edit targets still
+    fall through to it (there the textarea is visible and caret-follow is expected).
+    This is deliberately *surgical, not a blanket `return`*: a blanket skip breaks
+    `verifyModeScroll.mjs`'s caret-mid cases, which depend on the trailing focus for
+    edit/split. `test/verifyModeFocus.mjs` (13 cases) blurs `document.activeElement`
+    before each click so it measures *causative* focus; it asserts the textarea is
+    NOT focused only for edit→preview (2c) and IS focused for split/edit/preview→
+    split (1c/3c) — failing the moment the `if` is dropped, in headless Chromium too
+    (the scroll-ratio cases there stay at top either way).
+ - All dialogs (save/cancel prompts, open, and any error/info feedback) render
   **in-app** via `showModalBase`/`messageModal`/`pickPath` — NOT `alert`/`confirm`/
   `prompt` (unreliable in WebKitGTK) and NOT the native `tauri-plugin-dialog`
   rfd GTK picker (never parents/centers its dialogs, so it drifts off-window).

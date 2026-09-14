@@ -79,6 +79,12 @@ jobs:
         run: npm run verify-scroll
       - name: Mode-switch scroll-preserving (8 cases)
         run: npm run verify-modescroll
+      - name: Mode-click does not focus the editor (13 cases)
+        run: npm run verify-modefocus
+      - name: Redundant tab-click is a no-op (6 cases)
+        run: npm run verify-tabclick
+      - name: Cross-tab scroll persistence (7 cases)
+        run: npm run verify-tabscroll
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 
