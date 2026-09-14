@@ -536,37 +536,44 @@ export function createApp(root) {
   const toolbar = document.createElement("div");
   toolbar.className = "toolbar";
   toolbar.innerHTML = `
-    <button class="btn" data-fmt="bold" title="Toggle bold — Ctrl+B">${icons.bold}</button>
-    <button class="btn" data-fmt="italic" title="Toggle italic — Ctrl+I">${icons.italic}</button>
-    <button class="btn" data-fmt="underline" title="Toggle underline — Ctrl+U">${icons.underline}</button>
-    <button class="btn" data-fmt="strike" title="Toggle strikethrough">${icons.strike}</button>
-    <button class="btn" data-fmt="code" title="Toggle inline code">${icons.code}</button>
-    <button class="btn" data-fmt="link" title="Insert / toggle link — Ctrl+K">${icons.link}</button>
-    <span class="sep"></span>
-    <button class="btn" data-block="h1">H1</button>
-    <button class="btn" data-block="h2">H2</button>
-    <button class="btn" data-block="h3">H3</button>
-    <button class="btn" data-block="quote" title="Toggle blockquote">&rdquo;</button>
-    <button class="btn" data-block="ul" title="Toggle bullet list">&bull;&thinsp;&mdash;</button>
-    <button class="btn" data-block="ol" title="Toggle numbered list">1.</button>
-    <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
-    <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
-    <span class="sep"></span>
-    <button class="btn" data-action="undo" title="Undo — Ctrl+Z / Ctrl+&larr;">${icons.undo}</button>
-    <button class="btn" data-action="redo" title="Redo — Ctrl+Shift+Z / Ctrl+Y / Ctrl+&rarr;">${icons.redo}</button>
-    <span class="sep"></span>
-    <button class="btn" data-action="newtab" title="New tab — ctrl+click anywhere for new">${icons.plus}</button>
-    <button class="btn" data-action="open" title="Open file into new tab">${icons.open}</button>
-    <button class="btn" data-action="save" title="Save — Ctrl+S">${icons.save}</button>
-    <span class="spacer"></span>
-    <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
-    <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>
-    <span class="menu-wrap">
-      <button class="btn" data-action="menu" data-menu-open="false" title="More actions" aria-haspopup="true" aria-expanded="false">${icons.menu}</button>
-      <div class="menu-dropdown" role="menu" aria-label="More actions">
-        <button class="menu-item" data-menu="pdf" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as PDF&hellip;</span></button>
-        <button class="menu-item" data-menu="html" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as HTML&hellip;</span></button>
-      </div>
+    <span class="tb-left">
+      <span class="menu-wrap">
+        <button class="btn" data-action="menu" data-menu-open="false" title="More actions" aria-haspopup="true" aria-expanded="false">${icons.menu}</button>
+        <div class="menu-dropdown" role="menu" aria-label="More actions">
+          <button class="menu-item" data-menu="pdf" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as PDF&hellip;</span></button>
+          <button class="menu-item" data-menu="html" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as HTML&hellip;</span></button>
+        </div>
+      </span>
+      <span class="sep"></span>
+      <button class="btn" data-action="undo" title="Undo — Ctrl+Z / Ctrl+&larr;">${icons.undo}</button>
+      <button class="btn" data-action="redo" title="Redo — Ctrl+Shift+Z / Ctrl+Y / Ctrl+&rarr;">${icons.redo}</button>
+      <span class="sep"></span>
+      <button class="btn" data-action="newtab" title="New tab — ctrl+click anywhere for new">${icons.plus}</button>
+      <button class="btn" data-action="open" title="Open file into new tab">${icons.open}</button>
+      <button class="btn" data-action="save" title="Save — Ctrl+S">${icons.save}</button>
+    </span>
+    <span class="tb-center">
+      <button class="btn" data-fmt="bold" title="Toggle bold — Ctrl+B">${icons.bold}</button>
+      <button class="btn" data-fmt="italic" title="Toggle italic — Ctrl+I">${icons.italic}</button>
+      <button class="btn" data-fmt="underline" title="Toggle underline — Ctrl+U">${icons.underline}</button>
+      <button class="btn" data-fmt="strike" title="Toggle strikethrough">${icons.strike}</button>
+      <button class="btn" data-fmt="code" title="Toggle inline code">${icons.code}</button>
+      <button class="btn" data-fmt="link" title="Insert / toggle link — Ctrl+K">${icons.link}</button>
+      <span class="sep"></span>
+      <button class="btn" data-block="h1">H1</button>
+      <button class="btn" data-block="h2">H2</button>
+      <button class="btn" data-block="h3">H3</button>
+      <span class="sep"></span>
+      <button class="btn" data-block="quote" title="Toggle blockquote">&rdquo;</button>
+      <button class="btn" data-block="ul" title="Toggle bullet list">&bull;&thinsp;&mdash;</button>
+      <button class="btn" data-block="ol" title="Toggle numbered list">1.</button>
+      <span class="sep"></span>
+      <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
+      <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
+    </span>
+    <span class="tb-right">
+      <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
+      <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>
     </span>`;
   app.appendChild(toolbar);
 

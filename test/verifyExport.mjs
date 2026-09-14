@@ -143,9 +143,13 @@ await scenario("M: menu open/close/outside-click/Escape", async ({ page, ok, wai
   await menuBtn.click();
   await wait(60);
   ok("M3 reopened for outside-click test", (await openClass()) === true);
-  await page.locator(".tab .tname").first().click({ timeout: 3000 });
+  // The outside-click target is the editor textarea: it lives below the
+  // toolbar and so is never covered by the left-anchored dropdown. (The tab name
+  // is now *under* the dropdown once it's open, because the left-anchored menu
+  // drops over the tab strip — a normal menu-over-content overlay, not a defect.)
+  await page.locator("textarea.input").first().click({ timeout: 3000 });
   await wait(60);
-  ok("M3a outside click (tab name) closes the dropdown", (await openClass()) === false);
+  ok("M3a outside click (editor) closes the dropdown", (await openClass()) === false);
 
   // Re-open and close via Escape.
   await menuBtn.click();

@@ -64,10 +64,12 @@ body {
 .toolbar .btn svg { width: 17px; height: 17px; display: block; }
 .toolbar .btn:disabled svg { width: 17px; }
 .toolbar .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
-.toolbar .spacer { flex: 1 1 auto; }
+.toolbar .tb-left { display: inline-flex; align-items: center; gap: 4px; }
+.toolbar .tb-center { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 auto; justify-content: center; padding: 0 8px; min-width: 0; }
+.toolbar .tb-right { display: inline-flex; align-items: center; gap: 4px; }
 .mode-label { font-size: 13px; margin-left: 4px; }
 .menu-wrap { position: relative; display: inline-flex; align-items: center; }
-.menu-dropdown { position: absolute; top: calc(100% + 6px); right: 0; min-width: 190px;
+.menu-dropdown { position: absolute; top: calc(100% + 6px); left: 0; min-width: 190px;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: var(--shadow); padding: 5px; z-index: 50; display: none; }
 .menu-dropdown.open { display: block; }
