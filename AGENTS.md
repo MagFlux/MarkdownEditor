@@ -2,6 +2,18 @@
 
 Guidance for AI coding agents (and humans) working in this repo. Read this before editing.
 
+## Hard rules (read first)
+
+- **NEVER `git commit` or `git push` unless the user has EXPLICITLY asked for it,
+  in this exchange, in their own words.** Pre-completed checklist items, "the last
+  step," or "wrap it up" phrasing do NOT count as an explicit request. Finish your
+  work, report what you did and what is uncommitted, and then STOP and wait for the
+  user to say go. (This rule exists because the agent once committed and pushed
+  without being told to, against the user's wishes.) When unsure, ask first.
+- **Never put false attribution in a commit message.** No `Co-Authored-By:
+  Claude …`, no `Generated-by`, no "made by an AI" trailer — the user (MagFlux) is
+  the sole author. This holds regardless of who initiated the change.
+
 ## What this is
 
 A single-window, multi-tab Markdown editor. Plain JS (no framework), one DOM, one
