@@ -105,9 +105,10 @@ npm test               # 21 round-trip renderer cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
-npm run verify-toolbar # toolbar active-states track the caret (18 cases) — bold/underline/
-                        # code/H2/plain + click, arrow-key, programmatic, and tab-switch
-                        # paths, all with NO text change required.
+npm run verify-toolbar # toolbar active-states track the caret (27 cases) — bold/underline/
+                        # code/H2/link/italic/strike with and without trailing punctuation,
+                        # toggle-OFF comma preservation, + click, arrow-key, programmatic, and
+                        # tab-switch paths, all with NO text change required.
 npm run verify-paste   # rich-paste: an HTML clipboard (Excel/HTML <table>, bold/italic/
                         # underline spans, mixed runs) converts to Markdown and commits as
                         # ONE undo-able edit; plain-text pastes fall through to the browser's
@@ -350,16 +351,32 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 - Test-first: when adding editor behavior, extend the relevant `test/verify*.mjs` or
   `test/test.mjs` and confirm it stays green before considering the task done.
 
-- **Toolbar active-states must track the caret, not just text changes** (do not
-  regress). The per-textarea `select` event is unreliable on WebKitGTK — it can
-  never fire for a click or arrow-key move there — and the `click` handler
-  historically refreshed only the status bar, *not* the buttons, so the B/I/U/S/
-  link and H1–H3/quote/list/table buttons stayed stale until the text mutated.
-  The live-tracking fix is a document-level **`selectionchange`** listener on the
-  active tab (fires for every caret move: click, arrows, paste, undo, tab switch),
-  a **`mouseup` + `requestAnimationFrame`** fallback, and re-sync on tab switch via
-  `activate()` → `refresh()`. Do not "simplify" back to `select`/`keyup` only;
-  the WebKitGTK app will regress to stale buttons.
+ - **Toolbar active-states must track the caret, not just text changes** (do not
+   regress). The per-textarea `select` event is unreliable on WebKitGTK — it can
+   never fire for a click or arrow-key move there — and the `click` handler
+   historically refreshed only the status bar, *not* the buttons, so the B/I/U/S/
+   link and H1–H3/quote/list/table buttons stayed stale until the text mutated.
+   The live-tracking fix is a document-level **`selectionchange`** listener on the
+   active tab (fires for every caret move: click, arrows, paste, undo, tab switch),
+   a **`mouseup` + `requestAnimationFrame`** fallback, and re-sync on tab switch via
+   `activate()` → `refresh()`. Do not "simplify" back to `select`/`keyup` only;
+   the WebKitGTK app will regress to stale buttons.
+ - **Format detection must survive trailing sentence punctuation (do not
+   regress).** `wordAt` splits tokens on whitespace only, so a formatted word
+   followed by a comma / period / `; : ! ?` (e.g. `**bold**` in
+   `- Live **bold**, *italic*`) comes back as a single token WITH that trailing
+   punctuation — the old anchored `^…$` regexes in `detectFormat` then failed
+   and only the block button (e.g. `ul`) lit up. The fix: `detectFormat`
+   strips SENTENCE punctuation (`[.,;:!?]+`) from both token edges before
+   matching, and returns the true span bounds (`fs` / `fe`) alongside
+   `fmt` / `inner`. `toggleFormat` splices on `det.fs`/`det.fe` (via
+   `trimmedSpan` for the apply-new-format branch) so the adjacent punctuation
+   is preserved when removing OR re-wrapping. The punctuation set is safe
+   because no format marker (`* _ ~ ` < > / [ ] ( )`) is in it, and a URL
+   inside `[text](https://…)` is not at a token edge. `verifyToolbar.mjs`
+   (27 cases) covers: caret on `**bold**` / `*italic*` / `~~strike~~` /
+   `[…](https://…)` each with a trailing comma, plus a toggle-OFF case
+   asserting the comma survives.
 - **Split-view scroll-sync is value-based echo suppression, not a time-only
   window** (do not regress). In split view the two panes follow each other via
   `followScroll`; each programmatic `scrollTop` write stamps

@@ -64,7 +64,7 @@ MarkdownEditor/
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
-    ├── verifyToolbar.mjs       # toolbar active-states track the caret (18 cases)
+    ├── verifyToolbar.mjs       # toolbar active-states track the caret (27 cases)
     ├── verifyPaste.mjs         # rich-paste HTML→Markdown (18 cases)
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
@@ -292,7 +292,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
-| `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic (18 cases, needs Playwright) |
+ | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens and toggle-OFF comma preservation (27 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |

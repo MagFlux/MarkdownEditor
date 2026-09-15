@@ -117,6 +117,47 @@ await p.evaluate(() => { const t = window.editor.tabs.find((x) => x.name === "tb
 await sleep(S * 2);
 ok("activate() back to a **bold** tab → bold active again (no text change)", (await activeFmt("bold")) === true);
 
+// --- Trailing comma: `**bold**` inside `- Live **bold**, *italic*` MUST light up. ---
+// (Regression for the original bug: only the block `ul` button would activate
+// because `wordAt` returned the 9-char token `**bold**` and the anchored
+// detectFormat regexes failed.)
+await setLine("- Live **bold**, *italic* here", 9);
+{
+  const s = await states();
+  ok("caret on **bold** with trailing comma → bold active", s.fmt.bold === true);
+  ok("caret on **bold** with trailing comma → only ul block (from `- ` prefix)",
+    s.block.ul === true && !s.block.h1 && !s.block.h2 && !s.block.h3 && !s.block.quote && !s.block.ol && !s.block.table);
+  ok("caret on **bold** with trailing comma → italic NOT active", s.fmt.italic === false);
+}
+await setLine("- Live **bold**, *italic* here", 19);
+{
+  const s = await states();
+  ok("caret on *italic* with trailing comma → italic active", s.fmt.italic === true);
+  ok("caret on *italic* with trailing comma → bold NOT active", s.fmt.bold === false);
+}
+// Strikethrough at end of line (no trailing comma — baseline still works):
+await setLine("- Live ~~strikethrough~~", 25);
+ok("caret on ~~strikethrough~~ at end → strike active", (await activeFmt("strike")) === true);
+// Link (URL contains `:` `)` which must NOT be treated as sentence punctuation):
+await setLine("See [links](https://example.com), then more", 15);
+{
+  const s = await states();
+  ok("caret on [links](https://example.com), → link active", s.fmt.link === true);
+  ok("caret on link w/ trailing comma → italic NOT active", s.fmt.italic === false);
+}
+
+// Toggle OFF **bold** in `- Live **bold**, *italic* here`: the trailing comma
+// must SURVIVE removal (the pre-fix code would clobber it, giving
+// `- Live bold, …` → `- Live bold,` lost the comma).
+await setLine("- Live **bold**, *italic* here", 10);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("toggle OFF **bold** with trailing comma → comma preserved",
+    txt === "- Live bold, *italic* here", "got " + JSON.stringify(txt));
+}
+
 console.log(`\nPASS ${pass} / FAIL ${fail}`);
 await b.close();
 try { process.kill(-srv.pid); } catch { /* already dead */ }

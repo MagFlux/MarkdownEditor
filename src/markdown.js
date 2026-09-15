@@ -320,18 +320,50 @@ function wordAt(line, off) {
 }
 
 /* ================= Format detection / wrapping ================= */
+// `wordAt` splits tokens on whitespace only, so a formatted word followed by
+// sentence punctuation (e.g. `**bold**` in `- Live **bold**, *italic*…`) comes
+// back as a single token WITH that trailing comma. The anchored `^…$` format
+// regexes in `detectFormat` then fail, and only the block button (which matches
+// the line prefix `- `) lights up. To recover the true format span we strip
+// leading/trailing SENTENCE punctuation (`, . ; : ! ?`) from the token edges
+// before matching. This is safe because no format marker (`* _ ~ ` < > / [ ]
+// ( )`) is in that set — trimming token edges can never eat a marker, and the
+// URL inside a link `[…](https://…)` is not at a token edge. The trimmed span
+// bounds (`fs`/`fe`) are returned so `toggleFormat` can splice precisely and
+// preserve the adjacent punctuation instead of clobbering the whole token.
 function detectFormat(line, ws, we) {
   const t = line.slice(ws, we);
+  const leadM = t.match(/^[.,;:!?]+/);
+  const trailM = t.match(/[.,;:!?]+$/);
+  const lead = leadM ? leadM[0].length : 0;
+  const trail = trailM ? trailM[0].length : 0;
+  const fs = ws + lead;
+  const fe = we - trail;
+  if (fs >= fe) return null;
+  const core = line.slice(fs, fe);
   let m;
-  if ((m = t.match(/^\*\*(.+?)\*\*$/))) return { fmt: "bold", inner: m[1] };
-  if ((m = t.match(/^__(.+?)__$/))) return { fmt: "bold", inner: m[1] };
-  if ((m = t.match(/^~~(.+?)~~$/))) return { fmt: "strike", inner: m[1] };
-  if ((m = t.match(/^`(.+?)`$/))) return { fmt: "code", inner: m[1] };
-  if ((m = t.match(/^<u>([\s\S]+?)<\/u>$/))) return { fmt: "underline", inner: m[1] };
-  if ((m = t.match(/^\*([^\s*].*?)\*$/))) return { fmt: "italic", inner: m[1] };
-  if ((m = t.match(/^_([^_]+?)_$/))) return { fmt: "italic", inner: m[1] };
-  if ((m = t.match(/^\[([^\]]*)\]\(([^)]*)\)$/))) return { fmt: "link", inner: m[1], url: m[2] };
+  if ((m = core.match(/^\*\*(.+?)\*\*$/))) return { fmt: "bold", inner: m[1], fs, fe };
+  if ((m = core.match(/^__(.+?)__$/))) return { fmt: "bold", inner: m[1], fs, fe };
+  if ((m = core.match(/^~~(.+?)~~$/))) return { fmt: "strike", inner: m[1], fs, fe };
+  if ((m = core.match(/^`(.+?)`$/))) return { fmt: "code", inner: m[1], fs, fe };
+  if ((m = core.match(/^<u>([\s\S]+?)<\/u>$/))) return { fmt: "underline", inner: m[1], fs, fe };
+  if ((m = core.match(/^\*([^\s*].*?)\*$/))) return { fmt: "italic", inner: m[1], fs, fe };
+  if ((m = core.match(/^_([^_]+?)_$/))) return { fmt: "italic", inner: m[1], fs, fe };
+  if ((m = core.match(/^\[([^\]]*)\]\(([^)]*)\)$/))) return { fmt: "link", inner: m[1], url: m[2], fs, fe };
   return null;
+}
+// Trimmed token span (sentence punctuation stripped from the edges) — used by
+// `toggleFormat`'s "apply a new format to an unmatched token" branch so the
+// adjacent sentence punctuation is preserved when wrapping.
+function trimmedSpan(line, ws, we) {
+  const t = line.slice(ws, we);
+  const lead = (t.match(/^[.,;:!?]+/) || [""])[0].length;
+  const trail = (t.match(/[.,;:!?]+$/) || [""])[0].length;
+  // A token composed ENTIRELY of sentence punctuation (`...` etc.) leaves an
+  // empty span after trimming — fall back to the raw token so we still wrap
+  // *something* (preserves the old behaviour for this pathological input).
+  if (lead + trail >= t.length) return { fs: ws, fe: we };
+  return { fs: ws + lead, fe: we - trail };
 }
 function wrapFor(kind, inner) {
   switch (kind) {
@@ -1685,24 +1717,34 @@ export function createApp(root) {
     const line = text.slice(lineStart, lineEnd);
     const [ws, we] = wordAt(line, a - lineStart);
     const det = detectFormat(line, ws, we);
+    const span = det ? { fs: det.fs, fe: det.fe } : trimmedSpan(line, ws, we);
+    const { fs, fe } = span;
     let newLine, ns, ne;
+    // The target span (sentence punctuation trimmed) is what we splice over —
+    // this keeps adjacent punctuation like the trailing comma in
+    // `- Live **bold**, …` in place whether we are removing, re-formatting, or
+    // freshly applying a format.
+    const target = line.slice(fs, fe);
     if (kind === "link") {
       if (det && det.fmt === "link") {
-        newLine = line.slice(0, ws) + det.inner + line.slice(we);
-        ns = ws; ne = ns + det.inner.length;
+        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
+        ns = fs; ne = ns + det.inner.length;
       } else {
-        const w = line.slice(ws, we) || "link";
-        newLine = line.slice(0, ws) + `[${w}](https://)` + line.slice(we);
-        ns = ws + 3 + w.length; ne = ns + 8;
+        const w = target || "link";
+        newLine = line.slice(0, fs) + `[${w}](https://)` + line.slice(fe);
+        ns = fs + 3 + w.length; ne = ns + 8;
       }
     } else {
       if (det && det.fmt === kind) {
-        newLine = line.slice(0, ws) + det.inner + line.slice(we);
-        ns = ws; ne = ns + det.inner.length;
+        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
+        ns = fs; ne = ns + det.inner.length;
       } else {
-        const inner = det && det.fmt ? det.inner : line.slice(ws, we);
-        newLine = line.slice(0, ws) + wrapFor(kind, inner) + line.slice(we);
-        ns = ws; ne = ns + inner.length;
+        // Reformat an existing (different) format → rewrap its inner text
+        // (drop the old markers); apply to a plain (unformatted) token → trim
+        // the token's sentence punctuation before wrapping so it survives.
+        const inner = det ? det.inner : target;
+        newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
+        ns = fs; ne = ns + inner.length;
       }
     }
     commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
