@@ -43,14 +43,14 @@ import html2canvas from "html2canvas";
    hoist into the same single bundle, same invariant as the Tauri imports above).
    src/markdown.js keeps ONLY the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
-import { scheduleMermaidRender, renderMermaidInNode, renderMermaidInHtml } from "./mermaid.js";
+import { scheduleMermaidRender, renderMermaidInNode, renderMermaidInHtml, restoreMermaid } from "./mermaid.js";
 import { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
 
 /* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
    `highlightToHtml` from here; the app itself calls it from the closure). */
 export { highlightToHtml, computeBlocks, lineToHtml, isTableSep, esc } from "./render.js";
-export { renderMermaidInNode, renderMermaidInHtml, scheduleMermaidRender } from "./mermaid.js";
+export { renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender } from "./mermaid.js";
 export { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "./paste.js";
 
@@ -268,15 +268,22 @@ export function createApp(root) {
    * syncDom — push the textarea value into the tab's DOM (render + chrome).
    *
    * Re-renders both the overlay (highlightToHtml) and the preview (marked),
-   * schedules the mermaid SVG renders, and updates the placeholder / dirty dot /
-   * tab name. This is the single source of the visible state for a tab.
+   * SYNCHRONOUSLY restores any previously-rendered mermaid SVGs from cache
+   * (so a keystroke outside a mermaid fence never flashes raw code — the
+   * anti-flicker invariant), schedules a fresh mermaid render only if a
+   * mermaid fence's source actually changed, and finally updates the
+   * placeholder / dirty dot / tab name. This is the single source of the
+   * visible state for a tab.
    * @param {object} d Doc being synced.
    */
   function syncDom(d) {
     const text = d.input.value;
     d.editor.innerHTML = highlightToHtml(text);
     d.preview.innerHTML = text.trim() ? marked.parse(text) : `<div class="empty">Nothing to preview yet&hellip;</div>`;
-    if (text.trim()) scheduleMermaidRender(d); // replace ``mermaid`` fences with rendered SVG (debounced)
+    if (text.trim()) {
+      restoreMermaid(d.preview); // sync: put already-rendered SVGs back (no flicker)
+      scheduleMermaidRender(d);  // async: render any NEW/changed diagram (gated by key)
+    }
     d.editor.classList.toggle("placeholder", !text.trim());
     d.tab.classList.toggle("dirty", d.dirty);
     d.tab.querySelector(".tname").textContent = d.name;

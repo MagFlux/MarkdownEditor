@@ -49,7 +49,7 @@ MarkdownEditor/
 │   ├── main.js                 # bootstrap: createApp(#app) + sample content
 │   ├── markdown.js             # the app: createApp() — tabs, undo, keybinds, save/open, DnD, modals; static Tauri + export imports
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
-│   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import)
+│   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import) + anti-flicker SVG cache
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
 │   ├── paste.js                # rich-paste HTML→Markdown (mdFromHtml, mdTableFromHtml, …)
 │   ├── icons.js                # inline-SVG toolbar icons (B I U S code link H1-H3 table + undo redo …)
@@ -73,7 +73,10 @@ MarkdownEditor/
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
     ├── verifyModeScroll.mjs    # mode-switch scroll-PRESERVING (8 cases)
+    ├── verifyModeFocus.mjs     # mode-click focus skipped only entering preview (13 cases)
     ├── verifyTabClick.mjs      # redundant tab-click is a no-op (6 cases)
+    ├── verifyTabScroll.mjs     # cross-tab scroll persistence (7 cases)
+    ├── verifyMermaidFlicker.mjs # mermaid anti-flicker: keystroke outside fence does not flash raw code (7 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -243,6 +246,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-tabscroll
   ```
 
+- **Mermaid anti-flicker** — a keystroke in prose **outside** a ` ```mermaid ` fence must never flash raw code. The old flow was `syncDom` → `d.preview.innerHTML = marked.parse(...)` (which re-creates all `pre > code.language-mermaid` fences back to raw text) → 120 ms debounce → `mermaid.render`. Any keystroke in the prose section wiped the already-rendered SVG holder; the re-render only arrived after 120 ms, producing a visible flash of raw code. The fix (in `src/mermaid.js`) has two co-operating parts: **(a)** after every successful `mermaid.render`, the SVG string + the `bindFunctions` closure are stored in a `_svgCache` keyed by the exact fence source; **(b)** in `syncDom`, immediately after `d.preview.innerHTML = marked.parse(...)`, a synchronous call to `restoreMermaid(d.preview)` walks every `pre > code.language-mermaid` element and substitutes the cached `<div class="mermaid-diagram">` holder in place — zero async, zero timers. A separate `mermaidSourceKey(md)` gate in `scheduleMermaidRender` skips the 120 ms timer entirely when the fence source didn't change. Coverage (`npm run verify-mermaidflicker`, 7 cases): the diagram holder is present in the same synchronous tick as a prose keystroke (no raw code visible at any poll); typing inside the fence source invalidates the cache and the 120 ms debounce re-renders; the cache survives a tab switch and return; two distinct fences cache and restore independently; and a prose keystroke does not fire a redundant `mermaid.render` call. The test fixture uses valid mermaid (`A[Start] --> B[End]`) — invalid source would throw and populate no cache entry, making the anti-flicker path untestable.
+
+   ```bash
+   npm run verify-mermaidflicker
+   ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -304,6 +313,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
  | `npm run verify-modefocus` | Headless mode-click focus test: the mode button skips its trailing focus *only* when entering preview (the hidden textarea's scroll-into-view); split/edit targets still get caret-follow focus (13 cases, needs Playwright) |
 | `npm run verify-tabclick` | Headless redundant-tab-click test: an already-active tab re-click is a no-op (scroll preserved, preview DOM untouched, mermaid not re-rendered) (6 cases, needs Playwright) |
 | `npm run verify-tabscroll` | Headless cross-tab scroll-persistence test: a tab's editor + preview scroll survive leaving and returning (no cross-tab clobber) (7 cases, needs Playwright) |
+ | `npm run verify-mermaidflicker` | Headless mermaid anti-flicker test: a keystroke in prose outside a fence does NOT flash raw code — the holder is restored synchronously from cache in the same tick; a keystroke inside the fence still re-renders (7 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |

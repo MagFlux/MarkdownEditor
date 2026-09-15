@@ -17,6 +17,38 @@ import { esc } from "./render.js";
    renderMermaidSvg is the single source: it asks mermaid for the SVG string. */
 let _mmSeq = 0;
 
+/* ================= Mermaid SVG cache =================
+   syncDom rewrites `d.preview.innerHTML` on every keystroke, which wipes rendered
+   `<div class="mermaid-diagram">` holders back to raw `<pre><code>`. The old
+   debounced re-render (120 ms) then re-rendered them — the gap between wipe and
+   re-render was visible as a flash of raw code (the "flicker"). The fix:
+   (a) cache rendered SVG by source text, and (b) synchronously restore any
+       already-cached SVG the moment syncDom finishes rewriting innerHTML, so
+       the user NEVER sees raw code for a diagram they have already seen rendered.
+   (c) skip the debounced render entirely when the mermaid-source key did not
+       change, so typing outside a mermaid fence no longer re-runs mermaid at all. */
+const _svgCache = new Map();      // source text -> {svg, bindFunctions}
+const _inflight = new Map();      // source text -> Promise<{svg, bindFunctions}>
+const _SVG_CACHE_MAX = 200;
+
+/**
+ * _cacheSvg — remember a rendered SVG in `_svgCache`, evicting the oldest entry
+ * once the cache exceeds `_SVG_CACHE_MAX`. Insertion order on a Map is stable;
+ * `delete` + `set` refreshes recency on re-cached keys.
+ *
+ * @param {string} text — the mermaid source that was just rendered.
+ * @param {object} entry — the `{svg, bindFunctions}` value to remember.
+ */
+function _cacheSvg(text, entry) {
+  if (_svgCache.has(text)) _svgCache.delete(text);
+  _svgCache.set(text, entry);
+  while (_svgCache.size > _SVG_CACHE_MAX) {
+    const first = _svgCache.keys().next().value;
+    if (first === undefined) break;
+    _svgCache.delete(first);
+  }
+}
+
 /**
  * mermaidTheme — pick the mermaid theme matching the app's data-theme.
  *
@@ -31,12 +63,16 @@ function mermaidTheme() {
   try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
   return theme;
 }
+
 /**
  * renderMermaidSvg — ask mermaid for the rendered SVG of one diagram source.
  *
- * Mounts an off-screen container, calls mermaid.render, and returns the SVG
- * string. Safe under Node (returns `{svg:"",bindFunctions:null}` when
- * `document.body` is absent) — never invokes mermaid.render in that case.
+ * CACHED: on a cache hit no `mermaid.render` call and no off-screen mount
+ * happens at all — the stored `{svg, bindFunctions}` is returned directly.
+ * CONCURRENT: while a render is in flight for the same source, callers share
+ * the same promise so N concurrent callers collapse into one mermaid.render.
+ * Safe under Node (returns `{svg:"",bindFunctions:null}` when `document.body`
+ * is absent) — never invokes mermaid.render in that case.
  *
  * @param {string} text — the mermaid source (e.g. `flowchart LR\n A --> B`).
  * @returns {Promise<{svg:string, bindFunctions:Function|null}>} the rendered
@@ -45,35 +81,53 @@ function mermaidTheme() {
  */
 async function renderMermaidSvg(text) {
   if (typeof document === "undefined" || !document.body) { return { svg: "", bindFunctions: null }; } // Node/headless: never render
-  let theme = "default";
-  try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
-  try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
-  const id = "md-mermaid-" + (++_mmSeq);
-  // Mermaid measures against a real (visible) node, so mount it off-screen in the
-  // doc, render into it, then fully clean up. Never left behind.
-  const container = document.createElement("div");
-  container.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;visibility:hidden;";
-  document.body.appendChild(container);
-  try {
-    const res = await mermaid.render(id, text, container);
-    let svg = (typeof res === "string") ? res : ((res && (res.svg || res.str)) || (container && container.innerHTML) || "");
-    // Make the inline SVG scale to its container width rather than a fixed
-    // mermaid width, so narrow diagrams don't overflow the preview column.
-    svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;"');
-    return { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
-  } finally {
-    if (container.parentNode) container.parentNode.removeChild(container);
-    const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
-    if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
-  }
+  // Cache hit — no render, no DOM, no timer. This is the fast path behind the
+  // flicker fix: `restoreMermaid` walks the DOM and finds the holder already
+  // in place with a cached SVG, so mermaid.render is never consulted again.
+  const hit = _svgCache.get(text);
+  if (hit) return hit;
+  // In-flight share — two concurrent callers (e.g. tab A and the PDF export both
+  // asking for the same source) collapse into one mermaid.render.
+  const shared = _inflight.get(text);
+  if (shared) return shared;
+  const p = (async () => {
+    let theme = "default";
+    try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
+    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
+    const id = "md-mermaid-" + (++_mmSeq);
+    // Mermaid measures against a real (visible) node, so mount it off-screen in the
+    // doc, render into it, then fully clean up. Never left behind.
+    const container = document.createElement("div");
+    container.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;visibility:hidden;";
+    document.body.appendChild(container);
+    try {
+      const res = await mermaid.render(id, text, container);
+      let svg = (typeof res === "string") ? res : ((res && (res.svg || res.str)) || (container && container.innerHTML) || "");
+      // Make the inline SVG scale to its container width rather than a fixed
+      // mermaid width, so narrow diagrams don't overflow the preview column.
+      svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;"');
+      const entry = { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
+      _cacheSvg(text, entry);
+      return entry;
+    } finally {
+      if (container.parentNode) container.parentNode.removeChild(container);
+      const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
+      if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
+    }
+  })();
+  _inflight.set(text, p);
+  try { return await p; }
+  finally { _inflight.delete(text); }
 }
 
 /**
  * renderMermaidInNode — render every mermaid fence inside a live DOM node, in place.
  *
  * Finds every `pre > code.language-mermaid`, swaps its parent `<pre>` for a
- * rendered SVG holder, and applies the interactive bindings. A no-op (safe)
- * when the node has no such fences or is null.
+ * rendered SVG holder, and applies the interactive bindings. CACHED: a fence
+ * whose source is already in `_svgCache` is restored from the cache (no
+ * `mermaid.render` call, no off-screen mount). A no-op (safe) when the node
+ * has no such fences or is null.
  *
  * @param {Element|null} node — the live DOM subtree to walk (the preview or
  *   the off-screen PDF host).
@@ -86,9 +140,11 @@ async function renderMermaidInNode(node) {
   for (const code of blocks) {
     const pre = code.closest ? code.closest("pre") : code.parentNode;
     const text = code.textContent; // textContent is already entity-decoded
-    let out = { svg: "", bindFunctions: null };
-    try { out = await renderMermaidSvg(text); }
-    catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    let out = _svgCache.get(text) || { svg: "", bindFunctions: null };
+    if (!out.svg) {
+      try { out = await renderMermaidSvg(text); }
+      catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    }
     const holder = document.createElement("div");
     holder.className = "mermaid-diagram";
     holder.innerHTML = out.svg;
@@ -104,7 +160,8 @@ async function renderMermaidInNode(node) {
  * This is the export path: marked had escaped `<`/`>` in the source, so the
  * source is entity-decoded before being handed to mermaid. The result is the
  * same HTML string with each `<pre><code class="language-mermaid">…</code></pre>`
- * replaced by a `<div class="mermaid-diagram">…svg…</div>` element. A no-op
+ * replaced by a `<div class="mermaid-diagram">…svg…</div>` element. CACHED:
+ * sources already in `_svgCache` are spliced in directly (no render). A no-op
  * (returns `html` unchanged) when the string contains no mermaid fences.
  *
  * @param {string} html — the marked-produced HTML string.
@@ -112,17 +169,20 @@ async function renderMermaidInNode(node) {
  */
 async function renderMermaidInHtml(html) {
   const re = /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g;
-   if (!re.test(html)) { re.lastIndex = 0; return html; }
+  if (!re.test(html)) { re.lastIndex = 0; return html; }
 
-   /** decode — un-escape the HTML entities a `<pre><code>` fence may have wrapped in. */
-   const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  /** decode — un-escape the HTML entities a `<pre><code>` fence may have wrapped in. */
+  const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
   const out = [];
   let last = 0, m;
   while ((m = re.exec(html))) {
     out.push(html.slice(last, m.index));
-    let svg;
-    try { svg = (await renderMermaidSvg(decode(m[1]))).svg; }
-    catch (e) { svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    const src = decode(m[1]);
+    let svg = (_svgCache.get(src) || {}).svg || "";
+    if (!svg) {
+      try { svg = (await renderMermaidSvg(src)).svg; }
+      catch (e) { svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+    }
     out.push(`<div class="mermaid-diagram">${svg}</div>`);
     last = m.index + m[0].length;
   }
@@ -131,18 +191,89 @@ async function renderMermaidInHtml(html) {
 }
 
 /**
- * scheduleMermaidRender — debounce-render mermaid inside `d.preview`.
+ * restoreMermaid — synchronously restore cached SVGs inside `node`.
  *
- * `syncDom` runs on every keystroke; this collapses a burst into a single
- * render 120 ms after the last call, so typing never fires more than one
- * mermaid pass per settle window.
+ * The anti-flicker fast path. After `syncDom` rewrites `d.preview.innerHTML`,
+ * every previously-rendered mermaid fence has been wiped back to raw
+ * `<pre><code class="language-mermaid">`. This function walks those fences,
+ * looks each one up in `_svgCache`, and — on a hit — substitutes a
+ * `<div class="mermaid-diagram">` holder with the cached SVG IN PLACE. Zero
+ * `mermaid.render` calls, zero async, zero timers: the diagram is back in the
+ * same synchronous tick as the innerHTML write, so the user NEVER sees raw
+ * code. Fences whose source is not cached are left alone; the debounced
+ * `scheduleMermaidRender` will handle them on the next settle (unchanged path).
+ *
+ * @param {Element|null} node — the preview subtree just rewritten by syncDom.
+ * @returns {number} the number of fences restored from cache (0 → nothing to do).
+ */
+function restoreMermaid(node) {
+  if (!node || !node.querySelectorAll) return 0;
+  const blocks = Array.from(node.querySelectorAll("pre > code.language-mermaid"));
+  let n = 0;
+  for (const code of blocks) {
+    const pre = code.closest ? code.closest("pre") : code.parentNode;
+    const text = code.textContent;
+    const entry = _svgCache.get(text);
+    if (!entry || !entry.svg) continue;
+    const holder = document.createElement("div");
+    holder.className = "mermaid-diagram";
+    holder.innerHTML = entry.svg;
+    if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
+    if (entry.bindFunctions) { try { entry.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
+    n++;
+  }
+  return n;
+}
+
+/**
+ * mermaidSourceKey — build a per-document "did any mermaid source change" key.
+ *
+ * Walks the raw markdown with a lenient fence regex (``` or ~~~, 3+ chars,
+ * "mermaid" as the info-string language followed by an optional info string,
+ * lazy body up to a matching closing fence of the same kind on its own line)
+ * and returns a string that is a stable fingerprint of every mermaid fence
+ * body in the doc. Two docs with the same set of mermaid bodies (same order)
+ * produce the same key even if the surrounding prose differs; a change to any
+ * body (or the set of bodies) produces a different key. Non-mermaid fences
+ * (e.g. `javascript`) are ignored. Empty string when the doc has no mermaid
+ * fences. Not a full CommonMark parser — the goal is a cheap "did it change"
+ * fingerprint, not strict fence parsing, so it errs on including a bit more
+ * than a real parser would (a harmless extra cache-miss render, never fewer).
+ *
+ * @param {string} md — the raw Markdown source of a tab.
+ * @returns {string} the fingerprint (or "" when there are no mermaid fences).
+ */
+function mermaidSourceKey(md) {
+  if (!md) return "";
+  const re = /(?:^|\n)(?:`{3,}|~{3,})[ \t]*mermaid(?:[ \t][^\n]*)?\n([\s\S]*?)(?:\n)(?:`{3,}|~{3,})[ \t]*(?=\n|$)/g;
+  const parts = [];
+  let m;
+  while ((m = re.exec(md))) parts.push(m[1]);
+  return parts.join("\x00");
+}
+
+/**
+ * scheduleMermaidRender — debounce-render mermaid inside `d.preview`, but ONLY
+ * if at least one mermaid fence's source actually changed since the last
+ * schedule.
+ *
+ * `syncDom` runs on every keystroke; this gate checks the fingerprint of every
+ * mermaid body in the doc and bails out early when the key is unchanged. That
+ * is the anti-flicker invariant: typing in prose outside a mermaid fence never
+ * touches `d.__mmTimer` (so no pending render, no `mermaid.render`, no flash).
+ * When the key DID change, it arms the 120 ms debounce (unchanged from before).
+ * Note: the gate is only about *scheduling* — `restoreMermaid` (called
+ * separately in syncDom) handles the synchronous cache-restore pass.
  *
  * @param {object} d — a per-tab state bag; the fn reads/writes `d.__mmTimer`
- *   and renders into `d.preview`.
+ *   and `d.__mmLastKey`, and renders into `d.preview`.
  */
 function scheduleMermaidRender(d) {
+  const key = mermaidSourceKey(d.input ? d.input.value : "");
+  if (key === d.__mmLastKey) return; // no mermaid source change → no render, no flicker
+  d.__mmLastKey = key;
   if (d.__mmTimer) clearTimeout(d.__mmTimer);
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
 }
 
-export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, scheduleMermaidRender };
+export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender };

@@ -147,17 +147,21 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                          # and must not rewrite the preview DOM (old refresh→syncDom re-ran
                          # marked + the mermaid render). activate() now short-circuits when
                           # doc === activeTab (6 cases).
-  npm run verify-tabscroll # Cross-tab scroll PERSISTENCE: switching away from a tab and
-                          # coming back must restore that tab's remembered EDITOR and PREVIEW
-                          # scroll positions — previously .pane-group{display:none} (style.css)
-                          # reset a tab's scrollTop to 0 when it was hidden, so a tab scrolled
-                          # to 50% read 0 (top) on return. activate() now captures the leaving
-                          # tab's ratios while it's still laid out and re-asserts the entering
-                          # tab's remembered ratios after two rAF ticks (mirrors setMode /
-                          # openAtTop), stamping the value-based echo guard so the restore
-                           # reads as a programmatic write (7 cases: scrollability probe +
-                           # Alpha@50% round trip, Beta@25% independence, no cross-tab clobber).
-  npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
+   npm run verify-tabscroll # Cross-tab scroll PERSISTENCE: switching away from a tab and
+                           # coming back must restore that tab's remembered EDITOR and PREVIEW
+                           # scroll positions — previously .pane-group{display:none} (style.css)
+                           # reset a tab's scrollTop to 0 when it was hidden, so a tab scrolled
+                           # to 50% read 0 (top) on return. activate() now captures the leaving
+                           # tab's ratios while it's still laid out and re-asserts the entering
+                           # tab's remembered ratios after two rAF ticks (mirrors setMode /
+                           # openAtTop), stamping the value-based echo guard so the restore
+                            # reads as a programmatic write (7 cases: scrollability probe +
+                            # Alpha@50% round trip, Beta@25% independence, no cross-tab clobber).
+   npm run verify-mermaidflicker # Mermaid anti-flicker: a keystroke in prose OUTSIDE a fence
+   # must not flash raw code — the already-rendered holder is present in the SAME
+   # synchronous tick as the keystroke (restoreMermaid from _svgCache); a keystroke
+   # INSIDE a fence still re-renders after the 120 ms debounce. (7 cases.)
+   npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                          # real api/IPC (43 cases) — save→in-app picker→write+close,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
@@ -176,9 +180,9 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the thirteen verify/test steps (`verify`, `verify-undo`,
+see the invariant below. Then re-run the fourteen verify/test steps (`verify`, `verify-undo`,
 `verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-scroll`,
-`verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-tauri`, and `npm test`); all must be green.
+`verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-mermaidflicker`, `verify-tauri`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)
@@ -237,14 +241,14 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 |---|---|
 | `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence. Keeps the STATIC Tauri + export imports (see invariant 2) and re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
 | `src/render.js` | Pure overlay-highlight renderer: `esc`, `matchTok`, `renderInline`, `isTableSep`, `computeBlocks`, `lineToHtml`, `highlightToHtml` (round-trip invariant enforced by `test/test.mjs`). |
-| `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). |
+| `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `restoreMermaid`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). Also owns the **anti-flicker SVG cache**: `_svgCache` (source → rendered `{svg, bindFunctions}`), `_inflight` (concurrent-render dedup), `restoreMermaid(node)` (synchronous cache-restore after `syncDom` rewrites the preview so an already-seen diagram NEVER flashes raw code), and `mermaidSourceKey(md)` (per-doc "did any fence change" fingerprint that `scheduleMermaidRender` uses to skip render when the source didn't change). |
 | `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `detectFormat`, `trimmedSpan`, `wrapFor`. |
 | `src/paste.js` | Rich-paste HTML→Markdown: `mdCellText`, `mdTableFromHtml`, `mdStyleOf`, `mdInlineMd`, `mdFromHtml`. |
 | `src/icons.js` | Inline-SVG toolbar icons (B I U S code link H1-H3 table + undo/redo/new-tab + mode + theme). |
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-  | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). |
+  | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -465,7 +469,27 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   (with `document`, `location.href`, `atob`, `btoa`) so jsPDF's UMD wrapper and
   html2canvas's `CacheStorage.setContext` don't throw when `markdown.js`'s static
   imports load under Node. If you add another browser-global library import, extend the
-  same stubs there rather than making it a dynamic import.
+   same stubs there rather than making it a dynamic import.
+ - **Mermaid anti-flicker cache (do not regress).** `syncDom` rewrites
+   `d.preview.innerHTML` on every keystroke — this wipes any previously-rendered
+   `<div class="mermaid-diagram">` holder back to a raw `<pre><code
+   class="language-mermaid">`, and the old 120 ms debounce then re-rendered it.
+   The gap was visible as a brief flash of raw code. The fix (in `src/mermaid.js`)
+   has three parts, all required:
+   (a) `_svgCache` (source text → `{svg, bindFunctions}`, max 200 entries, LRU);
+   (b) `restoreMermaid(node)` — called **synchronously** in `syncDom` right after
+   the innerHTML write; walks `pre > code.language-mermaid` fences and substitutes
+   a cached holder IN PLACE (zero async, zero timers); fences with no cache entry
+   are left alone for the debounced render;
+   (c) `mermaidSourceKey(md)` + `scheduleMermaidRender(d)` — when the per-doc
+   fingerprint of all fence bodies is unchanged the 120 ms timer is **not** armed
+   (no pending `mermaid.render`, no DOM churn); when the source **did** change
+   the timer is armed as before (the diagram is legitimately stale).
+   Together this means: typing in prose outside a fence is a pure cache-restore
+   (no flash); typing inside a fence re-renders normally (120 ms debounce).
+   The test fixture diagram in `verifyMermaidFlicker.mjs` uses **valid** mermaid
+   (invalid source would cause mermaid to throw and produce no cache entry —
+   making the anti-flicker path untestable).
 
 ## Known limitations (browser fallback)
 
