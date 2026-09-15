@@ -1,3 +1,11 @@
+/**
+ * verifyToolbar.mjs — toolbar active-states track the caret.
+ *
+ * Asserts the B/I/U/S/link and H1-H3/quote/list/table buttons light correctly
+ * on click, arrow-key, programmatic-caret, and tab-switch paths (even with NO
+ * text change required), with and without trailing sentence punctuation, plus
+ * toggle-OFF comma preservation. Run with `npm run verify-toolbar`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -15,6 +23,7 @@ const errors = [];
 p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error") errors.push("CONSOLE: " + m.text()); });
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion under its label. */
 const ok = (n, c) => { if (c) { pass++; console.log("ok  ", n); } else { fail++; console.log("FAIL", n); } };
 
 // The live toolbar-state guarantee: the formatting buttons reflect the formatting
@@ -23,17 +32,25 @@ const ok = (n, c) => { if (c) { pass++; console.log("ok  ", n); } else { fail++;
 // intra-line caret offset, so the assertions are deterministic regardless of the
 // exact caret pixel/offset.  Buttons read as `class="... active ..."`.
 
+/** activeFmt — true when the inline `data-fmt` button for `name` is lit. */
 const activeFmt = (name) => p.locator(`button[data-fmt="${name}"]`).first().getAttribute("class").then((c) => /(^|\s)active(\s|$)/.test(c || ""));
+
+/** activeBlock — true when the `data-block` button for `name` is lit. */
 const activeBlock = (name) => p.locator(`button[data-block="${name}"]`).first().getAttribute("class").then((c) => /(^|\s)active(\s|$)/.test(c || ""));
 const FMT_NAMES = ["bold", "italic", "underline", "strike", "code", "link"];
 const BLOCK_NAMES = ["h1", "h2", "h3", "quote", "ul", "ol", "table"];
+/** states — snapshot every fmt + block button's active state into one object. */
 async function states() {
   return {
     fmt: Object.fromEntries(await Promise.all(FMT_NAMES.map(async (n) => [n, await activeFmt(n)]))),
     block: Object.fromEntries(await Promise.all(BLOCK_NAMES.map(async (n) => [n, await activeBlock(n)]))),
   };
 }
-// Set the active tab's whole text (cleaning dirty state) and place the caret at `off`.
+/**
+ * setLine — set the active tab's full text (clearing dirty state) and park the caret.
+ * @param {string} text — the new document text.
+ * @param {number} off — the caret offset to place within it.
+ */
 async function setLine(text, off) {
   await p.evaluate(([txt, o]) => {
     const ed = window.editor;

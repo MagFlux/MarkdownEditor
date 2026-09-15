@@ -11,8 +11,7 @@ Guidance for AI coding agents (and humans) working in this repo. Read this befor
   user to say go. (This rule exists because the agent once committed and pushed
   without being told to, against the user's wishes.) When unsure, ask first.
 - **Never put false attribution in a commit message.** No `Co-Authored-By:
-  Claude …`, no `Generated-by`, no "made by an AI" trailer — the user (MagFlux) is
-  the sole author. This holds regardless of who initiated the change.
+  Claude …`, no `Generated-by`, no "made by an AI" trailer unless its actually true.
 
 ## What this is
 
@@ -236,7 +235,11 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 | Path | Role |
 |---|---|
-| `src/markdown.js` | The entire editor. Tabs, undo/redo, keybinds, save/open, DnD, window-close guard. All logic lives here. |
+| `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence. Keeps the STATIC Tauri + export imports (see invariant 2) and re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
+| `src/render.js` | Pure overlay-highlight renderer: `esc`, `matchTok`, `renderInline`, `isTableSep`, `computeBlocks`, `lineToHtml`, `highlightToHtml` (round-trip invariant enforced by `test/test.mjs`). |
+| `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). |
+| `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `detectFormat`, `trimmedSpan`, `wrapFor`. |
+| `src/paste.js` | Rich-paste HTML→Markdown: `mdCellText`, `mdTableFromHtml`, `mdStyleOf`, `mdInlineMd`, `mdFromHtml`. |
 | `src/icons.js` | Inline-SVG toolbar icons (B I U S code link H1-H3 table + undo/redo/new-tab + mode + theme). |
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
@@ -335,8 +338,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     internally that would normally produce a separate chunk; we force it inline
     with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
-    `jspdf`, `html2canvas`, and `mermaid` are static top-level imports in `src/markdown.js`
-    (browser-safe — they're inert until called), never `await import(...)`.
+     `jspdf` and `html2canvas` are static top-level imports in `src/markdown.js`, and
+     `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
+     they're inert until called), never `await import(...)`.
 
 ## Conventions
 
@@ -344,8 +348,19 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   Vue, etc.). Do NOT introduce dynamic `import()` (code-splitting) of any Tauri
   plugin or module — `src/markdown.js` currently has zero `import(...)` calls and
   must stay that way, so the bundle remains one file that loads in the GTK webview.
-- Comments: keep the WHY (especially the invariants above) in-line; they encode
-  hard-won debugging history.
+ - Comments: keep the WHY (especially the invariants above) in-line; they encode
+   hard-won debugging history.
+ - **JSDoc is mandatory and must stay current (do not let it go stale).** Every
+   function in `src/*.js` carries a `/** … */` block stating its purpose in plain
+   English, plus `@param {Type} name — desc` and `@returns {Type} desc` where
+   non-obvious. Every `test/*.mjs` file carries a `/** … */` file-header naming
+   the regression it guards and the npm script that runs it. When you **add, rename,
+   or change the contract of a function** (its params, return, or the behavior it
+   guarantees) — **update its JSDoc in the same change**, and when you add a new
+   helper, give it one. Do not leave a JSDoc block describing the *pre*-change
+   signature. The inline WHY comments above remain the authoritative record of the
+   debugging history; JSDoc is the quick "what does this do / what does it take /
+   what does it return" layer on top.
 - Tauri calls are guarded by `isTauri()` so the same file works in a browser. When
   adding a new native feature, add a browser fallback branch.
 - Test-first: when adding editor behavior, extend the relevant `test/verify*.mjs` or

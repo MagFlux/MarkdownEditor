@@ -1,5 +1,11 @@
-// Round-trip invariant test: stripping all <span> tags out of the highlighted
-// overlay must reproduce the exact source (caret-alignment guarantee).
+/**
+ * test.mjs — round-trip invariant test suite (Node, no browser).
+ *
+ * Strips every `<span>` out of the highlight overlay HTML and asserts the
+ * result reproduces the exact source character-for-character. This is the
+ * caret-alignment guarantee that keeps the invisible textarea caret under the
+ * visible overlay. Run with `npm test`.
+ */
 globalThis.document = {
   createElement: () => ({
     classList: { add() {}, remove() {}, toggle() {} },
@@ -25,8 +31,11 @@ globalThis.window.btoa = (bin) => Buffer.from(bin, "binary").toString("base64");
 
 const m = await import("../src/markdown.js");
 
+/** decode — un-escape the HTML entities the overlay renderer may emit. */
 const decode = (s) =>
   s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, "\"");
+
+/** strip — remove every overlay `<span>` wrapper; the result must equal the source. */
 const strip = (h) => decode(h.replace(/<span class="[^"]*">/g, "").replace(/<\/span>/g, ""));
 
 const cases = [

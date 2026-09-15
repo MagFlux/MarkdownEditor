@@ -1,3 +1,10 @@
+/**
+ * verifyUndo.mjs — undo/redo UI test.
+ *
+ * Covers the type-batching undo history: consecutive keystrokes collapse into
+ * one undoable edit, block edits (list/quote/indent) are individual undo steps,
+ * and redo replays them in order. Run with `npm run verify-undo`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -15,11 +22,28 @@ const errors = [];
 p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error") errors.push("CONSOLE: " + m.text()); });
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion under its label. */
 const ok = (n, c) => { if (c) { pass++; console.log("ok  ", n); } else { fail++; console.log("FAIL", n); } };
+
+/** val — the current visible editor's textarea value. */
 const val = () => p.locator("textarea.input:visible").last().inputValue();
+
+/** undoEn — whether the undo button is enabled. */
 const undoEn = () => p.locator('button[data-action="undo"]').isEnabled();
+
+/** redoEn — whether the redo button is enabled. */
 const redoEn = () => p.locator('button[data-action="redo"]').isEnabled();
+
+/**
+ * newTab — open a fresh tab named `T<n>` with empty text.
+ * @param {number} n — the tab suffix.
+ */
 const newTab = async (n) => { await p.evaluate((nn) => window.editor.newTab("T" + nn, ""), n); await sleep(400); };
+
+/**
+ * type — focus the visible editor and type `txt` character-by-character.
+ * @param {string} txt — the text to type.
+ */
 const type = async (txt) => { await p.locator("textarea.input:visible").last().click(); await p.keyboard.type(txt); await sleep(S); };
 
 await p.goto("http://localhost:4299/", { waitUntil: "networkidle" });

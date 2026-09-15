@@ -1,3 +1,12 @@
+/**
+ * verifyTauriClose.mjs — native Tauri path verification.
+ *
+ * Injects the exact `window.__TAURI_INTERNALS__` a bundler app receives and
+ * drives the real @tauri-apps api/IPC: save→picker→write+close, picker-cancel,
+ * save-discard-cancel, known-path direct write, open→picker→new tab, navigate
+ * into forbidden dir, Home button, and the hidden (dot) folder picker entry.
+ * Run with `npm run verify-tauri` (needs the built dist).
+ */
 // Native (Tauri) path verification — injects the exact `window.__TAURI_INTERNALS__`
 // a bundler app receives, driving the REAL @tauri-apps api + IPC code.
 //
@@ -30,7 +39,13 @@ const srv = spawn("npx", ["vite", "preview", "--port", String(PORT)], { stdio: "
 await new Promise((r) => setTimeout(r, 1500));
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (label, cond, extra) => { const c = !!cond; console.log((c ? "ok  " : "FAIL ") + label + (extra !== undefined ? "   → " + extra : "")); c ? pass++ : fail++; };
+
+/**
+ * wait — sleep for `ms` milliseconds.
+ * @param {number} ms — the delay.
+ */
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch();
 // Global watchdog: if the whole thing wedges, dump the current line and bail
@@ -44,13 +59,18 @@ setTimeout(() => {
   process.exit(3);
 }, 55000);
 
-// Pure function; runs INSIDE the page (contextified). Self-contained.
+/**
+ * installInternals — install a stub `window.__TAURI_INTERNALS__` (+ `__state` log) inside
+ * the page. Injected via addInitScript so Playwright contextifies it once. Records
+ * IPC, text writes, window-destroy, and close-request emissions on `__state`.
+ */
 function installInternals() {
   let cbid = 0;
   const callbacks = new Map();
   const eventCbs = new Map();
     const S = { ipc: [], writes: [], destroyed: false, firedClose: 0, homeDir: 0, readDir: [] , readText: [], failingDirs: [] };
-    function emitClose() {
+   /** emitClose — increment the close counter and fire all close-requested listeners. */
+   function emitClose() {
       S.firedClose++;
       for (const id of (eventCbs.get("tauri://close-requested") || [])) {
         const cb = callbacks.get(id); if (cb) cb({ event: "tauri://close-requested", payload: null, id: 1 });
@@ -118,11 +138,17 @@ function installInternals() {
   window.__state = S;
 }
 
+/**
+ * scenario — run one test case in a fresh browser context with Tauri stubs.
+ * @param {string} name — the scenario label.
+ * @param {(env: {page: any, st: any, emit: any, ok: any, wait: any, errors: any, log: any}) => Promise<void>} run — the case body.
+ */
 async function scenario(name, run) {
   const context = await browser.newContext();
   await context.addInitScript(installInternals);
   const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
+  /** log — print an indented status line. */
   const log = (s) => { console.log("   " + s); };
   page.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
   page.on("console", (m) => { if (m.type() === "error") errors.push("CONSOLE: " + m.text()); });
@@ -130,7 +156,10 @@ async function scenario(name, run) {
   try {
     await page.goto(`http://localhost:${PORT}/`);
     await wait(300);
+    /** st — read the stub `window.__state` (IPC/writes/destroy/close log). */
     const st = () => page.evaluate(() => window.__state);
+
+    /** emit — fire the stub close-requested event (simulates a window close). */
     const emit = () => page.evaluate(() => window.__emitClose());
     await run({ page, st, emit, ok, wait, errors, log });
   } catch (e) {
@@ -141,6 +170,14 @@ async function scenario(name, run) {
   console.log("   (console/page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 }
 
+/**
+ * byRole — a Playwright `getByRole` locator for an accessible-role element.
+ * @param {import('playwright-chromium').Page} page — the page.
+ * @param {string} role — the ARIA role (e.g. "button").
+ * @param {string} name — the accessible name.
+ * @param {boolean} [exact] — exact-name match (default true).
+ * @returns {import('playwright-chromium').Locator}
+ */
 function byRole(page, role, name, exact = true) {
   return page.getByRole(role, { name, exact });
 }

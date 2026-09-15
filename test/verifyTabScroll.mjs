@@ -1,3 +1,12 @@
+/**
+ * verifyTabScroll.mjs — cross-tab scroll persistence.
+ *
+ * A tab's editor + preview scroll positions must survive a switch away and
+ * back. Previously .pane-group{display:none} reset a hidden tab's scrollTop to 0
+ * (a tab at 50% read top on return). activate() captures the leaving tab's
+ * ratios while laid out and re-asserts the entering tab's after two rAF ticks.
+ * Run with `npm run verify-tabscroll`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -25,6 +34,7 @@ p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error" && !/favicon/i.test(m.text())) errors.push("CONSOLE: " + m.text()); });
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (n, c, extra) => { if (c) { pass++; console.log("ok  ", n, extra ? "→ " + extra : ""); } else { fail++; console.log("FAIL", n, extra ? "→ " + extra : ""); } };
 
 await p.goto("http://localhost:4606/", { waitUntil: "networkidle" });
@@ -43,14 +53,22 @@ await p.evaluate((txt) => {
 }, TALL);
 await sleep(S);
 
-// Read {ratio} for a pane of the active tab.
+/**
+ * ratio — a pane's scroll ratio (scrollTop / max) for the active tab.
+ * @param {string} which — "e" (editor) or "p" (preview).
+ * @returns {Promise<number>} the 0..1 scroll ratio.
+ */
 const ratio = (which) => p.evaluate((w) => {
   const d = window.editor.activeTab;
   const el = w === "e" ? d.editorScroll : d.previewScroll;
   const max = el.scrollHeight - el.clientHeight;
   return max > 0 ? el.scrollTop / max : 0;
 }, which);
-// Scroll both panes of the active tab to `f` of their own max (a real scroll).
+
+/**
+ * scrollBoth — scroll both panes of the active tab to `f` of their max.
+ * @param {number} f — the 0..1 scroll fraction to reach.
+ */
 const scrollBoth = (f) => p.evaluate((f2) => {
   const d = window.editor.activeTab;
   for (const el of [d.editorScroll, d.previewScroll]) {
@@ -58,12 +76,19 @@ const scrollBoth = (f) => p.evaluate((f2) => {
     if (max > 0) el.scrollTop = Math.round(max * f2);
   }
 }, f);
+
+/**
+ * tab — a playwright locator for a tab's name chip.
+ * @param {string} name — the tab name to match.
+ * @returns {import('playwright-chromium').Locator}
+ */
 const tab = (name) => p.locator(`.tab .tname`, { hasText: name });
 
 // Both panes must be genuinely scrollable for the ratios to mean anything.
 // (Measure the ACTIVE tab — a hidden tab reports scrollHeight 0 while display:none.)
 const aMax = await p.evaluate(() => {
   const d = window.editor.activeTab;
+  /** m — a pane's scrollable max. */
   const m = (el) => el.scrollHeight - el.clientHeight;
   return { name: d.name, e: m(d.editorScroll), p: m(d.previewScroll) };
 });

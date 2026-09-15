@@ -1,3 +1,11 @@
+/**
+ * verifyTabClick.mjs — clicking an already-active tab is a no-op.
+ *
+ * The old activate() did input.focus()+refresh() on every click, refocusing the
+ * textarea (scrolled it into view — both panes jumped 90%→~25%) and re-running
+ * marked + mermaid. activate() now short-circuits when doc === activeTab.
+ * Run with `npm run verify-tabclick`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -22,6 +30,7 @@ p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error" && !/favicon/i.test(m.text())) errors.push("CONSOLE: " + m.text()); });
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (n, c, extra) => { if (c) { pass++; console.log("ok  ", n, extra ? "→ " + extra : ""); } else { fail++; console.log("FAIL", n, extra ? "→ " + extra : ""); } };
 
 await p.goto("http://localhost:4605/", { waitUntil: "networkidle" });
@@ -43,18 +52,25 @@ await sleep(S);
 // A DOM probe: a custom attribute on the live preview node. If a redundant
 // activate() rewrites the preview (syncDom → preview.innerHTML = …), this
 // attribute is wiped, so its survival proves no re-render happened.
+/** armProbe — tag the first preview child with `data-tcprobe` so a re-render wipe is detectable. */
 const armProbe = () => p.evaluate(() => {
   const d = window.editor.activeTab;
   const first = d.preview.firstElementChild;
   if (first) first.setAttribute("data-tcprobe", "alive");
   return { probed: !!first, mermaid: d.preview.querySelectorAll(".mermaid-diagram").length };
 });
+/**
+ * probe — read a pane's scroll ratio and its max.
+ * @param {string} which — "e" (editor) or "p" (preview).
+ * @returns {Promise<{ratio: number, max: number}>}
+ */
 const probe = (which) => p.evaluate((w) => {
   const d = window.editor.activeTab;
   const el = w === "e" ? d.editorScroll : d.previewScroll;
   const max = el.scrollHeight - el.clientHeight;
   return { ratio: max > 0 ? el.scrollTop / max : 0, max };
 }, which);
+/** setScroll — scroll both panes of the active tab to ~90% of their max. */
 const setScroll = () => p.evaluate(() => {
   const d = window.editor.activeTab;
   for (const el of [d.editorScroll, d.previewScroll]) {

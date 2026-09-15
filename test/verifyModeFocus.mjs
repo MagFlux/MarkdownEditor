@@ -1,3 +1,12 @@
+/**
+ * verifyModeFocus.mjs — mode-click focus regression (Playwright, Chromium).
+ *
+ * Asserts the mode button causatively focuses the editor textarea for every
+ * target EXCEPT preview (where focusing the hidden zero-width textarea fires
+ * WebKitGTK's eager scroll-into-view and ratchets the preview pane to the
+ * bottom), and IS focused for split/edit. Blurs before each click so it
+ * measures causative focus. Run with `npm run verify-modefocus`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -41,6 +50,7 @@ await p.goto("http://localhost:4610/", { waitUntil: "networkidle" });
 await sleep(400);
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (n, c, x) => { if (c) { pass++; console.log("ok  ", n, x ? "→ " + x : ""); } else { fail++; console.log("FAIL", n, x ? "→ " + x : ""); } };
 
 // Tall doc so both panes are genuinely scrollable; caret at the END (worst case).
@@ -57,9 +67,14 @@ await p.evaluate(() => {
 });
 await sleep(S);
 
+/**
+ * snap — capture mode, both panes' scroll ratios, and the focus state.
+ * @returns {Promise<{mode: string, edit: number, preview: number, focusIsTextarea: boolean, focusTag: string}>}
+ */
 const snap = () => p.evaluate(() => {
   const d = window.editor.activeTab;
   const e = d.editorScroll, pv = d.previewScroll;
+  /** r — a pane's 0..1 scroll ratio. */
   const r = (el) => { const m = el.scrollHeight - el.clientHeight; return m > 0 ? +(el.scrollTop / m).toFixed(4) : 0; };
   const ae = document.activeElement;
   return {
@@ -78,10 +93,12 @@ await p.evaluate(() => {
 });
 await sleep(S);
 
+/**
+ * clickMode — click the mode button after first BLURring the active element, so the
+ * focus assertions measure CAUSATIVE focus from the click (a plain focus() would
+ * otherwise leave an already-focused textarea focused regardless of the branch).
+ */
 const clickMode = async () => {
-  // Blur whatever holds the caret FIRST, so the focus assertion below measures
-  // CAUSATIVE focus from the mode click — a plain focus() would otherwise leave
-  // an already-focused textarea focused regardless of the mode-action branch.
   await p.evaluate(() => {
     const ae = document.activeElement;
     if (ae && ae.blur) ae.blur();
@@ -128,6 +145,7 @@ await sleep(S);
 
 await p.evaluate(() => {
   const d = window.editor.activeTab;
+  /** set — scroll a pane to 35% of its max. */
   const set = (el) => { const m = el.scrollHeight - el.clientHeight; if (m > 0) el.scrollTop = m * 0.35; };
   set(d.editorScroll); set(d.previewScroll);
 });

@@ -1,3 +1,11 @@
+/**
+ * verifyScroll.mjs — split-view scroll-sync regression.
+ *
+ * A genuine user scroll on the FOLLOW pane (while its ECHO_MS deadline is still
+ * live) must be accepted as a fresh lead immediately — the old time-only window
+ * swallowed it for ~800 ms ("left side lags / catches up"). Value-based echo
+ * matching (ECHO_EPS offset compare) fixes this. Run with `npm run verify-scroll`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -15,6 +23,7 @@ p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error" && !/favicon/i.test(m.text())) errors.push("CONSOLE: " + m.text()); });
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (n, c, extra) => { if (c) { pass++; console.log("ok  ", n, extra ? "→ " + extra : ""); } else { fail++; console.log("FAIL", n, extra ? "→ " + extra : ""); } };
 
 await p.goto("http://localhost:4599/", { waitUntil: "networkidle" });
@@ -29,13 +38,23 @@ await p.evaluate(() => {
 });
 await sleep(S);
 
-// Read both panes' {scrollTop, max} where max = scrollHeight - clientHeight.
+/**
+ * panes — read both panes' `{ st, max }` where max = scrollHeight − clientHeight.
+ * @returns {Promise<{e: {st: number, max: number}, p: {st: number, max: number}}>}
+ */
 const panes = () => p.evaluate(() => {
   const d = window.editor.activeTab;
+  /** m — a pane's {st, max} pair. */
   const m = (el) => ({ st: Math.round(el.scrollTop), max: Math.round(el.scrollHeight - el.clientHeight) });
   return { e: m(d.editorScroll), p: m(d.previewScroll) };
 });
-// Set a pane's scrollTop to a fraction of its max — this fires a REAL scroll event.
+
+/**
+ * scrollFrac — set a pane's scrollTop to a fraction of its max (fires a real scroll).
+ * @param {string} which — "e" (editor) or "p" (preview).
+ * @param {number} f — the 0..1 scroll fraction to reach.
+ * @returns {Promise<number>} the resulting scrollTop.
+ */
 const scrollFrac = (which, f) => p.evaluate((o) => {
   const { w, f2 } = o;
   const d = window.editor.activeTab;
@@ -44,7 +63,14 @@ const scrollFrac = (which, f) => p.evaluate((o) => {
   el.scrollTop = v;
   return el.scrollTop;
 }, { w: which, f2: f });
-// Wait up to `budget` ms for a pane to reach `target` ± `tol`; report elapsed + reached.
+/**
+ * waitAt — wait up to `budget` ms for a pane to reach `target` ± `tol`.
+ * @param {string} which — "e" (editor) or "p" (preview).
+ * @param {number} target — the scrollTop to wait for.
+ * @param {number} tol — the ± tolerance in px.
+ * @param {number} budget — max wait in ms.
+ * @returns {Promise<{ms: number, at: number, reached: boolean}>} elapsed, landed offset, and hit.
+ */
 const waitAt = (which, target, tol, budget) => p.evaluate(async (o) => {
   const { w, t, tol2, budget2 } = o;
   const d = window.editor.activeTab;

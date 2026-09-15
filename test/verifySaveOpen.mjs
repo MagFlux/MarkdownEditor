@@ -1,3 +1,10 @@
+/**
+ * verifySaveOpen.mjs — save / close-guard / open UI test.
+ *
+ * Drives the save (writeTextFile + close), save-cancel (tab stays),
+ * save-discard-cancel (tab stays), known-path direct-write, open (new tab),
+ * and open-cancel paths. Run with `npm run verify-save`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -14,17 +21,29 @@ let page = await context.newPage({ viewport: { width: 1280, height: 800 } });
 const errors = [];
 
 let pass = 0, fail = 0;
+/**
+ * check — record a pass/fail assertion, optionally appending a diagnosis.
+ * @param {string} label — the test name.
+ * @param {*} cond — truthy to pass.
+ * @param {*} [extra] — extra detail printed on failure.
+ */
 function check(label, cond, extra) {
   const ok = !!cond;
   console.log((ok ? "ok  " : "FAIL") + "  " + label + (extra !== undefined ? "   → " + extra : ""));
   if (ok) pass++; else fail++;
 }
+
+/** wire — attach the pageerror/console-error collectors to a page. */
 function wire(p) {
   p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
   p.on("console", (m) => { if (m.type() === "error") errors.push("CONSOLE: " + m.text()); });
 }
 wire(page);
 
+/**
+ * fresh — reset to a brand-new clean context/tab and return the visible editor.
+ * @returns {Promise<import('playwright-chromium').Locator>} the active editor textarea.
+ */
 async function fresh() {
   await context.close();
   context = await browser.newContext();
@@ -37,15 +56,22 @@ async function fresh() {
   await page.waitForTimeout(120);
   return page.locator(".pane-group.active textarea.input");
 }
+/**
+ * clickDlg — click a save-dialog button by its visible text.
+ * @param {string} btn — the button label (e.g. "Save", "Cancel").
+ */
 async function clickDlg(btn) {
   await page.locator(`.savedlg button:has-text("${btn}")`).click();
   await page.waitForTimeout(150);
 }
-// Kick off an internal blocking call *without* awaiting it, so we can drive the
-// UI dialog from the Node side before its promise settles. The promise is
-// created in-page (closeApp runs to first await) but NOT returned to evaluate —
-// returning it would make page.evaluate block until it settles, which it never
-// will (it awaits our button click on the Node side).
+/**
+ * kick — kick off an internal blocking call *without* awaiting it, so the UI dialog
+ * can be driven from the Node side before its promise settles. The promise is created
+ * in-page (closeApp runs to its first await) but deliberately NOT returned to evaluate
+ * — returning it would make page.evaluate block forever (it awaits our Node-side
+ * button click).
+ * @param {() => any} fn — the in-page function to invoke.
+ */
 const kick = (fn) => page.evaluate((f) => { f(); }, fn); // run in-page, promise discarded
 
 // ============ TEST 1: save() browser download path (no path set) ============

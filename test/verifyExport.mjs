@@ -1,3 +1,11 @@
+/**
+ * verifyExport.mjs — Export (HTML/PDF) verification (Playwright, Chromium).
+ *
+ * Drives the hamburger menu + in-app picker, stubs the Tauri fs IPC, and
+ * asserts menu open/close/outside-click/Escape, HTML and PDF save paths
+ * (including cancel and browser Blob-download fallbacks), and that menu items
+ * don't leak into the default toolbar focus flow. Run with `npm run verify-export`.
+ */
 // Export (HTML/PDF) verification — drives the hamburger menu + in-app picker,
 // stubs the Tauri fs IPC the same way verifyTauriClose.mjs does, and asserts:
 //   - Menu open / close / outside-click / Escape keyboard
@@ -22,7 +30,13 @@ const srv = spawn("npx", ["vite", "preview", "--port", String(PORT)], { stdio: "
 await new Promise((r) => setTimeout(r, 1500));
 
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion, optionally appending a diagnosis. */
 const ok = (label, cond, extra) => { const c = !!cond; console.log((c ? "ok  " : "FAIL ") + label + (extra !== undefined ? "   → " + extra : "")); c ? pass++ : fail++; };
+
+/**
+ * wait — sleep for `ms` milliseconds.
+ * @param {number} ms — the delay in ms.
+ */
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch();
 setTimeout(() => {
@@ -30,8 +44,12 @@ setTimeout(() => {
   process.exit(3);
 }, 75000);
 
-// Pure function; runs inside the page. Must live on window so Playwright contextifies
-// it once and it survives across evaluate() calls in the same context.
+/**
+ * installInternals — install a stub `window.__TAURI_INTERNALS__` + `window.__state`.
+ * Injected via addInitScript so Playwright contextifies it once and it survives
+ * across evaluate() calls in the same context. Records IPC, text/binary writes,
+ * and read_dir calls on `__state` for assertions.
+ */
 function installInternals() {
   let cbid = 0;
   const callbacks = new Map();
@@ -95,6 +113,11 @@ function installInternals() {
   window.__state = S;
 }
 
+/**
+ * scenario — run one test case in a fresh browser context with Tauri stubs.
+ * @param {string} name — the scenario label printed as a section header.
+ * @param {(env: {page: any, st: any, ok: any, wait: any, errors: any}) => Promise<void>} run — the case body.
+ */
 async function scenario(name, run) {
   const context = await browser.newContext();
   await context.addInitScript(installInternals);
@@ -106,6 +129,7 @@ async function scenario(name, run) {
   try {
     await page.goto(`http://localhost:${PORT}/`);
     await wait(300);
+    /** st — read the stubbed `window.__state` (IPC/writes/read_dir log). */
     const st = () => page.evaluate(() => window.__state);
     await run({ page, st, ok, wait, errors });
   } catch (e) {
@@ -120,7 +144,10 @@ async function scenario(name, run) {
 await scenario("M: menu open/close/outside-click/Escape", async ({ page, ok, wait }) => {
   const menuBtn = page.locator('[data-action="menu"]');
   const dropdown = page.locator(".menu-dropdown");
+  /** openClass — whether the .menu-dropdown has the "open" class. */
   const openClass = () => page.evaluate(() => document.querySelector(".menu-dropdown").classList.contains("open"));
+
+  /** expandedAttr — the menu button's aria-expanded attribute value. */
   const expandedAttr = () => page.evaluate(() => document.querySelector('[data-action="menu"]').getAttribute("aria-expanded"));
 
   ok("M0 menu button present in the toolbar", (await menuBtn.count()) === 1);

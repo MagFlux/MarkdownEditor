@@ -1,3 +1,11 @@
+/**
+ * verifyPaste.mjs — rich-paste HTML→Markdown conversion test.
+ *
+ * Feeds an HTML clipboard (Excel/HTML tables, bold/italic/underline spans,
+ * mixed runs) into the editor and asserts it converts to Markdown and commits
+ * as ONE undo-able edit; plain-text pastes fall through to the browser default
+ * insert. Run with `npm run verify-paste`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 
@@ -14,19 +22,27 @@ const errors = [];
 p.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 p.on("console", (m) => { if (m.type() === "error") errors.push("CONSOLE: " + m.text()); });
 let pass = 0, fail = 0;
+/** ok — record a pass/fail assertion under its label. */
 const ok = (n, c) => { if (c) { pass++; console.log("ok  ", n); } else { fail++; console.log("FAIL", n); } };
 
 await p.goto("http://localhost:4398/", { waitUntil: "networkidle" });
 await sleep(600);
 
+/** val — the active tab's current document text. */
 const val = () => p.evaluate(() => window.editor.documentText);
+
+/** undoState — the active tab's undo stack length + whether undo is enabled. */
 const undoState = () => p.evaluate(() => {
   const t = window.editor.activeTab;
   const btn = window.editor.toolbar.querySelector('[data-action="undo"]');
   return { len: t.undo.length, enabled: !btn.disabled };
 });
 
-// Dispatch a synthetic paste event whose clipboardData carries the given text/html.
+/**
+ * pasteHtml — dispatch a synthetic paste event carrying the given `text/html`.
+ * @param {string} html — the clipboard `text/html` payload to paste.
+ * @returns {Promise<boolean>} true if the editor intercepted (prevented) the paste.
+ */
 async function pasteHtml(html) {
   return p.evaluate((html) => {
     const t = window.editor.activeTab.input;

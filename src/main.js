@@ -1,3 +1,13 @@
+/**
+ * main.js — bootstrap for the Vite entry.
+ *
+ * Wires the app to the `#app` mount point, seeds the one-time sample document
+ * (only when the document is empty, so an existing file is never clobbered),
+ * and exposes the `app` instance on `window.editor` for the test harness.
+ * No named functions; this file is top-level bootstrap statements only.
+ *
+ * Exposes: `window.editor` — the live `createApp` result (for Playwright).
+ */
 import { createApp } from "./markdown.js";
 import "./style.css";
 

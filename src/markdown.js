@@ -1,3 +1,20 @@
+/**
+ * markdown.js — the app shell: createApp() builds and wires the whole
+ * multi-tab Markdown editor.
+ *
+ * Owns the createApp() closure — tabs, undo/redo, keybinds, save/open, drag
+ * & drop, the window-close guard, in-app modals, toolbar actions, and session
+ * persistence — plus the Tauri/IPC wiring (save/open/export, on-close, open
+ * URL). Pure helpers (render, mermaid, format, paste) live in their own
+ * static-imported modules and are re-exported below so this file's public shape
+ * is unchanged.
+ *
+ * IMPORTANT (invariants 2 & 8 in AGENTS.md): every @tauri-apps/*, jsPDF and
+ * html2canvas import below is STATIC and must stay that way — they have to
+ * hoist into the single bundle the GTK webview can load. Never convert them to
+ * a dynamic import(); a failed runtime chunk fetch silently disables
+ * save/open and the window-close guard.
+ */
 import * as icons from "./icons.js";
 import { marked } from "marked";
 
@@ -21,529 +38,29 @@ import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
    guarded so the browser fallback (Blob download) still works under `vite preview`. */
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-/* Mermaid — STATIC import, same invariant as the lines above: hoisted into the
-   single main bundle (no runtime code-split chunk, which the GTK webview can't
-   resolve). Mermaid v12's `import` resolves to `dist/mermaid.core.mjs` whose
-   top-level init only needs `window.addEventListener`/`removeEventListener`
-   (both present in the test.mjs Node stubs), so importing under Node in
-   test.mjs is safe. Actual diagram rendering (mermaid.render) is browser-only —
-   it needs a real layout DOM — and is always guarded so the headless/Node path
-   never calls it. */
-import mermaid from "mermaid";
+
+/* Modules — pure helpers extracted into their own files (static imports only; they
+   hoist into the same single bundle, same invariant as the Tauri imports above).
+   src/markdown.js keeps ONLY the createApp closure + native/IPC wiring. */
+import { highlightToHtml, isTableSep } from "./render.js";
+import { scheduleMermaidRender, renderMermaidInNode, renderMermaidInHtml } from "./mermaid.js";
+import { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
+import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
+
+/* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
+   `highlightToHtml` from here; the app itself calls it from the closure). */
+export { highlightToHtml, computeBlocks, lineToHtml, isTableSep, esc } from "./render.js";
+export { renderMermaidInNode, renderMermaidInHtml, scheduleMermaidRender } from "./mermaid.js";
+export { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
+export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "./paste.js";
 
 marked.setOptions({ gfm: true, breaks: false });
-
-const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-
-/* ================= Mermaid diagram rendering =================
-   marked turns a ` ```mermaid ` fence into
-   `<pre><code class="language-mermaid">…</code></pre>`. We detect those and swap
-   the `<pre>` for the rendered SVG (inline, so both the live preview and the
-   html2canvas PDF export capture it; the exported HTML doc inlines the same SVG).
-   renderMermaidSvg is the single source: it asks mermaid for the SVG string. */
-let _mmSeq = 0;
-function mermaidTheme() {
-  let theme = "default";
-  try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
-  return theme;
-}
-/* Ask mermaid for a rendered SVG string. Safe under Node (returns {svg:"",bindFunctions:null}). */
-async function renderMermaidSvg(text) {
-  if (typeof document === "undefined" || !document.body) { return { svg: "", bindFunctions: null }; } // Node/headless: never render
-  let theme = "default";
-  try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
-  try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
-  const id = "md-mermaid-" + (++_mmSeq);
-  // Mermaid measures against a real (visible) node, so mount it off-screen in the
-  // doc, render into it, then fully clean up. Never left behind.
-  const container = document.createElement("div");
-  container.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;visibility:hidden;";
-  document.body.appendChild(container);
-  try {
-    const res = await mermaid.render(id, text, container);
-    let svg = (typeof res === "string") ? res : ((res && (res.svg || res.str)) || (container && container.innerHTML) || "");
-    // Make the inline SVG scale to its container width rather than a fixed
-    // mermaid width, so narrow diagrams don't overflow the preview column.
-    svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;"');
-    return { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
-  } finally {
-    if (container.parentNode) container.parentNode.removeChild(container);
-    const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
-    if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
-  }
-}
-
-/* Render the mermaid fences inside a LIVE DOM node in place (preview + PDF host).
-   Safe to call when there are no fences (querySelectorAll is empty → no-op). */
-async function renderMermaidInNode(node) {
-  if (!node) return;
-  const blocks = Array.from(node.querySelectorAll("pre > code.language-mermaid"));
-  if (!blocks.length) return;
-  for (const code of blocks) {
-    const pre = code.closest ? code.closest("pre") : code.parentNode;
-    const text = code.textContent; // textContent is already entity-decoded
-    let out = { svg: "", bindFunctions: null };
-    try { out = await renderMermaidSvg(text); }
-    catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
-    const holder = document.createElement("div");
-    holder.className = "mermaid-diagram";
-    holder.innerHTML = out.svg;
-    if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
-    else node.appendChild(holder);
-    if (out.bindFunctions) { try { out.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
-  }
-}
-
-/* Render the mermaid fences inside an HTML *string* (export path). marked had
-   escaped `<`/`>`, so decode the entities before handing the source to mermaid. */
-async function renderMermaidInHtml(html) {
-  const re = /<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g;
-  if (!re.test(html)) { re.lastIndex = 0; return html; }
-  const decode = (s) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
-  const out = [];
-  let last = 0, m;
-  while ((m = re.exec(html))) {
-    out.push(html.slice(last, m.index));
-    let svg;
-    try { svg = (await renderMermaidSvg(decode(m[1]))).svg; }
-    catch (e) { svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
-    out.push(`<div class="mermaid-diagram">${svg}</div>`);
-    last = m.index + m[0].length;
-  }
-  out.push(html.slice(last));
-  return out.join("");
-}
-
-/* Debounced preview render: syncDom runs on every keystroke, so only fire one
-   mermaid pass per settle window and drop the timer on the next one. */
-function scheduleMermaidRender(d) {
-  if (d.__mmTimer) clearTimeout(d.__mmTimer);
-  d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
-}
-
-/* ================= Inline Markdown → highlight spans =================
-   Invariant: stripping every <span> tag out of the produced HTML must reproduce the
-   exact source (character-per-character), so the invisible textarea stays aligned
-   under the overlay and the caret never drifts.                              */
-function matchTok(t, i) {
-  const c = t[i];
-  if (c === "`") {
-    const j = t.indexOf("`", i + 1);
-    if (j > i + 1)
-      return {
-        len: j - i + 1,
-        html: `<span class="mark">\`</span><span class="code">${esc(t.slice(i + 1, j))}</span><span class="mark">\`</span>`,
-      };
-    return null;
-  }
-  if (c === "*") {
-    const seg = t.slice(i);
-    if (seg.startsWith("**")) {
-      const close = seg.indexOf("**", 2);
-      if (close > 2)
-        return {
-          len: close + 2,
-          html: `<span class="mark">**</span><span class="b">${esc(seg.slice(2, close))}</span><span class="mark">**</span>`,
-        };
-    }
-    const close = seg.indexOf("*", 1);
-    if (close > 1)
-      return {
-        len: close + 1,
-        html: `<span class="mark">*</span><span class="i">${esc(seg.slice(1, close))}</span><span class="mark">*</span>`,
-      };
-    return null;
-  }
-  if (c === "_" || c === "~") {
-    if (c === "_") {
-      const seg = t.slice(i);
-      if (seg.startsWith("__")) {
-        const close = seg.indexOf("__", 2);
-        if (close > 2)
-          return { len: close + 2, html: `<span class="mark">__</span><span class="b">${esc(seg.slice(2, close))}</span><span class="mark">__</span>` };
-      }
-      const close = seg.indexOf("_", 1);
-      if (close > 1)
-        return { len: close + 1, html: `<span class="mark">_</span><span class="i">${esc(seg.slice(1, close))}</span><span class="mark">_</span>` };
-      return null;
-    }
-    const seg = t.slice(i);
-    if (seg.startsWith("~~")) {
-      const close = seg.indexOf("~~", 2);
-      if (close > 2)
-        return { len: close + 2, html: `<span class="mark">~~</span><span class="s">${esc(seg.slice(2, close))}</span><span class="mark">~~</span>` };
-    }
-    return null;
-  }
-  if (c === "<" && /^<u>/i.test(t.slice(i))) {
-    const open = /^<u>/i.exec(t.slice(i));
-    if (open) {
-      const body = t.slice(i + open[0].length);
-      const close = /^<\/u>/i.exec(body);
-      if (close) {
-        const inner = body.slice(0, close.index);
-        return {
-          len: open[0].length + inner.length + close[0].length,
-          html: `<span class="mark">&lt;u&gt;</span><span class="u">${esc(inner)}</span><span class="mark">&lt;/u&gt;</span>`,
-        };
-      }
-    }
-  }
-  if (c === "[") {
-    const m2 = /^\[[^\]]*\]\([^)]*\)/.exec(t.slice(i));
-    if (m2 && m2.index === 0) {
-      const raw = t.slice(i, i + m2[0].length);
-      const mm = raw.match(/^\[([^\]]*)\]\(([^)]*)\)$/);
-      const alt = mm ? mm[1] : "", url = mm ? mm[2] : "";
-      return {
-        len: raw.length,
-        html: `<span class="mark">[</span><span class="lnk">${esc(alt)}</span><span class="mark">](</span><span class="lnk">${esc(url)}</span><span class="mark">)</span>`,
-      };
-    }
-    return null;
-  }
-  return null;
-}
-
-/* ================= Block detection ================= */
-function isTableSep(l) {
-  if (!l || l.length < 3 || !l.includes("-") || !l.includes("|")) return false;
-  if (/[^\s|:|-]/.test(l)) return false;
-  const cells = l.trim().replace(/^\||\|$/g, "").split("|");
-  return cells.every((c) => /^:?-+:?$/.test(c.trim()));
-}
-
-function renderInline(t, cell) {
-  let out = "", i = 0, n = t.length;
-  while (i < n) {
-    const m = matchTok(t, i);
-    if (m) { out += m.html; i += m.len; }
-    else {
-      if (cell && t[i] === "|") out += '<span class="mark">|</span>';
-      else out += esc(t[i]);
-      i++;
-    }
-  }
-  return out;
-}
-
-export function computeBlocks(lines) {
-  const cls = new Array(lines.length).fill(null);
-  let inCode = false;
-  let i = 0;
-  while (i < lines.length) {
-    const l = lines[i];
-    if (/^\s*(`{3,}|~{3,})/.test(l)) {
-      inCode = !inCode; cls[i] = "code"; i++; continue;
-    }
-    if (inCode) { cls[i] = "code"; i++; continue; }
-    let m;
-    if ((m = l.match(/^(#{1,4})\s+/))) cls[i] = "h" + m[1].length;
-    else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) cls[i] = "hr";
-    else if (/^\s*>/.test(l)) cls[i] = "quote";
-    else if (/^\s*[-*+]\s+/.test(l)) cls[i] = "ul";
-    else if (/^\s*\d+\.\s+/.test(l)) cls[i] = "ol";
-    i++;
-  }
-  // GFM-style tables: header row + separator row (+ optional data rows)
-  for (i = 0; i + 1 < lines.length; i++) {
-    const l0 = lines[i];
-    if (!l0 || !l0.includes("|") || cls[i] || cls[i + 1]) continue;
-    if (!isTableSep(lines[i + 1])) continue;
-    cls[i] = "th"; cls[i + 1] = "tsep";
-    for (let j = i + 2; j < lines.length; j++) {
-      const l = lines[j];
-      if (!l || !l.trim() || !l.includes("|")) break;
-      if (cls[j]) break;
-      cls[j] = "td";
-    }
-  }
-  return cls;
-}
-
-export function lineToHtml(line, bc) {
-  if (!line) return "";
-  if (bc === "code") return `<span class="cl">${esc(line)}</span>`;
-  if (bc === "hr") return `<span class="hr">${esc(line)}</span>`;
-  let markerLen = 0;
-  const mm =
-    /^#{1,4}\s/.test(line) ? line.match(/^#{1,4}\s*/) :
-    /^\s*>/.test(line) ? line.match(/^\s*>\s?/) :
-    /^\s*[-*+]\s+/.test(line) ? line.match(/^\s*[-*+]\s+/) :
-    /^\s*\d+\.\s+/.test(line) ? line.match(/^\s*\d+\.\s+/) : null;
-  if (mm) markerLen = mm[0].length;
-  const marker = line.slice(0, markerLen);
-  const content = line.slice(markerLen);
-  const isHead = ["h1", "h2", "h3", "h4"].includes(bc);
-  const markerHtml = marker ? `<span class="mark">${esc(marker)}</span>` : "";
-  const cell = ["th", "tsep", "td"].includes(bc);
-  const contentHtml = isHead ? `<span class="hd">${renderInline(content)}</span>` : renderInline(content, cell);
-  let inner = markerHtml + contentHtml;
-  if (isHead) inner = `<span class="${bc}">${inner}</span>`;
-  if (bc === "quote") inner = `<span class="q">${inner}</span>`;
-  if (cell) inner = `<span class="${bc}">${inner}</span>`;
-  return inner;
-}
-
-export function highlightToHtml(text) {
-  const lines = text.split("\n");
-  const cls = computeBlocks(lines);
-  const parts = [];
-  for (let i = 0; i < lines.length; i++) {
-    parts.push(lineToHtml(lines[i], cls[i]));
-    if (i < lines.length - 1) parts.push("\n");
-  }
-  return parts.join("");
-}
-
-/* ================= Selection helpers ================= */
-function lineBounds(text, pos) {
-  const s = text.lastIndexOf("\n", pos - 1) + 1;
-  let e = text.indexOf("\n", pos);
-  if (e === -1) e = text.length;
-  return [s, e];
-}
-function W(ch) { return ch !== undefined && ch !== "" && !/\s/.test(ch); }
-function wordAt(line, off) {
-  const n = line.length; if (off < 0) off = 0; if (off > n) off = n;
-  if (!W(line[off]) && !W(line[off - 1])) {
-    let i = off - 1; while (i >= 0 && !W(line[i])) i--;
-    if (i >= 0) { let s = i; while (s > 0 && W(line[s - 1])) s--; return [s, i + 1]; }
-    let j = off; while (j < n && !W(line[j])) j++;
-    if (j < n) { let e = j; while (e < n && W(line[e])) e++; return [j, e]; }
-    return [off, off];
-  }
-  const anchor = W(line[off]) ? off : off - 1;
-  let s = anchor; while (s > 0 && W(line[s - 1])) s--;
-  let e = anchor; while (e < n && W(line[e])) e++;
-  return [s, e];
-}
-
-/* ================= Format detection / wrapping ================= */
-// `wordAt` splits tokens on whitespace only, so a formatted word followed by
-// sentence punctuation (e.g. `**bold**` in `- Live **bold**, *italic*…`) comes
-// back as a single token WITH that trailing comma. The anchored `^…$` format
-// regexes in `detectFormat` then fail, and only the block button (which matches
-// the line prefix `- `) lights up. To recover the true format span we strip
-// leading/trailing SENTENCE punctuation (`, . ; : ! ?`) from the token edges
-// before matching. This is safe because no format marker (`* _ ~ ` < > / [ ]
-// ( )`) is in that set — trimming token edges can never eat a marker, and the
-// URL inside a link `[…](https://…)` is not at a token edge. The trimmed span
-// bounds (`fs`/`fe`) are returned so `toggleFormat` can splice precisely and
-// preserve the adjacent punctuation instead of clobbering the whole token.
-function detectFormat(line, ws, we) {
-  const t = line.slice(ws, we);
-  const leadM = t.match(/^[.,;:!?]+/);
-  const trailM = t.match(/[.,;:!?]+$/);
-  const lead = leadM ? leadM[0].length : 0;
-  const trail = trailM ? trailM[0].length : 0;
-  const fs = ws + lead;
-  const fe = we - trail;
-  if (fs >= fe) return null;
-  const core = line.slice(fs, fe);
-  let m;
-  if ((m = core.match(/^\*\*(.+?)\*\*$/))) return { fmt: "bold", inner: m[1], fs, fe };
-  if ((m = core.match(/^__(.+?)__$/))) return { fmt: "bold", inner: m[1], fs, fe };
-  if ((m = core.match(/^~~(.+?)~~$/))) return { fmt: "strike", inner: m[1], fs, fe };
-  if ((m = core.match(/^`(.+?)`$/))) return { fmt: "code", inner: m[1], fs, fe };
-  if ((m = core.match(/^<u>([\s\S]+?)<\/u>$/))) return { fmt: "underline", inner: m[1], fs, fe };
-  if ((m = core.match(/^\*([^\s*].*?)\*$/))) return { fmt: "italic", inner: m[1], fs, fe };
-  if ((m = core.match(/^_([^_]+?)_$/))) return { fmt: "italic", inner: m[1], fs, fe };
-  if ((m = core.match(/^\[([^\]]*)\]\(([^)]*)\)$/))) return { fmt: "link", inner: m[1], url: m[2], fs, fe };
-  return null;
-}
-// Trimmed token span (sentence punctuation stripped from the edges) — used by
-// `toggleFormat`'s "apply a new format to an unmatched token" branch so the
-// adjacent sentence punctuation is preserved when wrapping.
-function trimmedSpan(line, ws, we) {
-  const t = line.slice(ws, we);
-  const lead = (t.match(/^[.,;:!?]+/) || [""])[0].length;
-  const trail = (t.match(/[.,;:!?]+$/) || [""])[0].length;
-  // A token composed ENTIRELY of sentence punctuation (`...` etc.) leaves an
-  // empty span after trimming — fall back to the raw token so we still wrap
-  // *something* (preserves the old behaviour for this pathological input).
-  if (lead + trail >= t.length) return { fs: ws, fe: we };
-  return { fs: ws + lead, fe: we - trail };
-}
-function wrapFor(kind, inner) {
-  switch (kind) {
-    case "bold": return `**${inner}**`;
-    case "italic": return `*${inner}*`;
-    case "strike": return `~~${inner}~~`;
-    case "underline": return `<u>${inner}</u>`;
-    case "code": return `\`${inner}\``;
-    case "link": return `[${inner || "link"}](https://)`;
-  }
-  return inner;
-}
-
-/* ================= Rich-paste conversion (HTML clipboard → Markdown) =================
-   Pure helpers, no DOM globals beyond `document` (which exists in both the browser
-   and the Tauri webview, so these are safe to call from anywhere in the app).
-
-   The goal: when the user Ctrl+V's rich content (Excel table, Word bolded
-   paragraph, web snippet) into the Markdown editor, we convert the `text/html`
-   clipboard payload to a readable Markdown representation and commit it as a
-   single, undo-able edit. If there is no recognised HTML, we fall through to
-   the browser's default paste (plain text still works).
-
-   Cell text: whitespace is normalised (tabs, newlines → space) so the output
-   fits on one line. Cells that carry `**` / `*` / `<u>` markers keep them so
-   the preview renders them.
-*/
-function mdCellText(node) {
-  // Collect textContent (incl. nested styled children) but normalise runs of
-  // whitespace and turn embedded newlines into a single space. Returns {bold,
-  // italic, underline, text}.
-  let bold = false, italic = false, underline = false;
-  let text = "";
-  (function walk(n) {
-    if (n.nodeType === 3) { text += n.nodeValue; return; }
-    if (n.nodeType !== 1) return;
-    const tag = n.tagName && n.tagName.toUpperCase();
-    if (tag === "B" || tag === "STRONG") bold = true;
-    if (tag === "I" || tag === "EM") italic = true;
-    if (tag === "U") underline = true;
-    const st = n.getAttribute && n.getAttribute("style") || "";
-    if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(st)) bold = true;
-    if (/font-style\s*:\s*italic/i.test(st)) italic = true;
-    if (/text-decoration:\s*[^;]*underline/i.test(st)) underline = true;
-    for (let c = n.firstChild; c; c = c.nextSibling) walk(c);
-  })(node);
-  text = text.replace(/\s+/g, " ").trim();
-  if (!text) return "";
-  let out = text;
-  if (underline) out = `<u>${out}</u>`;
-  if (italic) out = `*${out}*`;
-  if (bold) out = `**${out}**`;
-  return out.replace(/\|/g, "\\|");
-}
-
-function mdTableFromHtml(root) {
-  // Walk the first <table> descendant, build the same GFM layout the in-app
-  // "table" toolbar button produces, but with the real cell contents in it.
-  const tbl = root.tagName === "TABLE" ? root : root.querySelector("table");
-  if (!tbl) return null;
-  // Build a 2-D grid: for each visual row, list of cell texts. Cells may span
-  // multiple <tr> rows (rowspan) but Excel rarely uses that; we treat each
-  // <tr> as one grid row and each cell as one column.
-  const rows = [];
-  const trs = tbl.querySelectorAll("tr");
-  trs.forEach((tr) => {
-    const cells = [];
-    tr.querySelectorAll("td, th").forEach((c) => cells.push(mdCellText(c)));
-    if (cells.length) rows.push(cells);
-  });
-  if (!rows.length) return null;
-  // Normalise: all rows must have the same column count. Pad with "".
-  const cols = Math.max(...rows.map((r) => r.length));
-  const grid = rows.map((r) => r.concat(new Array(cols - r.length).fill("")));
-  const line = (r) => `| ` + r.map((c) => (c === "" ? " " : c)).join(" | ") + ` |`;
-  const sepLine = `| ` + new Array(cols).fill("------").join(" | ") + ` |`;
-  const body = grid.slice(1).map(line).join("\n");
-  return line(grid[0]) + "\n" + sepLine + (body ? "\n" + body : "");
-}
-
-function mdStyleOf(node) {
-  // Inherited bold / italic / underline for a text node: the union of the flags
-  // carried by the node's ancestors (its own tag plus the style attribute, where
-  // common — this mirrors how mdCellText detects styling). Walk up the chain so
-  // e.g. "bi" inside <b>…</b> inherits bold.
-  let b = false, i = false, u = false;
-  for (let n = node && node.parentElement; n && n.nodeType === 1; n = n.parentElement) {
-    const tag = n.tagName && n.tagName.toUpperCase();
-    if (tag === "B" || tag === "STRONG") b = true;
-    if (tag === "I" || tag === "EM") i = true;
-    if (tag === "U") u = true;
-    const st = n.getAttribute && n.getAttribute("style") || "";
-    if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(st)) b = true;
-    if (/font-style\s*:\s*italic/i.test(st)) i = true;
-    if (/text-decoration:[^;]*underline/i.test(st)) u = true;
-  }
-  return { b, i, u };
-}
-
-function mdInlineMd(root) {
-  // Flatten an inline subtree into Markdown, preserving bold / italic /
-  // underline. Walks the DOM in document order, records each text node's style
-  // (bold, italic, underline) and then merges adjacent text nodes that share the
-  // same style so we can wrap each *run* once (e.g. "plain **bold** after").
-  //
-  // Returns a string, or null when there is no visible text.
-  const runs = [];
-  (function walk(n) {
-    if (n.nodeType === 3) {
-      const s = mdStyleOf(n);
-      const text = (n.nodeValue || "").replace(/\s+/g, " ");
-      // Merge with the previous run if identical style.
-      const key = s.b + "|" + s.i + "|" + s.u;
-      const last = runs[runs.length - 1];
-      if (last && last.key === key) last.text += text;
-      else runs.push({ key, text, b: s.b, i: s.i, u: s.u });
-      return;
-    }
-    if (n.nodeType !== 1) return;
-    // Skip table children — those are handled separately by mdFromHtml.
-    if (n.querySelector && n.querySelector("table")) return;
-    for (let c = n.firstChild; c; c = c.nextSibling) walk(c);
-  })(root);
-  if (!runs.length) return null;
-  const out = runs.map((r) => {
-    const t = r.text.trim();
-    if (!t) return "";
-    let md = t;
-    if (r.u) md = `<u>${md}</u>`;
-    if (r.i) md = `*${md}*`;
-    if (r.b) md = `**${md}**`;
-    return md;
-  }).filter((s) => s !== "");
-  return out.length ? out.join(" ") : null;
-}
-
-function mdFromHtml(html) {
-  // Best-effort conversion of a clipboard HTML blob to Markdown. Returns a
-  // string on success, or null when there is nothing recognisable, in which case
-  // the caller must fall back to the browser's default paste (plain text still
-  // works, and the tab is untouched).
-  //
-  //   - any <table> element → a GFM table block
-  //   - the rest (top-level inline content) → one line with bold / italic /
-  //     underline preserved per the in-editor style (mdInlineMd)
-  //
-  // Mixed content (e.g. "intro **bold** body then a table") is legal Markdown:
-  // a paragraph followed by a table, blank line between.
-  if (!html || !/</.test(html)) return null;
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const blocks = [];
-  const seen = new Set();
-  // Tables first (in document order). We walk the body's children; any <table>
-  // that is a direct child or nested one level deep is converted.
-  const inlineNodes = [];
-  doc.body.childNodes.forEach((n) => {
-    if (n.nodeType !== 1) { inlineNodes.push(n); return; }
-    if (n.tagName === "TABLE" || (n.querySelector && n.querySelector("table"))) {
-      const tbl = n.tagName === "TABLE" ? n : n.querySelector("table");
-      if (tbl && !seen.has(tbl)) {
-        seen.add(tbl);
-        const md = mdTableFromHtml(tbl);
-        if (md) blocks.push(md);
-      }
-      return;
-    }
-    inlineNodes.push(n);
-  });
-  if (inlineNodes.length) {
-    const parts = inlineNodes.map((n) => mdInlineMd(n)).filter(Boolean);
-    if (parts.length) blocks.push(parts.join(" "));
-  }
-  if (!blocks.length) return null;
-  return blocks.join("\n\n");
-}
 
 /* ================= App factory (multi-tab, undo/redo, tabs, tabs, drag-drop, Tauri opener) ================= */
 const LS_KEY = "mdeditor.session.v2";
 let uid = 0, docId = 0;
 
+/** isTauri — true when running inside the Tauri webview (not a plain browser). */
 function isTauri() {
   if (typeof window === "undefined") return false;
   // A Vite/bundler Tauri app injects `__TAURI_INTERNALS__` (this is where
@@ -557,6 +74,17 @@ function isTauri() {
   return !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
 }
 
+/**
+ * createApp — build and mount the entire editor UI into `root`.
+ *
+ * Creates the toolbar, tab strip, and split panes, defines every tab/lifecycle
+ * function in the closure (tabs, save/open, undo/redo, formatting, scroll-sync,
+ * keybinds, modals, session persistence), wires the Tauri IPC, and returns the
+ * top-level app element. See AGENTS.md invariants 2/3/8 for the invariants the
+ * code below relies on (static imports, close-handling, single-bundle).
+ * @param {Element} root The container to mount into (e.g. `#app`).
+ * @returns {Element} The root `.app` element.
+ */
 export function createApp(root) {
   const app = document.createElement("div");
   app.className = "app";
@@ -671,6 +199,17 @@ export function createApp(root) {
     if (performance.now() < midClosePasteBlock) ev.preventDefault();
   }, true);
 
+  /**
+   * makeTab — build one editor tab (DOM + state) and register it in TABS.
+   *
+   * Creates the tab strip entry and the split editor/preview panes, wires the
+   * source-of-truth textarea, sets the initial value (if any) and the typing-burst
+   * baselines, then renders + binds it. Returns the doc object (the single source
+   * of truth for that tab).
+   * @param {string} [name] Tab title; defaults to "Untitled".
+   * @param {string} [text] Initial Markdown; omitted for a blank tab.
+   * @returns {object} The doc object.
+   */
   function makeTab(name, text) {
     const doc = {
       id: "t" + (++docId) + Date.now().toString(36),
@@ -722,8 +261,17 @@ export function createApp(root) {
     return doc;
   }
 
+  /** textOf — read the tab's current Markdown source from its textarea. */
   function textOf(d) { return d.input.value; }
 
+  /**
+   * syncDom — push the textarea value into the tab's DOM (render + chrome).
+   *
+   * Re-renders both the overlay (highlightToHtml) and the preview (marked),
+   * schedules the mermaid SVG renders, and updates the placeholder / dirty dot /
+   * tab name. This is the single source of the visible state for a tab.
+   * @param {object} d Doc being synced.
+   */
   function syncDom(d) {
     const text = d.input.value;
     d.editor.innerHTML = highlightToHtml(text);
@@ -739,6 +287,16 @@ export function createApp(root) {
   // apart from spurious no-op "input" events that WebKitGTK dispatches on focus in
   // some situations (e.g. after tab switch / window activation). A real keystroke
   // always ends with value ≠ d._lastVal; a no-op dispatch leaves it equal.
+  /**
+   * bind — attach all per-tab event listeners (input, selection, scroll, paste,
+   * tab-strip actions, real-scroll sync) to one doc.
+   *
+   * Runs once per tab at creation. Each listener is guarded by `doc === activeTab`
+   * so events from a hidden tab's panes don't leak into the active one. See the
+   * selectionchange / realScroll convention notes in AGENTS.md for the WebKitGTK
+   * quirks these handlers encode.
+   * @param {object} doc The doc whose textarea/panes get wired.
+   */
   function bind(doc) {
     doc.input.addEventListener("input", () => {
       if (suppressInput) return;
@@ -834,8 +392,18 @@ export function createApp(root) {
     // left/right lag.) Dropping the echo still matters: an echoed event flips
     // which pane is leading, and the ratio→pixel→ratio round-trip between two
     // panes of different heights ratchets the value down frame-by-frame — the
-    // "keeps scrolling to the top" drift.
-    function realScroll(letter) {
+     // "keeps scrolling to the top" drift.
+     /**
+      * realScroll — handle a scroll event on one pane, suppressing programmatic
+      * echos and flipping the lead to the pane the user actually scrolled.
+      *
+      * Value-based (not time-only): the event is an echo of our own assignment
+      * only while its deadline is live AND the pane sits at (≈) the offset we
+      * wrote; a genuine user scroll lands at a different offset and is accepted
+      * immediately. On a real scroll it sets __lead and kicks the two-pane sync.
+      * @param {string} letter "e" (editor) or "p" (preview); identifies the pane.
+      */
+     function realScroll(letter) {
       if (doc !== activeTab) return;
       const now = performance.now();
       const key = letter === "e" ? "__suppE" : "__suppP";
@@ -851,6 +419,17 @@ export function createApp(root) {
     doc.previewScroll.addEventListener("scroll", () => realScroll("p", doc.previewScroll), { passive: true });
   }
 
+  /**
+   * activate — make `doc` the active tab (switch, or no-op if already active).
+   *
+   * Short-circuits for an already-active tab (see verifyTabClick.mjs). For a
+   * cross-tab switch it captures the LEAVING tab's scroll ratios while it is
+   * still laid out, flips the active classes, focuses + refreshes the entering
+   * tab, and — after two rAF ticks — re-asserts the entering tab's remembered
+   * editor/preview scroll positions by ratio, stamping the value-based echo
+   * guard on each pane (mirrors setMode / openAtTop). See verifyTabScroll.mjs.
+   * @param {object} doc The tab to make active.
+   */
   function activate(doc) {
     // Clicking a tab that is ALREADY active is a no-op. The old unconditional
     // input.focus() + refresh() below had two visible side effects on such a
@@ -862,16 +441,11 @@ export function createApp(root) {
     // already the active one, so short-circuit. Cross-tab switches (doc is a
     // different tab) fall through as below.
     if (doc === activeTab) return;
-    // Capture the LEAVING tab's scroll RATIO while its panes are still laid
-    // out. The class toggle below hides them via .pane-group{display:none}
-    // (style.css), and hiding→reshowing a scroll container resets its scrollTop
-    // to 0 — so without this capture, returning to a tab would drop you at the
-    // top instead of where you left off. We store a ratio (not pixels) because
-    // the panes may re-lay-out to a different height while hidden (mermaid SVG
-    // sizing, font metrics), which is exactly why openAtTop/setMode also restore
-    // by ratio. This is the ONLY thing that differs from the old code: a fresh
-    // activation (activeTab was null) has nothing to capture and skips it.
+    // Capture the LEAVING tab's scroll RATIO while its panes are still laid out,
+    // because hiding→reshowing resets scrollTop to 0; we store a ratio (not px)
+    // since panes re-lay-out to a different height while hidden.
     if (activeTab) {
+      /** ratio — a pane's scroll position as a 0..1 fraction of its scrollable range. */
       const ratio = (el) => { const m = el.scrollHeight - el.clientHeight; return m > 0 ? el.scrollTop / m : 0; };
       activeTab.__scrollE = ratio(activeTab.editorScroll);
       activeTab.__scrollP = ratio(activeTab.previewScroll);
@@ -897,6 +471,7 @@ export function createApp(root) {
     if (doc.__scrollE != null || doc.__scrollP != null) {
       const eKeep = doc.__scrollE || 0;
       const pKeep = doc.__scrollP || 0;
+      /** apply — re-assert the entering tab's remembered scroll ratios after the reflow settles. */
       const apply = () => {
         if (doc !== activeTab) return;
         const targets = [[doc.editorScroll, eKeep, "__suppE"], [doc.previewScroll, pKeep, "__suppP"]];
@@ -916,6 +491,15 @@ export function createApp(root) {
   // A freshly opened tab must always read from the top. Without this, focusing
   // the textarea (caret at the end of the restored text) plus the 32vh bottom
   // overlay padding lets the webview park the scroll at the bottom.
+  /**
+   * openAtTop — park a freshly opened tab at the very top of both panes.
+   *
+   * Resets both scrollTop values and the caret to 0, stamping the value-based
+   * echo guard on each pane so the resulting scroll events read as programmatic
+   * echoes and can't flip the two-pane lead / ratchet sync. Re-asserts once
+   * after rAF so it survives the initial reflow.
+   * @param {object} doc The tab to align to top.
+   */
   function openAtTop(doc) {
     // Mark our programmatic resets as echoes so the resulting scroll events are
     // treated as our own (≈scrollTop 0) and can't kick off the two-pane sync.
@@ -932,6 +516,7 @@ export function createApp(root) {
     });
   }
 
+  /** renderTabs — recompute the active / dirty classes on every tab + pane. */
   function renderTabs() {
     for (const d of TABS) {
       d.tab.classList.toggle("active", d === activeTab);
@@ -940,12 +525,22 @@ export function createApp(root) {
     }
   }
 
+  /** newTabName — pick the next free "Untitled N" title not already used. */
   function newTabName(existing) {
     let n = 1;
     while (existing.some((d) => d.name === `Untitled ${n}`)) n++;
     return `Untitled ${n}`;
   }
 
+  /**
+   * newTab — create a fresh tab, park it at top, make it active, persist.
+   *
+   * Always opens a NEW tab (never reuses a blank Untitled — see invariant 6).
+   * @param {string} [name] Initial title (defaults to a fresh "Untitled N").
+   * @param {string} [text] Initial Markdown (defaults to blank).
+   * @param {boolean} [focus=true] Reserved (focus is applied by activate).
+   * @returns {object} The new doc object.
+   */
   function newTab(name, text, focus = true) {
     const doc = makeTab(name || newTabName(TABS), text !== undefined ? text : "");
     openAtTop(doc);
@@ -954,14 +549,17 @@ export function createApp(root) {
     return doc;
   }
 
-  // Show the "unsaved changes" dialog for a tab with dirty content.
-  // Returns 'save' | 'discard' | 'cancel'. When `clear` is true the primary
-  // action clears the last tab in place (rather than closing it) and the Cancel
-  // button is read-only (the tab can't be removed).
-  // Ask how to handle a tab with unsaved changes. Resolves:
-  //   { choice: 'save'|'discard'|'cancel' }
-  // `clear` = we are on the LAST tab (can't remove it), so the primary action
-  // reads "Clear this document?" and the Cancel button is the only way out.
+  /**
+   * showSaveDiscardDialog — in-app "unsaved changes" prompt for a dirty tab.
+   *
+   * Offers Save / Discard / Cancel. When `clear` is true (we are on the LAST
+   * tab that can't be removed) the primary action becomes "Clear this document
+   * in place…" and Cancel is the only way out. Resolves to
+   * `{ choice: 'save'|'discard'|'cancel' }`.
+   * @param {object} doc The tab being saved / cleared.
+   * @param {{clear?: boolean}} [opts] When true, primary action clears in place.
+   * @returns {Promise<{choice:string}>} The user's choice.
+   */
   function showSaveDiscardDialog(doc, { clear = false } = {}) {
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
@@ -984,6 +582,7 @@ export function createApp(root) {
       backdrop.appendChild(box);
       document.body.appendChild(backdrop);
 
+      /** mkBtn — build a dialog button; a click resolves the dialog with `onPick`. */
       const mkBtn = (label, cls, onPick) => {
         const b = document.createElement("button");
         b.type = "button";
@@ -995,12 +594,18 @@ export function createApp(root) {
       };
 
       let done = false;
+      /** cleanup — tear down the dialog's listeners and remove its backdrop. */
       const cleanup = () => {
         backdrop.removeEventListener("mousedown", onBackdrop, true);
         window.removeEventListener("keydown", onKey, true);
         box.removeEventListener("keydown", onTab, true);
         backdrop.remove();
       };
+
+      /**
+       * pick — settle the dialog on a single `choice`; idempotent, then resolves.
+       * @param {string} choice — the outcome ("cancel" / "discard" / "save").
+       */
       const pick = (choice) => { if (done) return; done = true; cleanup(); resolve({ choice }); };
 
       const cancelBtn = mkBtn("Cancel", "", "cancel");
@@ -1012,12 +617,15 @@ export function createApp(root) {
         mkBtn("Save", "primary", "save");
       }
 
-      // Clicking the dimmed backdrop counts as Cancel.
+      /** onBackdrop — a mousedown on the dimmed backdrop itself counts as Cancel. */
       const onBackdrop = (ev) => { if (ev.target === backdrop) pick("cancel"); };
       backdrop.addEventListener("mousedown", onBackdrop, true);
-      // Escape cancels; Tab is trapped inside the dialog.
+
+      /** onKey — Escape cancels the dialog. */
       const onKey = (ev) => { if (ev.key === "Escape") { ev.preventDefault(); pick("cancel"); } };
       window.addEventListener("keydown", onKey, true);
+
+      /** onTab — trap Tab focus inside the dialog, wrapping around its buttons. */
       const onTab = (ev) => {
         if (ev.key !== "Tab") return;
         ev.preventDefault();
@@ -1040,21 +648,25 @@ export function createApp(root) {
     });
   }
 
-  /* ---- shared in-app modal ----
-   * Replaces native `tauri-message` (and the rfd GTK save/open pickers). The
-   * reason: `tauri-plugin-dialog` passes the parent window to rfd on Linux,
-   * but rfd-0.16's GTK3 backend NEVER calls `gtk_window_set_transient_for` or
-   * `gtk_window_set_position(GTK_WIN_POS_CENTER_ON_PARENT)` — the dialog opens
-   * wherever the WM places it, unrelated to the app's location. An in-app
-   * modal lives inside the single webview and is therefore centered on the app
-   * window by construction. Browser-safe too (runs under `vite preview`).
+  /**
+   * showModalBase — build and open a shared in-app modal inside the webview.
    *
-   * Returns a handle: { box, finish(value), promise } synchronously. `finish`
-   * is idempotent — it removes the DOM, wires the escape/backdrop listeners
-   * out, and resolves `promise` once. Callers build their content into `box`
-   * *before* returning.
+   * Replaces the native `tauri-plugin-dialog` rfd GTK dialogs: rfd NEVER sets
+   * `gtk_window_set_transient_for` / `GTK_WIN_POS_CENTER_ON_PARENT` on Linux, so
+   * native pickers drift off-window; an in-app modal is centered by construction
+   * and is also browser-safe under `vite preview`.
+   *
+   * Returns a synchronous handle `{ box, finish(value), promise }`. `finish` is
+   * idempotent — it removes the DOM, unwires the escape/backdrop/Tab listeners,
+   * and resolves `promise` once. Callers build their content into `box` before
+   * returning the handle.
+   * @param {object} [opts]
+   * @param {string} [opts.label] ARIA label for the dialog box.
+   * @param {boolean} [opts.closeOnBackdrop=false] Resolve on a backdrop click.
+   * @param {Element|function} [opts.focusEl] Element (or thunk) to focus on open.
+   * @returns {{box,finish,promise}} The modal handle.
    */
-  function showModalBase({ label, closeOnBackdrop = false, focusEl } = {}) {
+   function showModalBase({ label, closeOnBackdrop = false, focusEl } = {}) {
     const backdrop = document.createElement("div");
     backdrop.className = "savedlg-backdrop";
     const box = document.createElement("div");
@@ -1115,14 +727,20 @@ export function createApp(root) {
     return handle;
   }
 
-  /* Simple centered message box: one message, one (or more) button row.
-   * Options:
-   *   { title, message, buttons: [{ label, kind?: 'primary'|'danger'|'', value }],
-   *     kind?: 'info'|'error'|'warn' }
-   * Resolves with the `value` of the clicked button (or undefined if dismissed
-   * by backdrop / Escape).
+  /**
+   * messageModal — a simple centered message box on top of showModalBase.
+   *
+   * Renders `title`, `message`, and a row of buttons. Resolves with the `value`
+   * of the clicked button, or undefined if dismissed by backdrop / Escape.
+   * @param {object} [opts]
+   * @param {string} [opts.title="Notice"] Heading text.
+   * @param {string} [opts.message=""] Body text.
+   * @param {Array<{label:string,value:any,kind?:string}>} [opts.buttons] Buttons
+   *   (defaults to a single OK). Pass one with `kind: 'primary'` to focus it.
+   * @param {string} [opts.kind='info'] 'info'|'error'|'warn'; tints the message.
+   * @returns {Promise<any>} The clicked button's value (or undefined).
    */
-   function messageModal({ title = "Notice", message = "", buttons, kind = "info" } = {}) {
+    function messageModal({ title = "Notice", message = "", buttons, kind = "info" } = {}) {
      if (!buttons || !buttons.length) buttons = [{ label: "OK", value: "ok" }];
      const modal = showModalBase({ label: title, closeOnBackdrop: true });
      const { box, finish } = modal;
@@ -1157,25 +775,23 @@ export function createApp(root) {
      return modal.promise;
    }
 
-   /* ---- In-app Path Picker (Save-As / Open) ----
-    * A minimal centered folder browser + filename row. Works under `vite preview`
-    * (browser: the caller is responsible for a <input type=file> fallback) and
-    * under Tauri (`plugin:fs|read_dir`). No native GTK dialog opens, so the
-    * picker is centered on the app window by construction — see `showModalBase`
-    * for the why (rfd's GTK3 backend never parents/centers its dialogs).
-    *
-    * Resolve shape:
-    *   { path: "/abs/path.md", name: "path.md" }   — user accepted
-    *   { path: null }                                — user cancelled
-    *
-    * Options:
-    *   mode            : 'save' | 'open'
-    *   defaultFilename : string  (pre-filled in the name row, save-only)
-    *   defaultDir      : string  (initial cwd; defaults to homeDir())
-    *   filters         : [{ name, extensions: [...] }]  (save mode only; used to
-    *                                                       dim non-matching files)
-    */
-    function pickPath(opts = {}) {
+  /**
+   * pickPath — in-app Save-As / Open file chooser (folder browser + name row).
+   *
+   * Works under `vite preview` (browser) and under Tauri (`plugin:fs|read_dir`).
+   * No native GTK dialog opens, so it's centered by construction (see
+   * showModalBase for the rfd/GTK3 parent/center quirk it replaces).
+   *
+   * @param {object} [opts]
+   * @param {'save'|'open'} [opts.mode='save'] Pick direction.
+   * @param {string} [opts.defaultFilename] Pre-filled name (save mode only).
+   * @param {string} [opts.defaultDir] Initial directory (defaults to home).
+   * @param {Array<{name:string,extensions:string[]}>} [opts.filters] (save mode)
+   *   used to dim non-matching files.
+   * @returns {Promise<{path:string|null,name?:string}>} `{ path, name }` on accept,
+   *   or `{ path: null }` on cancel.
+   */
+     function pickPath(opts = {}) {
      const mode = opts.mode === "open" ? "open" : "save";
      const filterSet = new Set(
        (opts.filters || [{ name: "File", extensions: ["md", "markdown", "txt"] }])
@@ -1183,8 +799,9 @@ export function createApp(root) {
          .map((e) => String(e).replace(/^\./, "").toLowerCase())
          .filter(Boolean)
      );
-     const matchesExt = (name) => {
-       const s = String(name);
+      /** matchesExt — true when `name` ends in one of the picker's allowed extensions. */
+      const matchesExt = (name) => {
+        const s = String(name);
        const dot = s.lastIndexOf(".");
        if (dot < 1) return false;
        return filterSet.has(s.slice(dot + 1).toLowerCase());
@@ -1212,6 +829,13 @@ export function createApp(root) {
             UP: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
           };
         }
+        /**
+         * makeCtrl — build a theme-tinted control button (role=button) from a glyph.
+         * @param {string} glyphKey — key into `__pickCtrlGlyphs` (HOME / UP).
+         * @param {string} label — accessible name (aria-label + title).
+         * @param {Function} onClick — fires on click / Enter / Space.
+         * @returns {HTMLSpanElement} the control element.
+         */
         const makeCtrl = (glyphKey, label, onClick) => {
           const el = document.createElement("span");
           el.className = "ctrl";
@@ -1248,8 +872,13 @@ export function createApp(root) {
        status.className = "picker-status";
        status.setAttribute("aria-live", "polite");
 
-       const setStatus = (text, kind) => {
-         status.textContent = text || "";
+        /**
+         * setStatus — update the picker's status line and (optionally) its tone.
+         * @param {string} [text] — the message (empty clears it).
+         * @param {string} [kind] — `error`/`info`/… sets `data-kind`; omit to clear.
+         */
+        const setStatus = (text, kind) => {
+          status.textContent = text || "";
          if (kind) status.dataset.kind = kind; else status.removeAttribute("data-kind");
        };
 
@@ -1279,13 +908,18 @@ export function createApp(root) {
        let listToken = 0;
        let settled = false;
 
-       const done = (result) => {
-         if (settled) return;
+        /**
+         * done — settle the picker once with `result` (idempotent), then resolve.
+         * @param {string|null} result — the chosen path, or null on cancel.
+         */
+        const done = (result) => {
+          if (settled) return;
          settled = true;
          finish();
          resolve(result);
        };
 
+        /** renderCrumb — rebuild the breadcrumb pathbar (Home + Up + clickable crumbs). */
         const renderCrumb = () => {
           pathbar.innerHTML = "";
           // Home and Up are ALWAYS present: the Home button is the "escape hatch"
@@ -1322,6 +956,7 @@ export function createApp(root) {
          if (last && last.classList.contains("sep")) pathbar.removeChild(last);
        };
 
+        /** render — paint the directory listing for `entries` into the list. */
         const render = (entries) => {
           list.innerHTML = "";
           if (!Array.isArray(entries) || !entries.length) {
@@ -1333,8 +968,11 @@ export function createApp(root) {
             setStatus("Empty: " + state.cwd);
             return;
           }
+          /** norm — natural-cased file-name comparator. */
           const norm = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" });
+          /** isDir — true when the entry is a directory (snake or camel accessor). */
           const isDir = (e) => e.isDirectory || e.is_directory || e.is_dir;
+          /** isFile — true when the entry is a regular file. */
           const isFile = (e) => e.isFile || e.is_file;
           const dirs = entries.filter((e) => e && isDir(e)).sort(norm);
           const files = entries.filter((e) => e && isFile(e)).sort(norm);
@@ -1369,8 +1007,13 @@ export function createApp(root) {
           setStatus(dirs.length + " folder" + (dirs.length === 1 ? "" : "s"), "ok");
         };
 
-         const goToDir = async (dir) => {
-           const token = ++listToken;
+          /**
+           * goToDir — navigate the picker into `dir` (read + render + crumb).
+           * @param {string} dir — absolute path to list.
+           * @returns {Promise<void>}
+           */
+          const goToDir = async (dir) => {
+            const token = ++listToken;
            // Only surface "Loading…" once a read has been in flight >2s. Fast
            // (local) loads then never flash it — this kills the status text
            // jitter when navigating between directories.
@@ -1397,6 +1040,7 @@ export function createApp(root) {
            setStatus("");
          };
 
+        /** goToUp — navigate to the parent directory (no-op at "/"). */
         const goToUp = () => {
           if (state.cwd === "/") return;
           const dir = state.cwd.split("/").slice(0, -1).join("/") || "/";
@@ -1408,6 +1052,10 @@ export function createApp(root) {
         // Guarded by isTauri() because homeDir() is a Tauri IPC call (in a plain
         // browser it would reject); the button is still shown — tapping it in a
         // browser simply no-ops (the picker only exists in the Tauri build anyway).
+        /**
+         * goToHome — jump the picker to the user's home dir (lazily resolved).
+         * @returns {Promise<void>}
+         */
         const goToHome = async () => {
           if (!isTauri()) return;
           let home = null;
@@ -1418,12 +1066,14 @@ export function createApp(root) {
           goToDir(home);
         };
 
-       const confirmFile = (name) => {
-         const full = state.cwd + "/" + name;
-         done({ path: full, name });
-       };
+        /** confirmFile — settle the picker on `name` in the current directory. */
+        const confirmFile = (name) => {
+          const full = state.cwd + "/" + name;
+          done({ path: full, name });
+        };
 
-       const onConfirm = () => {
+        /** onConfirm — Confirm-button handler; validates save name or open selection. */
+        const onConfirm = () => {
          if (mode === "save") {
            const v = (nameInput.value || "").trim();
            if (!v) { setStatus("Name is required", "warn"); nameInput.focus(); return; }
@@ -1459,8 +1109,15 @@ export function createApp(root) {
      });
    }
 
-  // Empty the LAST tab's content and reset it to a fresh, clean, non-dirty state.
-  // Called after the user confirms they want to clear the last tab.
+  /**
+   * resetLastTab — empty the last tab in place and reset it to a blank, clean
+   * non-dirty state.
+   *
+   * Used when the user clears the ONE remaining tab (which is never removed —
+   * the app always keeps exactly one open). Wipes the typing-burst state, stacks,
+   * name/path, and value, then parks it at top and persists.
+   * @param {object} doc The (last) tab to clear.
+   */
   function resetLastTab(doc) {
     if (doc._typeSettle) { clearTimeout(doc._typeSettle); doc._typeSettle = 0; }
     doc._typeMark = null;
@@ -1476,9 +1133,16 @@ export function createApp(root) {
     saveSession();
   }
 
-  // Close a tab, asking first if it has unsaved changes. If it is the last tab
-  // we never actually remove it — we clear it in place (after confirming), so the
-  // app always has exactly one tab open.
+  /**
+   * closeTab — close a tab, prompting first if it has unsaved changes.
+   *
+   * On a dirty tab shows showSaveDiscardDialog (clear-in-place when last). Honors
+   * the save() boolean (choice 'save' + save()===false leaves the tab). For the
+   * LAST tab it clears in place via resetLastTab rather than removing — the app
+   * always has exactly one tab open. Otherwise splices and activates the
+   * neighbor, and persists.
+   * @param {object} doc The tab to close.
+   */
   async function closeTab(doc) {
     if (TABS.indexOf(doc) === -1) return;
     if (doc.dirty) {
@@ -1500,8 +1164,13 @@ export function createApp(root) {
     saveSession();
   }
 
-  // Low-level removal of a tab (DOM + array). No dirty prompt, no last-tab
-  // reset — the caller (closeApp) owns the prompts and the empty-state.
+  /**
+   * removeTab — low-level removal of a tab (DOM + array).
+   *
+   * No dirty prompt and no last-tab reset — the caller (closeApp) owns the prompts
+   * and the empty state. Falls back activeTab to the last remaining tab.
+   * @param {object} doc The tab to splice out and destroy.
+   */
   function removeTab(doc) {
     const idx = TABS.indexOf(doc);
     if (idx === -1) return;
@@ -1511,11 +1180,16 @@ export function createApp(root) {
     if (doc === activeTab) activeTab = TABS[TABS.length - 1] || null;
   }
 
-  // Walk every open tab — active first, then the rest right-most → left-most —
-  // prompting to save any dirty one, then removing it. Used on app exit, where
-  // tabs are genuinely removed (unlike closeTab, which never drops the last one).
-  // Resolves true when all tabs are cleared; false if the user cancels (the
-  // caller then keeps the window open).
+  /**
+   * closeApp — walk every tab and prompt-save any dirty one before removal.
+   *
+   * The single source of truth for the exit-time save prompt (invariant 4): the
+   * window-close guard (onCloseRequested), the `beforeunload` listener, and remove
+   * all funnel here. Order is active-first then right→left. Resolves true when
+   * all tabs are cleared, false if the user cancels / a save fails (the caller
+   * then keeps the window open).
+   * @returns {Promise<boolean>} true if every tab was cleared, false on cancel/fail.
+   */
   async function closeApp() {
     const order = [];
     if (activeTab) order.push(activeTab);
@@ -1538,6 +1212,12 @@ export function createApp(root) {
     return true;
   }
 
+  /**
+   * refresh — redraw the active tab: sync its DOM and all status chrome.
+   *
+   * Pushes syncDom (overlay + preview + mermaid), then updates the status bar,
+   * toolbar active-states, and the undo/redo button disabled flags.
+   */
   function refresh() {
     const doc = activeTab;
     if (!doc) return;
@@ -1546,12 +1226,22 @@ export function createApp(root) {
     updateActiveStates();
     setUndoRedoState();
   }
+  /** scheduleRefresh — coalesce refresh() calls into one per animation frame. */
   function scheduleRefresh() {
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; refresh(); });
   }
   // Apply the leading pane's scroll ratio to its follower. Kept idempotent and
   // cheap: called at most once per frame by kickScrollSync while scrolling.
+  /**
+   * followScroll — apply the leading pane's scroll RATIO to the follower pane.
+   *
+   * Reads the __lead pane's ratio and writes the follower's scrollTop to match.
+   * Stamps the value-based echo guard (deadline + exact target offset) BEFORE
+   * the write, so realScroll later recognizes the echo by value+time and doesn't
+   * flip the lead back to the follower (the feedback ratchet).
+   * @param {object} doc The tab in split view.
+   */
   function followScroll(doc) {
     const src = doc.__lead === "e" ? doc.editorScroll : doc.previewScroll;
     const dst = doc.__lead === "e" ? doc.previewScroll : doc.editorScroll;
@@ -1570,6 +1260,7 @@ export function createApp(root) {
     dst.scrollTop = target;
   }
   let scrollRaf = 0;
+  /** kickScrollSync — schedule followScroll once per frame while a pane leads. */
   function kickScrollSync() {
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {
@@ -1585,6 +1276,7 @@ export function createApp(root) {
       }
     });
   }
+  /** updateStatus — write the active tab's name, Ln/Col, word/char count, and dirty flag. */
   function updateStatus(doc) {
     const text = doc.input.value;
     const a = doc.input.selectionStart;
@@ -1599,6 +1291,7 @@ export function createApp(root) {
     dirtyEl.textContent = doc.dirty ? "\u25CF unsaved" : "";
     dirtyEl.className = doc.dirty ? "dirty" : "";
   }
+  /** setUndoRedoState — enable/disable the toolbar undo/redo buttons for the active tab. */
   function setUndoRedoState() {
     const d = activeTab; if (!d) return;
     const u = toolbar.querySelector('[data-action="undo"]');
@@ -1607,31 +1300,33 @@ export function createApp(root) {
     r.disabled = d.redo.length === 0;
   }
 
-  // Typing is NOT a discrete action like formatting — it streams one input event
-  // per keystroke. We coalesce a whole burst (a run of keystrokes within
-  // COALESCE_MS) into a single undo step: snapshot the text+caret once at the
-  // start of the burst (capture) and, after the user pauses (a settle timer),
-  // push that one snapshot. flushTypeCommit is the single choke point for
-  // "a programmatic text change is about to happen" — it settles any pending
-  // burst so commit()/undo()/redo() can clear or pop the stack consistently.
-  // _lastFlushTs gates capture() so a burst that starts within COALESCE_MS of a
-  // commit/undo/redo is treated as a continuation, not a brand-new step (this
-  // is what stops Ctrl+Z from reverting only part of a freshly-typed word).
-  // Capture one snapshot at the start of a typing burst on `d` (only if none is
-  // already pending). The "from" state comes from d._typeBase — the text as of the
-  // LAST settled state — because at the moment an "input" event fires the live
-  // value is ALREADY post-insertion (insertText/type deliver the change before the
-  // event). Reading the live value here would record the new text as "from" and
-  // undo would be a no-op. _typeBase is maintained everywhere else a settled text
-  // changes the document (commit, undo, redo, open, programmatic set).
+  /**
+   * captureTypeSnapshot — record one snapshot at the start of a typing burst.
+   *
+   * Typing is a STREAM (one input event per keystroke), not a discrete action,
+   * so we coalesce a burst into a single undo step. This snapshots the "from"
+   * state exactly once per burst (only if no snapshot is pending). The "from"
+   * text comes from `d._typeBase` (the last SETTLED text), NOT the live value —
+   * at the moment an "input" event fires the value is ALREADY post-insertion, so
+   * reading it would record the new text as "from" and undo would be a no-op.
+   * `d._typeBase` is maintained everywhere a settled text otherwise changes the
+   * document (commit, undo, redo, open, programmatic set).
+   * @param {object} d Doc whose burst snapshot is recorded.
+   */
   function captureTypeSnapshot(d) {
     if (d._typeMark) return;
     d._typeMark = { from: d._typeBase, fromSelS: d.input.selectionStart, fromSelE: d.input.selectionEnd };
   }
-  // Push the pending burst on `d` as one undo step (baseline → current), clear it,
-  // and cancel its settle timer. After pushing, the current text becomes the new
-  // settled baseline so a later burst is a fresh step. Call before any
-  // programmatic stack change (commit, undo, redo).
+  /**
+   * flushTypeCommit — settle a pending typing burst into one undo step.
+   *
+   * Pushes baseline → current as a single step, clears the pending snapshot and
+   * its settle timer, and bumps `d._typeBase` to the current text (the new
+   * settled baseline). This is the single choke point to call before any
+   * programmatic stack change (commit, undo, redo) so those see a consistent
+   * stack.
+   * @param {object} d Doc whose burst is settled.
+   */
   function flushTypeCommit(d) {
     if (d && d._typeSettle) { clearTimeout(d._typeSettle); d._typeSettle = 0; }
     if (d && d._typeMark) {
@@ -1645,7 +1340,15 @@ export function createApp(root) {
       d._typeBase = d.input.value;
     }
   }
-  // After typing, wait COALESCE_MS of quiet and THEN push the burst as one step.
+  /**
+   * scheduleTypeSettle — wait COALESCE_MS of quiet after typing, then settle the
+   * burst as one undo step.
+   *
+   * A debounce window: each keystroke in the burst resets the timer, so the
+   * single snapshot gets pushed as soon as the user pauses. If still active on
+   * the tab, the toolbar undo button re-enables.
+   * @param {object} d Doc whose settle timer is (re)armed.
+   */
   function scheduleTypeSettle(d) {
     if (d._typeSettle) clearTimeout(d._typeSettle);
     d._typeSettle = setTimeout(() => {
@@ -1656,6 +1359,19 @@ export function createApp(root) {
     }, COALESCE_MS);
   }
   /* ---- undo / redo (custom stack; DOM = source of truth) ---- */
+  /**
+   * commit — record one undo step and apply a programmatic text change.
+   *
+   * Settle any pending typing burst first (flushTypeCommit), push
+   * `{label, from, fromSelS, fromSelE, to, selS, selE}` onto `d.undo` (clearing
+   * `d.redo` — a new branch), then apply `to` / caret to the textarea, set the new
+   * settled baseline, mark dirty, and refresh. Single choke point for all
+   * programmatic edits (formats, opens, etc.).
+   * @param {string} label Human label for the step (status/undo UI).
+   * @param {string} to The new full text.
+   * @param {number} selS New selection start.
+   * @param {number} selE New selection end.
+   */
   function commit(label, to, selS, selE) {
     const d = activeTab;
     if (!d) return;
@@ -1676,6 +1392,7 @@ export function createApp(root) {
     d._lastVal = d.input.value; // programmatic write; input handler baseline
     refresh();
   }
+  /** undo — pop the last step off the undo stack and apply its "from" state. */
   function undo() {
     const d = activeTab;
     if (!d) return;
@@ -1692,6 +1409,7 @@ export function createApp(root) {
     d._lastVal = d.input.value; // programmatic write; input handler baseline
     refresh();
   }
+  /** redo — pop the last step off the redo stack and apply its "to" state. */
   function redo() {
     const d = activeTab;
     if (!d) return;
@@ -1710,6 +1428,18 @@ export function createApp(root) {
   }
 
   /* ---- formatting toggles ---- */
+  /**
+   * toggleFormat — apply (or toggle off) an inline format over the current
+   * word/selection.
+   *
+   * Resolves the active word, detects any EXISTING format on it (incl. sentence
+   * punctuation at the token edges, see detectFormat/trimmedSpan), then splices the
+   * target span: strip the matching format, rewrap a different format's inner
+   * text, or freshly wrap a plain token — preserving adjacent punctuation. Link
+   * is special-cased: strip a link → keep its inner text; apply → `[text](https://)`.
+   * Commits as one undo step.
+   * @param {string} kind 'bold'|'italic'|'underline'|'strike'|'code'|'link'.
+   */
   function toggleFormat(kind) {
     const d = activeTab, input = d.input, text = d.input.value;
     const a = input.selectionStart;
@@ -1750,6 +1480,16 @@ export function createApp(root) {
     commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
   }
 
+  /**
+   * blockLine — rewrite a single line to (un)mark it as a block element.
+   *
+   * Pure helper: strips any existing block marker, and if the line is already
+   * the target `kind` returns its bare content (toggle OFF); otherwise returns
+   * the content prefixed with the marker for `kind`. Unknown kinds pass through.
+   * @param {string} kind 'h1'|'h2'|'h3'|'quote'|'ul'|'ol'.
+   * @param {string} line The raw source line.
+   * @returns {string} The rewritten line.
+   */
   function blockLine(kind, line) {
     const m = line.match(/^\s*(#{1,4}\s|>\s?|[-*+]\s+|\d+\.\s+)/);
     const marker = m ? m[0] : "";
@@ -1773,6 +1513,14 @@ export function createApp(root) {
     return line;
   }
 
+  /**
+   * toggleBlock — wrap/unwrap the selected range as a block element.
+   *
+   * Kinds: h1/h2/h3, quote, ul, ol (per-line via blockLine), table (GFM insert
+   * / remove over the detected rows), codeblock (wrap in a ``` fence, or unwrap
+   * an existing one). Range is `a..b` across lines. Commits as one undo step.
+   * @param {string} kind Block kind to apply/strip.
+   */
   function toggleBlock(kind) {
     const d = activeTab, input = d.input, text = d.input.value;
     const a = input.selectionStart, b = input.selectionEnd;
@@ -1825,6 +1573,13 @@ export function createApp(root) {
     commit("block " + kind, text.slice(0, startLine) + newBlock + text.slice(endLine), startLine, startLine + newBlock.length);
   }
 
+  /**
+   * indentLines — indent or outdent the selected range.
+   *
+   * dir=+1 prefixes a TAB (indent), dir=-1 strips up to one leading TAB or 1–4
+   * spaces (outdent). Skips blank lines. Commits as one undo step.
+   * @param {number} dir +1 to indent, -1 to outdent.
+   */
   function indentLines(dir) {
     const d = activeTab, input = d.input, text = d.input.value;
     const a = input.selectionStart, b = input.selectionEnd;
@@ -1838,6 +1593,17 @@ export function createApp(root) {
   }
 
   /* ---- link open (Ctrl+Click on the source, or a URL / [..](..) token) ---- */
+  /**
+   * findLinkToken — detect the link/URL at a caret position and return it.
+   *
+   * Returns `{url, text}` for:
+   *  - a `[text](url)` token at `pos` (the bracket must begin at a word boundary); or
+   *  - a bare URL (`https?://`, `mailto:`, or `www.`) at `pos` on the same line.
+   * Otherwise returns `null`.
+   * @param {string} text The full document text.
+   * @param {number} pos The caret offset to probe.
+   * @returns {{url: string, text: string}|null} The matched link or null.
+   */
   function findLinkToken(text, pos) {
     // [..](url)
     {
@@ -1876,6 +1642,14 @@ export function createApp(root) {
     return null;
   }
 
+  /**
+   * tauriOpenUrl — open a URL via Tauri's opener plugin.
+   *
+   * Browser fallback happens on the caller (openAtCaret); we return `false` when
+   * Tauri is not available or the invoke rejects so the caller can fall through.
+   * @param {string} url Absolute URL to open in the default handler.
+   * @returns {Promise<boolean>} true on success, false on unavailability/error.
+   */
   async function tauriOpenUrl(url) {
     if (!isTauri()) return false;
     try {
@@ -1884,6 +1658,14 @@ export function createApp(root) {
     } catch { return false; }
   }
 
+  /**
+   * openAtCaret — open the link underneath (or over) the caret.
+   *
+   * Uses findLinkToken to detect a [text](url) or bare URL at the caret, then
+   * opens it in the default handler (Tauri first, browser `window.open` as a
+   * fallback for `mailto:` and any non-browser URL after normalization to https).
+   * @returns {Promise<void>}
+   */
   async function openAtCaret() {
     const d = activeTab, input = d.input, text = d.input.value;
     const a = input.selectionStart;
@@ -1902,8 +1684,25 @@ export function createApp(root) {
     window.open(url, "_blank");
   }
 
+  /**
+   * setMode — switch the editor's view mode: split | edit | preview.
+   *
+   * Preserves the scroll RATIO of the leaving mode by recording it before the
+   * class toggle and re-asserting it on the entering panes after two nested
+   * rAF ticks (wins the race against the focus auto-scroll). Stamps the
+   * value-based echo-suppression guard (`__suppE`/`__suppP`) so the reflow's
+   * scroll event can't ratchet a different value into the other pane. A fast
+   * second mode-switch cancels any in-flight stale closure via a tab+mode check
+   * inside the rAF.
+   * @param {string} m 'split'|'edit'|'preview'.
+   */
   function setMode(m) {
     const doc = activeTab;
+    /**
+     * paneOf — the scrollable panes visible in each mode for tab `d`.
+     * @param {object} d — a tab, with `editorScroll` / `previewScroll` refs.
+     * @returns {{split: HTMLElement[], edit: HTMLElement[], preview: HTMLElement[]}}
+     */
     const paneOf = (d) => ({ split: [d.editorScroll, d.previewScroll], edit: [d.editorScroll], preview: [d.previewScroll] });
     // Capture the scroll RATIO of the pane(s) currently visible (i.e. those
     // in the mode we are LEAVING). When switching to a single-pane mode the
@@ -1932,11 +1731,14 @@ export function createApp(root) {
     if (label) label.textContent = { split: "Split", edit: "Edit", preview: "Preview" }[m];
     if (doc && keep !== null) {
       const targets = paneOf(doc)[m];
+      /**
+       * apply — re-assert the entering mode's remembered scroll on its panes
+       * once the class-toggle reflow + focus auto-scroll have settled.
+       */
       const apply = () => {
         // Guard against a fast second mode-switch in the rAF window: only
-        // apply if this mode is still the active one and the tab is still
-        // the active tab — otherwise a stale closure would overwrite the
-        // newer ratio the user is now at.
+        // apply if this mode is still active and the tab still the active tab,
+        // or a stale closure would overwrite the newer ratio the user is at.
         if (doc !== activeTab || app.dataset.mode !== m) return;
         for (const sc of targets) {
           const max = sc.scrollHeight - sc.clientHeight;
@@ -1957,26 +1759,13 @@ export function createApp(root) {
     }
   }
 
-  /* ---- save / open ----
-   * Resolves `true` once the content has been persisted (or handed to the
-   * browser download manager), `false` if the user cancelled a Save-As dialog.
-   * - Tab already has a `path` → write straight to that file, no dialog.
-   * - No `path` yet → show the in-app Save-As picker; on pick, remember the path.
-   *
-   * Why an in-app picker and not the native `save` dialog: tauri-plugin-dialog
-   * hands the parent window to rfd on Linux, but rfd's GTK3 backend never calls
-   * set_transient_for / CENTER_ON_PARENT, so the OS file-chooser opens wherever
-    * the window manager places it — not over the app. The picker (and the
-    * "Save failed" / "Open failed" error modals) are rendered inside the webview
-   * and are therefore centered on the app by construction.
-   */
-   /* ---- Export helpers (PDF / HTML) ----
-      Both take the current document, render it to an offscreen `.preview` node,
-      and either rasterize (PDF) or ship the DOM + standalone CSS (HTML). The
-      preview CSS is duplicated below so a standalone .html file looks like the
-      on-screen preview without needing the app's stylesheet at all — a plain
-      HTML export should be self-contained. */
-   const EXPORT_PREVIEW_CSS = `
+  /* ---- Export helpers (PDF / HTML) ----
+     Both take the current document, render it to an offscreen `.preview` node,
+     and either rasterize (PDF) or ship the DOM + standalone CSS (HTML). The
+     preview CSS is duplicated below so a standalone .html file looks like the
+     on-screen preview without needing the app's stylesheet at all — a plain
+     HTML export should be self-contained. */
+    const EXPORT_PREVIEW_CSS = `
 body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px;
   line-height:1.65;color:#1a1d21;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#fff}
 .preview h1{font-size:30px;line-height:1.25;margin:.2em 0 .5em;font-weight:700}
@@ -2003,14 +1792,34 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
  .preview .mermaid-diagram-err{background:#fdecec;border-left:3px solid #d73a49;padding:8px 14px;border-radius:6px;font-size:.9em;color:#b02a37;margin:.6em 0}
     `.trim();
 
+    /**
+     * exportHtmlDoc — render `text` to a self-contained HTML document string.
+     *
+     * Wraps the marked-rendered body (plus inlined Mermaid SVGs) in a full
+     * doctype/head with the embedded EXPORT_PREVIEW_CSS so the file is
+     * standalone — no external stylesheet needed.
+     * @param {string} text The raw markdown source.
+     * @returns {Promise<string>} A complete HTML document string.
+     */
     async function exportHtmlDoc(text) {
       let body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
       try { body = await renderMermaidInHtml(body); } catch { /* mermaid failed — export the raw fence */ }
      return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
    }
 
-   async function renderPreviewCanvas(text, width) {
-     // Build an offscreen, visible node: html2canvas cannot rasterize display:none
+    /**
+     * renderPreviewCanvas — rasterize `text` to a canvas via html2canvas.
+     *
+     * Builds an offscreen, VISIBLE node (html2canvas cannot rasterize
+     * display:none), at a fixed width so the output matches the on-screen
+     * preview in every mode. Renders Mermaid fences to SVG, waits one rAF for
+     * layout to settle, then rasterizes. Cleans up the host on completion/error.
+     * @param {string} text The raw markdown source.
+     * @param {number} [width=780] The render width in px.
+     * @returns {Promise<HTMLCanvasElement>} The rasterized canvas.
+     */
+    async function renderPreviewCanvas(text, width) {
+      // Build an offscreen, visible node: html2canvas cannot rasterize display:none
      // content, so push it far off the viewport instead of hiding it. Render a
      // fixed-width `.preview` clone so the output matches the on-screen preview
      // regardless of the current Split/Edit/Preview mode (the live preview pane may
@@ -2032,20 +1841,30 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      }
    }
 
-   function downloadBlob(blob, filename) {
-     const el = document.createElement("a");
+    /** downloadBlob — trigger a browser download of `blob`. */
+    function downloadBlob(blob, filename) {
+      const el = document.createElement("a");
      el.href = URL.createObjectURL(blob);
      el.download = filename;
      el.click();
      setTimeout(() => URL.revokeObjectURL(el.href), 1000);
    }
 
-   function defaultExportName(d, ext) {
-     const base = (d && d.name) || "untitled";
+    /** defaultExportName — derive `<name-no-ext>.<ext>` from the doc name. */
+    function defaultExportName(d, ext) {
+      const base = (d && d.name) || "untitled";
      const noExt = base.replace(/\.[^./\\]+$/, "");
      return noExt + "." + ext;
    }
 
+    /**
+     * exportAsHtml — render the current doc to a standalone HTML file.
+     *
+     * Tauri path: use the in-app save picker for a destination, then
+     * `fs.writeFile` the doctyped HTML. Browser path: download a `text/html`
+     * blob. Returns true on success, false on user cancel or error.
+     * @returns {Promise<boolean>}
+     */
     async function exportAsHtml() {
       const d = activeTab; if (!d) return;
       const html = await exportHtmlDoc(d.input.value);
@@ -2074,6 +1893,16 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      return true;
    }
 
+    /**
+     * exportAsPdf — render the current doc to a PDF by slicing the rasterized
+     * preview into A4 page bands.
+     *
+     * Each band is a JPEG at 92% quality drawn onto a fresh A4 page (multi-page
+     * docs split across `ceil(height / pxPerA4Page)` pages). Tauri path writes
+     * the `Uint8Array` via `fs.writeFile`; browser path downloads a `blob`.
+     * Returns true on success, false on user cancel or error.
+     * @returns {Promise<boolean>}
+     */
     async function exportAsPdf() {
       const d = activeTab; if (!d) return;
       const filename = defaultExportName(d, "pdf");
@@ -2140,9 +1969,25 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      }
    }
 
-   /* ==== Export functions above; save() below unchanged ==== */
-   async function save(doc) {
-    const d = doc || activeTab;
+    /* ==== Export functions above; save() below unchanged ==== */
+    /**
+     * save — persist the active (or given) doc to disk.
+     *
+     * Resolves `true` once the content has been persisted (or handed to the
+     * browser download manager); `false` if the user cancelled the Save-As
+     * picker or a write failed. Path:
+     *  - Tauri + known `doc.path` → write straight back to that file.
+     *  - Tauri + no `doc.path`  → in-app Save-As picker, then `fs.writeFile`.
+     *  - Browser  → `Blob`-download (WebKitGTK-style).
+     *
+     * The picker (and "Save failed" modals) are in-app, never the native rfd
+     * GTK chooser: rfd's GTK3 backend never calls set_transient_for, so it
+     * opens off-window. In-app renders over the app by construction.
+     * @param {object} [doc] Target doc; defaults to `activeTab`.
+     * @returns {Promise<boolean>} true on success, false on cancel/error.
+     */
+    async function save(doc) {
+     const d = doc || activeTab;
     if (!d) return false;
     const t = d.input.value;
     if (isTauri()) {
@@ -2190,8 +2035,14 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
     return true;
   }
 
-  // Always open in a NEW tab and switch to it — never replace the current tab,
-  // even if a tab with the same name or path is already open.
+  /**
+   * openFile — open {name, text, path} as a brand-new tab, activate it, save.
+   *
+   * ALWAYS opens a new tab — never reuses a tab of the same name or path
+   * (invariant 6). The new tab is activated via openAtTop + activate + saveSession.
+   * @param {{name: string, text: string, path?: (string|null)}} info File details.
+   * @returns {object} The new doc object.
+   */
   function openFile({ name, text, path }) {
     const doc = makeTab(name, text);
     doc.path = path || null;
@@ -2201,10 +2052,18 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
     return doc;
   }
 
+  /**
+   * open — pick a markdown file and open it in a new tab.
+   *
+   * Tauri: use the in-app picker (centered over the app) + `fs.readFile`.
+   * Browser: a native `<input type="file">` picker (multi-select). Reads text and
+   * delegates to openFile (per the "always a new tab" invariant).
+   * @returns {Promise<void>}
+   */
   async function open() {
-    if (isTauri()) {
-      // In-app picker — centered over the app (see save() for the why).
-      const { path } = await pickPath({
+     if (isTauri()) {
+       // In-app picker — centered over the app (see save() for the why).
+       const { path } = await pickPath({
         mode: "open",
         filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
       });
@@ -2278,6 +2137,17 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   // Global Ctrl/Meta shortcuts are bound on window (not the textarea) so they
   // fire no matter which element holds focus. WebKitGTK lets focus slip off the
   // overlay textarea, which used to make these dead when focus was elsewhere.
+  /**
+   * onGlobalKeyDown — window-level modifier keybindings (mod = Ctrl or Meta).
+   *
+   * Bound on `window` (not the textarea) so they fire regardless of which
+   * element holds focus — on WebKitGTK focus can slip off the overlay textarea.
+   * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z / ←/→), bold, italic,
+   * underline, save (Ctrl+S), link, open (Ctrl+O), close tab (Ctrl+W), new
+   * tab (Ctrl+T).
+   * @param {KeyboardEvent} ev The keydown event.
+   * @returns {Promise<void>}
+   */
   async function onGlobalKeyDown(ev) {
     const mod = ev.ctrlKey || ev.metaKey;
     if (!mod) return;
@@ -2319,6 +2189,14 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
     // change. Route per-frame to a single queued tick to stay cheap.
     scheduleButtonUpdate(d);
   });
+  /**
+   * scheduleButtonUpdate — queue a single rAF tick to re-sync toolbar state.
+   *
+   * Debounces the selectionchange route: multiple caret moves within a single
+   * frame produce exactly one status/active-states/undo-redo refresh, and the
+   * tick re-validates `d === activeTab` so a newer tab activation cancels it.
+   * @param {object} d Doc to refresh (must be `activeTab` when the tick fires).
+   */
   function scheduleButtonUpdate(d) {
     if (d.__btnRaf) return;
     d.__btnRaf = requestAnimationFrame(() => {
@@ -2331,6 +2209,16 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   }
 
   // Editor-local bindings (only meaningful inside the source textarea).
+  /**
+   * onKeyDown — textarea-local editor keybindings.
+   *
+   * Tab/Shift+Tab → indent/outdent the selected range; Enter on an empty
+   * list/quote item removes the marker (exit the list); Enter on a non-empty
+   * list/quote/ol/ul item continues the next line with the same marker (and
+   * increments ordered-list numbers).
+   * @param {KeyboardEvent} ev The keydown event (from the source textarea).
+   * @returns {Promise<void>}
+   */
   async function onKeyDown(ev) {
     const mod = ev.ctrlKey || ev.metaKey;
 
@@ -2373,9 +2261,20 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   }
 
   /* ---- toolbar actions ---- */
+  /** setFmtActive — toggle the `.active` class on an inline-format button. */
   function setFmtActive(name, on) { const b = toolbar.querySelector(`[data-fmt="${name}"]`); if (b) b.classList.toggle("active", on); }
+  /** setBlockActive — toggle the `.active` class on a block-element button. */
   function setBlockActive(name, on) { const b = toolbar.querySelector(`[data-block="${name}"]`); if (b) b.classList.toggle("active", on); }
 
+  /**
+   * updateActiveStates — re-reflect the inline + block format state at the
+   * active tab's caret onto the toolbar buttons.
+   *
+   * Resolves the active word, detects its format, and highlights the matching
+   * fmt button (bold/italic/underline/strike/code/link) AND the block button
+   * (h1/h2/h3, quote, ul, ol, table). Called per-frame from the selectionchange
+   * route so the buttons track every caret move without needing a text change.
+   */
   function updateActiveStates() {
     const d = activeTab;
     if (!d) return;
@@ -2404,10 +2303,18 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   }
 
   let sessionTimer = 0;
+  /** saveSessionSoon — debounce a saveSession call to ≤ one per 250 ms. */
   function saveSessionSoon() {
     if (sessionTimer) return;
     sessionTimer = setTimeout(() => { sessionTimer = 0; saveSession(); }, 250);
   }
+  /**
+   * saveSession — persist tabs + active-tab id to localStorage (v2 schema).
+   *
+   * Silently ignores writes that would exceed the 2 MB budget (huge docs). The
+   * schema is `{v, activeTab, tabs: [{id, name, text, dirty, path}]}` — the
+   * `v: 2` tag guards against loading a stale (v1) payload.
+   */
   function saveSession() {
     try {
       const data = {
@@ -2420,6 +2327,13 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
       localStorage.setItem(LS_KEY, s);
     } catch { /* ignore */ }
   }
+  /**
+   * loadSession — read the stored session from localStorage and validate it.
+   *
+   * Returns the `{v, activeTab, tabs: [...]}` object, or `null` if absent,
+   * malformed, or not the v2 schema. Never throws.
+   * @returns {(object|null)} The parsed session or null.
+   */
   function loadSession() {
     try {
       const raw = localStorage.getItem(LS_KEY);
@@ -2453,6 +2367,19 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
     try { win = getCurrentWindow(); } catch { win = null; }
     if (win) {
       let closing = false; // re-entry guard for a second close request mid-walk
+      /**
+       * win.onCloseRequested — Tauri window close interceptor.
+       *
+       * The Tauri wrapper's contract: `await handler(evt); if (!evt.isPreventDefault())
+       * await this.destroy()`. So the handler should call preventDefault ONLY
+       * when the user cancels / an error occurs; on success it must do NOTHING
+       * (the wrapper auto-calls destroy). Calling win.close() here would
+       * re-emit close-requested, re-fire this handler → preventDefault again →
+       * deadlock the window open. Re-entry is guarded (a second close request
+       * while the dialog is open is swallowed). If registration itself fails
+       * (IPC not ready), fall back to a document-level `beforeunload` guard.
+       * @param {object} event The Tauri CloseRequestedEvent.
+       */
       win.onCloseRequested(async (event) => {
         if (closing) { event.preventDefault(); return; } // dialog already open — hold
         closing = true;
@@ -2481,9 +2408,16 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
   });
 
   /* ---- toolbar click ---- */
-  const menuBtn = toolbar.querySelector('[data-action="menu"]');
-  const menuDropdown = toolbar.querySelector(".menu-dropdown");
-  function setMenuOpen(open) {
+   const menuBtn = toolbar.querySelector('[data-action="menu"]');
+   const menuDropdown = toolbar.querySelector(".menu-dropdown");
+   /**
+    * setMenuOpen — toggle the hamburger dropdown menu open/closed + ARIA state.
+    *
+    * Switches the `.open` class (CSS reveals the dropdown) and syncs
+    * `data-menu-open` / `aria-expanded` on the toggle button.
+    * @param {boolean} open true to open, false to close.
+    */
+   function setMenuOpen(open) {
     menuDropdown.classList.toggle("open", open);
     menuBtn.setAttribute("data-menu-open", String(open));
     menuBtn.setAttribute("aria-expanded", String(open));

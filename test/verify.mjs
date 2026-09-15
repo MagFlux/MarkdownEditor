@@ -1,3 +1,9 @@
+/**
+ * verify.mjs — UI smoke test (Playwright, Chromium).
+ *
+ * Exercises the basic multi-tab editor: tab create/switch/close, undo/redo,
+ * the overlay highlight layer, and table rendering. Run with `npm run verify`.
+ */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -25,6 +31,7 @@ await page.goto("http://localhost:4199/");
 await page.waitForTimeout(400);
 
 const SHOT_DIR = join(HERE, "verify");
+/** shot — capture a full-page screenshot as `${n}.png` in the verify dir. */
 const shot = (n) => page.screenshot({ path: join(SHOT_DIR, `${n}.png`), fullPage: true });
 
 // 1. initial render
