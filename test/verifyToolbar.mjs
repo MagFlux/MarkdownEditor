@@ -93,6 +93,29 @@ await setLine("<u>hello</u>", 6);
 await setLine("`code`", 3);
 ok("caret in `code` → code active", (await activeFmt("code")) === true);
 
+// --- Inline formats with spaces: the whole formatted span must be detected ---
+await setLine("**two words**", 6);
+ok("caret in multi-word bold → bold active", (await activeFmt("bold")) === true);
+await setLine("*two words*", 6);
+ok("caret in multi-word italic → italic active", (await activeFmt("italic")) === true);
+await setLine("<u>two words</u>", 7);
+ok("caret in multi-word underline → underline active", (await activeFmt("underline")) === true);
+await setLine("~~two words~~", 7);
+ok("caret in multi-word strike → strike active", (await activeFmt("strike")) === true);
+await setLine("`two words`", 6);
+ok("caret in multi-word code → code active", (await activeFmt("code")) === true);
+await setLine("[two words](https://example.com)", 7);
+ok("caret in multi-word link → link active", (await activeFmt("link")) === true);
+
+// --- Marker-like text inside code: code must win over nested-looking markers ---
+const codeMarkerLine = "- The `**markers**` stay dimmed in the editor, so this stays a plain `.md` file";
+for (const off of [codeMarkerLine.indexOf("markers") + 1, codeMarkerLine.indexOf("markers") + 3, codeMarkerLine.indexOf("markers") + 6]) {
+  await setLine(codeMarkerLine, off);
+  const s = await states();
+  ok(`caret inside code-wrapped **markers** at ${off} → code active only`,
+    s.fmt.code && Object.entries(s.fmt).every(([name, active]) => name === "code" || !active));
+}
+
 // --- Plain line: NO inline, NO block ---
 await setLine("plain text here", 9);
 {

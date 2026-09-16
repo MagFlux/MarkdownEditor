@@ -151,7 +151,7 @@ body {
 .editor .i { font-style: italic; }
 .editor .s { text-decoration: line-through; opacity: .82; }
 .editor .u { text-decoration: underline; }
-.editor code, .editor .code { background: var(--code-bg); color: var(--code-fg); padding: 1px 4px; border-radius: 5px; }
+.editor code, .editor .code { background: var(--code-bg); color: var(--code-fg); padding: 1px 0; border-radius: 5px; }
 .editor code .mark, .editor .code .mark { color: var(--code-fg); opacity: .85; }
 .editor .lnk { color: var(--accent); text-decoration: underline; }
 .editor .lnk .mark { color: var(--accent); opacity: .7; text-decoration: none; }

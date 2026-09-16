@@ -14,7 +14,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — toggled on a selection or the current word (Ctrl+B / I / U / K)
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables
 - **Mermaid diagrams** — a `` ```mermaid `` fence renders as a live SVG diagram in the preview (and is captured in HTML/PDF export). Rendered with [mermaid](https://mermaid.js.org) using the current app theme; a syntax error shows an inline red error box with the failing source.
-- **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. They do not require you to select or change the text first.
+- **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. Multi-word inline spans are detected throughout their contents, code spans take precedence over marker-like text inside them, and the buttons do not require you to select or change the text first.
 - **Rich paste** — paste an HTML clipboard (an Excel/Word table, a bold/italic/underline span, or a mix) and it converts to Markdown (`<table>` → GFM table, `<b>` → `**…**`, `<i>` → `*…*`, `<u>` → `<u>…</u>`), committed as a single undo-able edit. Plain-text pastes are left to the browser.
 - **Export as PDF / HTML** — via the hamburger menu (top-right of the toolbar). Renders your live preview and saves it as a self-contained `.html` or a multi-page A4 `.pdf` (via `jsPDF` + `html2canvas`). Uses the same in-app save dialog as Save — pick a location and the file is written there; in a plain browser it falls back to a download.
 - **Drag-and-drop** `.md` files straight onto the window (opens them in a new tab)
@@ -33,7 +33,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - An invisible `<textarea>` sits on top of a pre-rendered `<div>`. The editor content and the textarea share exact font metrics, so the visible caret never drifts.
 - The renderer is in `src/render.js` — `computeBlocks()` classifies each line (heading, list, quote, code, table…) and `lineToHtml()` turns a line into highlighted spans.
 - **Invariant**: stripping every `<span>` tag out of the produced HTML must reproduce the exact source text. This is what keeps the caret aligned; all renderer changes must preserve it. There is a round-trip test that checks this.
-- The DOM (the textarea) is the single source of truth. The "overlay" and the "preview" are both re-rendered from it on every change — the reverse direction never happens, so undo/redo is a simple stack of text snapshots.
+- The DOM (the textarea) is the single source of truth. The "overlay" and the "preview" are both re-rendered from it on every change — the reverse direction never happens, so undo/redo is a simple stack of text snapshots. Inline overlay styles preserve each source character's horizontal width; code highlighting must not add horizontal padding that would shift later text.
 - Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle are **statically imported** at the top of `src/markdown.js`; the PDF/HTML export libraries `jsPDF` and `html2canvas` are likewise static there, and the diagram renderer `mermaid` is a static import at the top of `src/mermaid.js` (all pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import also keeps the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
 
 ---
@@ -68,7 +68,7 @@ MarkdownEditor/
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
-    ├── verifyToolbar.mjs       # toolbar active-states track the caret (27 cases)
+    ├── verifyToolbar.mjs       # toolbar active-states track the caret (36 cases)
     ├── verifyPaste.mjs         # rich-paste HTML→Markdown (18 cases)
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
@@ -305,7 +305,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
- | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens and toggle-OFF comma preservation (27 cases, needs Playwright) |
+ | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens, multi-word spans, code-span precedence, and toggle-OFF comma preservation (36 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |

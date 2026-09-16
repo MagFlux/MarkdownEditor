@@ -104,10 +104,10 @@ npm test               # 21 round-trip renderer cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
-npm run verify-toolbar # toolbar active-states track the caret (27 cases) — bold/underline/
-                        # code/H2/link/italic/strike with and without trailing punctuation,
-                        # toggle-OFF comma preservation, + click, arrow-key, programmatic, and
-                        # tab-switch paths, all with NO text change required.
+npm run verify-toolbar # toolbar active-states track the caret (36 cases) — bold/underline/
+                       # code/H2/link/italic/strike with and without trailing punctuation,
+                       # toggle-OFF comma preservation, multi-word spans, + click, arrow-key,
+                       # programmatic, and tab-switch paths, all with NO text change required.
 npm run verify-paste   # rich-paste: an HTML clipboard (Excel/HTML <table>, bold/italic/
                         # underline spans, mixed runs) converts to Markdown and commits as
                         # ONE undo-able edit; plain-text pastes fall through to the browser's
@@ -266,6 +266,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    reproduce the exact source, character-for-character. This is what keeps the
    invisible caret aligned under the overlay. `test/test.mjs` enforces this (21 cases).
    Any renderer change must pass it.
+  Inline overlay styles must not add horizontal padding or margins: code spans
+  may change color/background, but their rendered width must remain identical
+  to the textarea text or later words will visibly drift under the overlay.
 
 2. **Static Tauri imports.** All `@tauri-apps/*` imports are **static top-level
    imports** in `src/markdown.js` (lines 11-14). They must NOT be changed to
@@ -380,6 +383,10 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    a **`mouseup` + `requestAnimationFrame`** fallback, and re-sync on tab switch via
    `activate()` → `refresh()`. Do not "simplify" back to `select`/`keyup` only;
    the WebKitGTK app will regress to stale buttons.
+    `wordAt` returns a complete inline-format span when the caret is inside
+    formatted text containing spaces, so all inline buttons stay active across
+    spans such as `**two words**` and `<u>two words</u>`. Code spans are checked
+    first, so marker-like text such as `` `**markers**` `` remains code, not bold.
  - **Format detection must survive trailing sentence punctuation (do not
    regress).** `wordAt` splits tokens on whitespace only, so a formatted word
    followed by a comma / period / `; : ! ?` (e.g. `**bold**` in
@@ -393,7 +400,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    is preserved when removing OR re-wrapping. The punctuation set is safe
    because no format marker (`* _ ~ ` < > / [ ] ( )`) is in it, and a URL
    inside `[text](https://…)` is not at a token edge. `verifyToolbar.mjs`
-   (27 cases) covers: caret on `**bold**` / `*italic*` / `~~strike~~` /
+  (36 cases) covers: caret on `**bold**` / `*italic*` / `~~strike~~` /
    `[…](https://…)` each with a trailing comma, plus a toggle-OFF case
    asserting the comma survives.
 - **Split-view scroll-sync is value-based echo suppression, not a time-only

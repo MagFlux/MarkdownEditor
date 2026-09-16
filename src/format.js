@@ -37,12 +37,14 @@ function lineBounds(text, pos) {
 function W(ch) { return ch !== undefined && ch !== "" && !/\s/.test(ch); }
 
 /**
- * wordAt — return the word/token bounds around offset `off` on a line.
+ * wordAt — return the formatted span or word/token bounds around offset `off`.
  *
- * Splits tokens on whitespace only (so `**bold**` and a trailing comma are
- * one token; `detectFormat` then re-trims). The offset may be mid-token, at
- * a token edge, or in whitespace between tokens (advances to the next token
- * or retreats to the previous one).
+ * Formatted spans are returned whole so spaces inside `**multi word**`,
+ * `<u>multi word</u>`, and the other inline formats remain detectable. Plain
+ * text still splits tokens on whitespace only (so `**bold**` and a trailing
+ * comma are one token; `detectFormat` then re-trims). The offset may be
+ * mid-token, at a token edge, or in whitespace between tokens (advances to the
+ * next token or retreats to the previous one).
  *
  * @param {string} line — the single line.
  * @param {number} off — the caret offset on the line.
@@ -50,6 +52,22 @@ function W(ch) { return ch !== undefined && ch !== "" && !/\s/.test(ch); }
  */
 function wordAt(line, off) {
   const n = line.length; if (off < 0) off = 0; if (off > n) off = n;
+  const formatted = [
+    /`[^`]+`/,
+    /\*\*(?:[^*]|\*(?!\*))+\*\*/,
+    /__(?:[^_]|_(?!_))+__/,
+    /~~(?:[^~]|~(?!~))+~~/,
+    /<u>[\s\S]+?<\/u>/,
+    /\[[^\]]*\]\([^)]*\)/,
+    /(?<!\*)\*(?!\*)[^*\s](?:[^*]*?[^*\s])?\*(?!\*)/,
+    /(?<!_)_(?!_)[^_\s](?:[^_]*?[^_\s])?_(?!_)/,
+  ];
+  for (const pattern of formatted) {
+    for (const match of line.matchAll(new RegExp(pattern.source, "g"))) {
+      const start = match.index, end = start + match[0].length;
+      if (off >= start && off <= end) return [start, end];
+    }
+  }
   if (!W(line[off]) && !W(line[off - 1])) {
     let i = off - 1; while (i >= 0 && !W(line[i])) i--;
     if (i >= 0) { let s = i; while (s > 0 && W(line[s - 1])) s--; return [s, i + 1]; }
