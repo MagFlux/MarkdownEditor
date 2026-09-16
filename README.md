@@ -9,7 +9,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 ## Features
 
 - **Split / Edit / Preview** view modes
-- **Multi-file tabs** — open, close and reorder documents independently (Ctrl+T for a new tab, `×` to close, Ctrl+W to close the active tab)
+- **Multi-file tabs** — open, close and reorder documents independently (new blank tabs, including the replacement after closing the last tab, are named `Untitled 1`, `Untitled 2`, … per application run; Ctrl+T for a new tab, `×` to close, Ctrl+W to close the active tab)
 - **Custom undo / redo stack** — per-tab, with `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` and `Ctrl+Left` / `Ctrl+Right` aliases
 - **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — toggled on a selection or the current word (Ctrl+B / I / U / K)
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables

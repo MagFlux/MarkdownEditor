@@ -48,6 +48,9 @@ console.log("after ctrl+t tabs:", await page.locator(".tab").count());
 await shot("02-second-tab");
 const activeName = await page.locator(".tab.active .tname").textContent();
 console.log("active tab name:", activeName);
+const firstName = await page.locator(".tab").first().locator(".tname").textContent();
+if (activeName !== "Untitled 2" || firstName !== "Untitled 1") throw new Error(`unexpected tab names: ${firstName}, ${activeName}`);
+console.log("unique numbered tab names: true");
 
 // 3. type into second tab, underline via Ctrl+U
 await page.keyboard.type("hello");

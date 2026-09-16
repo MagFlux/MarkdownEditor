@@ -165,6 +165,7 @@ export function createApp(root) {
 
   /* ---- tab model — DOM is source of truth; we sync editor + preview + status from it ---- */
   const TABS = [];
+  let untitledCount = 0;
   let activeTab = null;
   let raf = 0, suppressInput = false;
   // Deadline (ms) bounding echo detection: realScroll drops a scroll event only
@@ -210,7 +211,7 @@ export function createApp(root) {
    * source-of-truth textarea, sets the initial value (if any) and the typing-burst
    * baselines, then renders + binds it. Returns the doc object (the single source
    * of truth for that tab).
-   * @param {string} [name] Tab title; defaults to "Untitled".
+    * @param {string} [name] Tab title; defaults to the next "Untitled N" name.
    * @param {string} [text] Initial Markdown; omitted for a blank tab.
    * @returns {object} The doc object.
    */
@@ -536,10 +537,12 @@ export function createApp(root) {
     }
   }
 
-  /** newTabName — pick the next free "Untitled N" title not already used. */
+  /** newTabName — pick the next per-run "Untitled N" title not already used. */
   function newTabName(existing) {
-    let n = 1;
-    while (existing.some((d) => d.name === `Untitled ${n}`)) n++;
+    let n;
+    do {
+      n = ++untitledCount;
+    } while (existing.some((d) => d.name === `Untitled ${n}`));
     return `Untitled ${n}`;
   }
 
@@ -547,7 +550,7 @@ export function createApp(root) {
    * newTab — create a fresh tab, park it at top, make it active, persist.
    *
    * Always opens a NEW tab (never reuses a blank Untitled — see invariant 6).
-   * @param {string} [name] Initial title (defaults to a fresh "Untitled N").
+    * @param {string} [name] Initial title (defaults to a fresh per-run "Untitled N").
    * @param {string} [text] Initial Markdown (defaults to blank).
    * @param {boolean} [focus=true] Reserved (focus is applied by activate).
    * @returns {object} The new doc object.
@@ -586,7 +589,7 @@ export function createApp(root) {
     doc._typeMark = null;
     doc.undo = [];
     doc.redo = [];
-    doc.name = "Untitled";
+    doc.name = newTabName(TABS);
     doc.path = null;
     doc._typeBase = "";
     doc._lastVal = "";
@@ -1132,7 +1135,7 @@ export function createApp(root) {
     if (k === "k" && !ev.shiftKey) { ev.preventDefault(); toggleFormat("link"); return; }
     if (k === "o" && !ev.shiftKey) { ev.preventDefault(); await open(); return; }
     if (k === "w" && !ev.shiftKey) { ev.preventDefault(); if (activeTab) await closeTab(activeTab); return; }
-    if (k === "t" && !ev.shiftKey) { ev.preventDefault(); newTab("Untitled", ""); return; }
+    if (k === "t" && !ev.shiftKey) { ev.preventDefault(); newTab(undefined, ""); return; }
   }
   window.addEventListener("keydown", onGlobalKeyDown);
 
@@ -1389,7 +1392,7 @@ export function createApp(root) {
       else if (action === "open") open();
       else if (action === "undo") undo();
       else if (action === "redo") redo();
-      else if (action === "newtab") newTab("Untitled", "");
+      else if (action === "newtab") newTab(undefined, "");
       else if (action === "mode") {
         const o = ["split", "edit", "preview"];
         const next = o[(o.indexOf(app.dataset.mode) + 1) % 3];
@@ -1420,7 +1423,7 @@ export function createApp(root) {
     if (!ev.ctrlKey && !ev.metaKey) return;
     if (ev.target.closest("a, button, input, textarea, .tab .tname")) return;
     ev.preventDefault();
-    newTab("Untitled", "");
+    newTab(undefined, "");
   }, true);
 
   /* ---- init ---- */
@@ -1447,7 +1450,7 @@ export function createApp(root) {
     started = true;
   }
   if (!started) {
-    const doc = makeTab("Untitled", "");
+    const doc = makeTab(newTabName(TABS), "");
     openAtTop(doc);
     activate(doc);
     saveSession();

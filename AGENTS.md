@@ -15,7 +15,9 @@ Guidance for AI coding agents (and humans) working in this repo. Read this befor
 
 ## What this is
 
-A single-window, multi-tab Markdown editor. Plain JS (no framework), one DOM, one
+A single-window, multi-tab Markdown editor. Blank tabs are numbered `Untitled 1`,
+`Untitled 2`, … within each application run; the counter resets on restart. Plain JS
+(no framework), one DOM, one
 source of truth (the textarea). A color/highlight overlay sits under the textarea;
 the editor stays a `.md` file with no lock-in. Native shell is Tauri on GTK on Linux
 (WebKitGTK), with a browser fallback so the same code runs under `vite preview`.
@@ -333,6 +335,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 6. **New tab, not reuse.** `open()` always opens a fresh tab. A blank `Untitled` tab
    is never reused for the just-opened document.
+  Clearing the last tab in place also allocates the next per-run `Untitled N` name,
+  as if a fresh blank tab had been opened.
 
 7. **fs scope must reach hidden (dot) paths.** The in-app picker lists whatever
    `read_dir` returns — that includes dot-dirs like `~/.config`. On Unix the Tauri
