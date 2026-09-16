@@ -256,7 +256,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `restoreMermaid`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). Also owns the **anti-flicker SVG cache**: `_svgCache` (source → rendered `{svg, bindFunctions}`), `_inflight` (concurrent-render dedup), `restoreMermaid(node)` (synchronous cache-restore after `syncDom` rewrites the preview so an already-seen diagram NEVER flashes raw code), and `mermaidSourceKey(md)` (per-doc "did any fence change" fingerprint that `scheduleMermaidRender` uses to skip render when the source didn't change). |
 | `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `detectFormat`, `trimmedSpan`, `wrapFor`. |
 | `src/paste.js` | Rich-paste HTML→Markdown: `mdCellText`, `mdTableFromHtml`, `mdStyleOf`, `mdInlineMd`, `mdFromHtml`. |
-| `src/icons.js` | Inline-SVG toolbar icons (B I U S code link H1-H3 table + undo/redo/new-tab + mode + theme). |
+| `src/icons.js` | Inline-SVG toolbar icons (B I S code link table + save/open + new-tab + undo/redo + hamburger/file-doc + `theme` (light/dark moon) + the three view-mode glyphs `viewSplit` / `viewEdit` / `viewPreview` on the constant-width mode button — `setMode` swaps `.mode-icon`'s innerHTML per mode so the button width never changes and the centered group never jostles). Every toolbar button uses one of these 17px SVGs (a font glyph like `◑` sits on the text baseline and looks vertically off-center — always use an icon). |
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
@@ -365,6 +365,21 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 ## Conventions
 
+- **Keep each source file small — target ≤ ~1500 SLOC (do not let it creep past).**
+  Try not to let any single source file grow comfortably beyond roughly **1500
+  source lines of code** (SLOC = non-blank, non-comment-only lines). This is a
+  **soft ceiling, not a hard gate**: a file may sit a little over the line, but the
+  change that pushes one past it is the right moment to carve out a cohesive chunk
+  of logic into its own small module. The codebase already follows this pattern —
+  `src/export.js`, `src/session.js`, `src/dialogs.js`, `src/picker.js`,
+  `src/editing.js`, `src/links.js`, `src/history.js`, `src/format.js`, `src/paste.js`,
+  and `src/mermaid.js` were all split off the original monolith, and `src/markdown.js`
+  re-exports them so its public shape is unchanged. When you extract logic, keep
+  that re-export surface intact so the module graph (and the `test/test.mjs` import
+  of `highlightToHtml` via `src/markdown.js`) keeps working, and keep the *new*
+  module under the same ceiling rather than trading one big file for a slightly
+  smaller one. Measure SLOC (not raw line count) with `cloc src/` or `tokei` — both
+  report source lines excluding blanks and comments.
 - No build tooling beyond Vite + a single bundle. Do not add a framework (React,
   Vue, etc.). Do NOT introduce dynamic `import()` (code-splitting) of any Tauri
   plugin or module — `src/markdown.js` currently has zero `import(...)` calls and
@@ -426,8 +441,20 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   (1px). A genuine user scroll lands at a different offset → it is accepted
   immediately even inside the window. A time-only gate (the old bug) swallowed real
    scrolls for up to `ECHO_MS` (~800 ms), producing the "left side lags and catches
-   up" symptom. See `test/verifyScroll.mjs` (5 cases).
- - **Mode-switch must preserve the scroll RATIO (do not regress).** Switching view
+    up" symptom. See `test/verifyScroll.mjs` (5 cases).
+ - **The mode button is constant-width (do not regress).** The toolbar is a flex
+   row: `.tb-left` | `.tb-center` (flex:1, `justify-content:center`) | `.tb-right`.
+   The mode button sits in `.tb-right`, so if its width ever changes, `.tb-right`
+   re-flows and the whole centered formatting group visibly "jostles" under the
+   cursor. The mode button therefore shows a **17px inline SVG glyph**
+   (`.mode-icon` → `icons.viewSplit` / `viewEdit` / `viewPreview`, swapped by
+   `setMode`) — the same constant-width treatment as every other toolbar button —
+   and keeps `.mode-label` (the `Split`/`Edit`/`Preview` word) **visually-hidden**
+   (a 1px clip) for a11y and for tests that read `mode-label.textContent`. Do not
+   put the mode word back on screen (it was 89–116px wide, which is exactly what
+   caused the re-centering), and do not size `.tb-right` to the label. If you add
+   right-side buttons, keep them the same constant size or the center drifts again.
+  - **Mode-switch must preserve the scroll RATIO (do not regress).** Switching view
    modes (split↔edit↔preview) via the mode button refocuses the textarea
    (`activeTab.input.focus()` in the toolbar handler) *and* changes the layout;
    with the caret at the end of the document the browser's scroll-to-caret then

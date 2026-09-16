@@ -60,7 +60,7 @@ MarkdownEditor/
 │   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import) + anti-flicker SVG cache
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
 │   ├── paste.js                # rich-paste HTML→Markdown (mdFromHtml, mdTableFromHtml, …)
-│   ├── icons.js                # inline-SVG toolbar icons (B I U S code link H1-H3 table + undo redo …)
+│   ├── icons.js                # inline-SVG toolbar icons (B I S code link table + save/open + new-tab + undo/redo + hamburger/file-doc + theme + view-mode glyphs)
 │   └── style.css               # all styles, light + dark themes, editor/preview/tab bar
 ├── src-tauri/
 │   ├── tauri.conf.json         # Tauri config (window, bundle, plugin wiring)

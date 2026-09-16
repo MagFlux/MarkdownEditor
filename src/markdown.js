@@ -136,8 +136,11 @@ export function createApp(root) {
       <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
     </span>
     <span class="tb-right">
-      <button class="btn" data-action="mode" title="Cycle Split / Edit / Preview">View &middot; <span class="mode-label">Split</span></button>
-      <button class="btn" data-action="theme" title="Toggle light / dark">&#9681;</button>
+      <button class="btn" data-action="mode" title="View — click to cycle Split / Edit / Preview">
+        <span class="mode-icon" aria-hidden="true">${icons.viewSplit}</span>
+        <span class="mode-label">Split</span>
+      </button>
+      <button class="btn" data-action="theme" title="Toggle light / dark">${icons.theme}</button>
     </span>`;
   app.appendChild(toolbar);
 
@@ -793,6 +796,11 @@ export function createApp(root) {
   /**
    * setMode — switch the editor's view mode: split | edit | preview.
    *
+   * Updates the constant-width mode button: swaps the `.mode-icon` glyph
+   * (icons.viewSplit / viewEdit / viewPreview) and the visually-hidden
+   * `.mode-label` word, so the button's width never changes and the centered
+   * toolbar group does not re-jostle. Then toggles the mode class + data-mode.
+   *
    * Preserves the scroll RATIO of the leaving mode by recording it before the
    * class toggle and re-asserting it on the entering panes after two nested
    * rAF ticks (wins the race against the focus auto-scroll). Stamps the
@@ -835,6 +843,14 @@ export function createApp(root) {
     if (m === "preview") app.classList.add("mode-preview");
     const label = toolbar.querySelector(".mode-label");
     if (label) label.textContent = { split: "Split", edit: "Edit", preview: "Preview" }[m];
+    // Swap the mode glyph too. The button is a constant-width ICON (like the
+    // other toolbar buttons), not a variable-width word, so changing it does
+    // not resize .tb-right — which would otherwise re-center .tb-center and
+    // make the center buttons visibly "jostle" under the cursor (see the
+    // .mode-icon / .mode-label rules in style.css). The hidden .mode-label text
+    // still drives a11y + tests via `label.textContent`.
+    const icon = toolbar.querySelector(".mode-icon");
+    if (icon) icon.innerHTML = { split: icons.viewSplit, edit: icons.viewEdit, preview: icons.viewPreview }[m];
     if (doc && keep !== null) {
       const targets = paneOf(doc)[m];
       /**

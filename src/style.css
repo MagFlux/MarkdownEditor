@@ -67,7 +67,16 @@ body {
 .toolbar .tb-left { display: inline-flex; align-items: center; gap: 4px; }
 .toolbar .tb-center { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 auto; justify-content: center; padding: 0 8px; min-width: 0; }
 .toolbar .tb-right { display: inline-flex; align-items: center; gap: 4px; }
-.mode-label { font-size: 13px; margin-left: 4px; }
+/* The mode button is a constant-width ICON button (like the rest of the
+   toolbar); its glyph (.mode-icon) swaps per mode while the old variable-width
+   word (.mode-label) stays but is visually hidden. Hiding the word — instead of
+   resizing it — is what stops .tb-right (and thus the .tb-center that is
+   centered between the left and right groups) from shifting when the user
+   cycles Split / Edit / Preview. The word is still present in the DOM for a11y
+   and for tests that read `mode-label.textContent`. */
+.mode-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.mode-icon { display: inline-flex; align-items: center; }
 .menu-wrap { position: relative; display: inline-flex; align-items: center; }
 .menu-dropdown { position: absolute; top: calc(100% + 6px); left: 0; min-width: 190px;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;

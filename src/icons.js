@@ -6,8 +6,10 @@
  * `stroke-width="2"`, `stroke-linecap="round"`, `stroke-linejoin="round"`) are
  * applied once by the `wrap` helper so the path bodies stay small.
  *
- * The 14 icons in this file cover B / I / S / code / link / save / open /
- * underline / table / new-tab / undo / redo / hamburger-menu / file-doc.
+ * The 18 icons in this file cover B / I / S / code / link / save / open /
+ * underline / table / new-tab / undo / redo / hamburger-menu / file-doc,
+ * the theme (light/dark) toggle, and the three view-mode glyphs
+ * (split / edit / preview) shown on the constant-width mode button.
  */
 
 /** wrap — produce the shared `<svg>` shell around an inner path. */
@@ -39,5 +41,20 @@ export const undo = wrap(`<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 
 export const redo = wrap(`<path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>`);
 /** menu — the hamburger (3-bar) icon for the PDF/HTML export menu. */
 export const menu = wrap(`<path d="M4 6h16M4 12h16M4 18h16"/>`);
+/** theme — a moon, the light/dark toggle icon (SVG so it centers like the rest). */
+export const theme = wrap(`<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>`);
 /** fileDoc — a generic file-with-folded-corner, used in the open/save prompt. */
 export const fileDoc = wrap(`<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>`);
+
+/**
+ * View-mode glyphs for the constant-width mode button (src/markdown.js). The
+ * button is an icon like the rest of the toolbar so its width never changes
+ * between modes; its glyph swaps as the mode does. Kept visually-hidden in the
+ * button (see .mode-label) but still present for the mode word / a11y.
+ */
+/** viewSplit — two side-by-side panes (edit | preview). */
+export const viewSplit = wrap(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>`);
+/** viewEdit — a pencil over a sheet (edit-only). */
+export const viewEdit = wrap(`<path d="M14 4 4 14l-1 5 5-1L18 8z"/><path d="M13 5 19 11"/>`);
+/** viewPreview — an eye (preview-only). */
+export const viewPreview = wrap(`<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>`);
