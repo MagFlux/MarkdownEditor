@@ -5,15 +5,16 @@
  * Owns the createApp() closure — tabs, undo/redo, keybinds, save/open, drag
  * & drop, the window-close guard, in-app modals, toolbar actions, and session
  * persistence — plus the Tauri/IPC wiring (save/open/export, on-close, open
- * URL). Pure helpers (render, mermaid, format, paste) live in their own
+ * URL). Pure helpers (render, mermaid, format, paste), dialogs, and session
+ * persistence live in their own
  * static-imported modules and are re-exported below so this file's public shape
  * is unchanged.
  *
- * IMPORTANT (invariants 2 & 8 in AGENTS.md): every @tauri-apps/*, jsPDF and
- * html2canvas import below is STATIC and must stay that way — they have to
+ * IMPORTANT (invariants 2 & 8 in AGENTS.md): every @tauri-apps/* import below
+ * and the static export imports in export.js must stay static — they have to
  * hoist into the single bundle the GTK webview can load. Never convert them to
  * a dynamic import(); a failed runtime chunk fetch silently disables
- * save/open and the window-close guard.
+ * save/open, export, and the window-close guard.
  */
 import * as icons from "./icons.js";
 import { marked } from "marked";
@@ -28,7 +29,6 @@ import { marked } from "marked";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists } from "@tauri-apps/plugin-fs";
 import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
-import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
 
 /* Export libraries — STATIC imports, same invariant as the Tauri plugins above:
    they must hoist into the single main bundle (no runtime code-split chunks),
@@ -36,16 +36,21 @@ import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
    Both are pure client-side JS (render to canvas / PDF bytes) with no native
    counterpart, so importing them in a plain browser is safe too. All uses stay
    guarded so the browser fallback (Blob download) still works under `vite preview`. */
-import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
 
 /* Modules — pure helpers extracted into their own files (static imports only; they
    hoist into the same single bundle, same invariant as the Tauri imports above).
-   src/markdown.js keeps ONLY the createApp closure + native/IPC wiring. */
+  src/markdown.js keeps the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
-import { scheduleMermaidRender, renderMermaidInNode, renderMermaidInHtml, restoreMermaid } from "./mermaid.js";
+import { scheduleMermaidRender, restoreMermaid } from "./mermaid.js";
 import { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
+import { createExportHandlers } from "./export.js";
+import { createSessionStore } from "./session.js";
+import { createDialogHandlers } from "./dialogs.js";
+import { createPathPicker } from "./picker.js";
+import { createEditingHandlers } from "./editing.js";
+import { createLinkHandlers } from "./links.js";
+import { createHistoryHandlers } from "./history.js";
 
 /* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
    `highlightToHtml` from here; the app itself calls it from the closure). */
@@ -57,7 +62,6 @@ export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "
 marked.setOptions({ gfm: true, breaks: false });
 
 /* ================= App factory (multi-tab, undo/redo, tabs, tabs, drag-drop, Tauri opener) ================= */
-const LS_KEY = "mdeditor.session.v2";
 let uid = 0, docId = 0;
 
 /** isTauri — true when running inside the Tauri webview (not a plain browser). */
@@ -556,594 +560,17 @@ export function createApp(root) {
     return doc;
   }
 
-  /**
-   * showSaveDiscardDialog — in-app "unsaved changes" prompt for a dirty tab.
-   *
-   * Offers Save / Discard / Cancel. When `clear` is true (we are on the LAST
-   * tab that can't be removed) the primary action becomes "Clear this document
-   * in place…" and Cancel is the only way out. Resolves to
-   * `{ choice: 'save'|'discard'|'cancel' }`.
-   * @param {object} doc The tab being saved / cleared.
-   * @param {{clear?: boolean}} [opts] When true, primary action clears in place.
-   * @returns {Promise<{choice:string}>} The user's choice.
-   */
-  function showSaveDiscardDialog(doc, { clear = false } = {}) {
-    return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "savedlg-backdrop";
-      const box = document.createElement("div");
-      box.className = "savedlg";
-      box.setAttribute("role", "dialog");
-      box.setAttribute("aria-modal", "true");
-      box.setAttribute("aria-label", "Unsaved changes");
-      const title = document.createElement("h3");
-      title.textContent = clear ? "Clear this document?" : "Unsaved changes";
-      const msg = document.createElement("p");
-      msg.className = "savedlg-msg";
-      msg.textContent = clear
-        ? `“${doc.name}” has unsaved changes. This is the last open tab, so it can’t be closed. Clear it?`
-        : `“${doc.name}” has unsaved changes.`;
-      const btns = document.createElement("div");
-      btns.className = "savedlg-btns";
-      box.append(title, msg, btns);
-      backdrop.appendChild(box);
-      document.body.appendChild(backdrop);
+  const { showSaveDiscardDialog, showModalBase, messageModal, confirmOverwriteIfNeeded } = createDialogHandlers({
+    isTauri,
+    exists: tauriExists,
+  });
 
-      /** mkBtn — build a dialog button; a click resolves the dialog with `onPick`. */
-      const mkBtn = (label, cls, onPick) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "btn " + cls;
-        b.textContent = label;
-        b.addEventListener("click", () => pick(onPick));
-        btns.appendChild(b);
-        return b;
-      };
-
-      let done = false;
-      /** cleanup — tear down the dialog's listeners and remove its backdrop. */
-      const cleanup = () => {
-        backdrop.removeEventListener("mousedown", onBackdrop, true);
-        window.removeEventListener("keydown", onKey, true);
-        box.removeEventListener("keydown", onTab, true);
-        backdrop.remove();
-      };
-
-      /**
-       * pick — settle the dialog on a single `choice`; idempotent, then resolves.
-       * @param {string} choice — the outcome ("cancel" / "discard" / "save").
-       */
-      const pick = (choice) => { if (done) return; done = true; cleanup(); resolve({ choice }); };
-
-      const cancelBtn = mkBtn("Cancel", "", "cancel");
-      if (clear) {
-        mkBtn("Clear", "danger", "discard");
-        mkBtn("Save & Clear", "primary", "save");
-      } else {
-        mkBtn("Discard", "danger", "discard");
-        mkBtn("Save", "primary", "save");
-      }
-
-      /** onBackdrop — a mousedown on the dimmed backdrop itself counts as Cancel. */
-      const onBackdrop = (ev) => { if (ev.target === backdrop) pick("cancel"); };
-      backdrop.addEventListener("mousedown", onBackdrop, true);
-
-      /** onKey — Escape cancels the dialog. */
-      const onKey = (ev) => { if (ev.key === "Escape") { ev.preventDefault(); pick("cancel"); } };
-      window.addEventListener("keydown", onKey, true);
-
-      /** onTab — trap Tab focus inside the dialog, wrapping around its buttons. */
-      const onTab = (ev) => {
-        if (ev.key !== "Tab") return;
-        ev.preventDefault();
-        const list = Array.from(btns.querySelectorAll("button")).filter((b) => !b.disabled);
-        if (!list.length) return;
-        const i = list.indexOf(document.activeElement);
-        const n = ev.shiftKey
-          ? (i <= 0 ? list.length - 1 : i - 1)
-          : (i === -1 ? 0 : (i + 1) % list.length);
-        list[n].focus();
-      };
-      box.addEventListener("keydown", onTab, true);
-
-      // Put initial focus on the primary (right-most) button.
-      requestAnimationFrame(() => {
-        const last = btns.lastElementChild;
-        if (last) last.focus();
-        else cancelBtn.focus();
-      });
-    });
-  }
-
-  /**
-   * showModalBase — build and open a shared in-app modal inside the webview.
-   *
-   * Replaces the native `tauri-plugin-dialog` rfd GTK dialogs: rfd NEVER sets
-   * `gtk_window_set_transient_for` / `GTK_WIN_POS_CENTER_ON_PARENT` on Linux, so
-   * native pickers drift off-window; an in-app modal is centered by construction
-   * and is also browser-safe under `vite preview`.
-   *
-   * Returns a synchronous handle `{ box, finish(value), promise }`. `finish` is
-   * idempotent — it removes the DOM, unwires the escape/backdrop/Tab listeners,
-   * and resolves `promise` once. Callers build their content into `box` before
-   * returning the handle.
-   * @param {object} [opts]
-   * @param {string} [opts.label] ARIA label for the dialog box.
-   * @param {boolean} [opts.closeOnBackdrop=false] Resolve on a backdrop click.
-   * @param {Element|function} [opts.focusEl] Element (or thunk) to focus on open.
-   * @returns {{box,finish,promise}} The modal handle.
-   */
-   function showModalBase({ label, closeOnBackdrop = false, focusEl } = {}) {
-    const backdrop = document.createElement("div");
-    backdrop.className = "savedlg-backdrop";
-    const box = document.createElement("div");
-    box.className = "savedlg";
-    box.setAttribute("role", "dialog");
-    box.setAttribute("aria-modal", "true");
-    if (label) box.setAttribute("aria-label", label);
-    backdrop.appendChild(box);
-    document.body.appendChild(backdrop);
-
-    let done = false;
-    let resolved = false;
-    const handle = { box, finish: null, promise: null };
-    handle.promise = new Promise((resolve) => {
-      handle.finish = (value) => {
-        if (done) return;
-        done = true;
-        if (backdrop._onBackdrop) backdrop.removeEventListener("mousedown", backdrop._onBackdrop, true);
-        window.removeEventListener("keydown", handle._onKey, true);
-        box.removeEventListener("keydown", handle._onTab, true);
-        backdrop.remove();
-        resolved = true;
-        resolve(value);
-      };
-
-      if (closeOnBackdrop) {
-        backdrop._onBackdrop = (ev) => { if (ev.target === backdrop) handle.finish(undefined); };
-        backdrop.addEventListener("mousedown", backdrop._onBackdrop, true);
-      }
-
-      handle._onKey = (ev) => {
-        if (ev.key === "Escape") { ev.preventDefault(); handle.finish(undefined); }
-      };
-      window.addEventListener("keydown", handle._onKey, true);
-
-      handle._onTab = (ev) => {
-        if (ev.key !== "Tab") return;
-        ev.preventDefault();
-        const focusables = Array.from(box.querySelectorAll(
-          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        )).filter((el) => el.offsetParent !== null);
-        if (!focusables.length) return;
-        const i = focusables.indexOf(document.activeElement);
-        const n = ev.shiftKey
-          ? (i <= 0 ? focusables.length - 1 : i - 1)
-          : (i === -1 ? 0 : (i + 1) % focusables.length);
-        focusables[n].focus();
-      };
-      box.addEventListener("keydown", handle._onTab, true);
-
-      if (focusEl) {
-        requestAnimationFrame(() => {
-          const el = (typeof focusEl === "function" ? focusEl() : focusEl);
-          if (el && typeof el.focus === "function") el.focus();
-        });
-      }
-    });
-    return handle;
-  }
-
-  /**
-   * messageModal — a simple centered message box on top of showModalBase.
-   *
-   * Renders `title`, `message`, and a row of buttons. Resolves with the `value`
-   * of the clicked button, or undefined if dismissed by backdrop / Escape.
-   * @param {object} [opts]
-   * @param {string} [opts.title="Notice"] Heading text.
-   * @param {string} [opts.message=""] Body text.
-   * @param {Array<{label:string,value:any,kind?:string}>} [opts.buttons] Buttons
-   *   (defaults to a single OK). Pass one with `kind: 'primary'` to focus it.
-   * @param {string} [opts.kind='info'] 'info'|'error'|'warn'; tints the message.
-   * @returns {Promise<any>} The clicked button's value (or undefined).
-   */
-    function messageModal({ title = "Notice", message = "", buttons, kind = "info" } = {}) {
-     if (!buttons || !buttons.length) buttons = [{ label: "OK", value: "ok" }];
-     const modal = showModalBase({ label: title, closeOnBackdrop: true });
-     const { box, finish } = modal;
-
-     const h = document.createElement("h3");
-     h.textContent = title;
-     box.appendChild(h);
-
-     const p = document.createElement("p");
-     p.className = "savedlg-msg";
-     if (kind) p.dataset.kind = kind;
-     p.textContent = message;
-     box.appendChild(p);
-
-     const row = document.createElement("div");
-     row.className = "savedlg-btns";
-     let primaryEl = null;
-     for (const b of buttons) {
-       const el = document.createElement("button");
-       el.type = "button";
-       el.className = "btn " + (b.kind || "");
-       el.textContent = b.label || "OK";
-       el.addEventListener("click", () => finish(b.value));
-       row.appendChild(el);
-       if (b.kind === "primary") primaryEl = el;
-     }
-     box.appendChild(row);
-
-     if (primaryEl) primaryEl.focus();
-     else row.lastElementChild && row.lastElementChild.focus();
-
-     return modal.promise;
-   }
-
-  /**
-   * confirmOverwrite — ask before replacing an existing native file.
-   * @param {string} path The file that is about to be replaced.
-   * @returns {Promise<boolean>} true to continue, false to leave the file untouched.
-   */
-  async function confirmOverwrite(path) {
-    const choice = await messageModal({
-      title: "Overwrite existing file?",
-      message: "“" + path + "” already exists. Replace it?",
-      buttons: [
-        { label: "Cancel", value: false },
-        { label: "Overwrite", kind: "danger", value: true },
-      ],
-      kind: "warn",
-    });
-    return choice === true;
-  }
-
-  /**
-   * confirmOverwriteIfNeeded — check a native destination and prompt before replacing it.
-   * @param {string} path The destination file.
-   * @returns {Promise<boolean>} true when the destination may be written.
-   */
-  async function confirmOverwriteIfNeeded(path) {
-    if (!isTauri()) return true;
-    if (!(await tauriExists(path))) return true;
-    return confirmOverwrite(path);
-  }
-
-  /**
-   * pickPath — in-app Save-As / Open file chooser (folder browser + name row).
-   *
-   * Works under `vite preview` (browser) and under Tauri (`plugin:fs|read_dir`).
-   * No native GTK dialog opens, so it's centered by construction (see
-   * showModalBase for the rfd/GTK3 parent/center quirk it replaces).
-   *
-   * @param {object} [opts]
-   * @param {'save'|'open'} [opts.mode='save'] Pick direction.
-   * @param {string} [opts.defaultFilename] Pre-filled name (save mode only).
-   * @param {string} [opts.defaultDir] Initial directory (defaults to home).
-   * @param {Array<{name:string,extensions:string[]}>} [opts.filters] (save mode)
-   *   used to dim non-matching files.
-   * @returns {Promise<{path:string|null,name?:string}>} `{ path, name }` on accept,
-   *   or `{ path: null }` on cancel.
-   */
-     function pickPath(opts = {}) {
-     const mode = opts.mode === "open" ? "open" : "save";
-     const filterSet = new Set(
-       (opts.filters || [{ name: "File", extensions: ["md", "markdown", "txt"] }])
-         .reduce((acc, f) => acc.concat(f.extensions || []), [])
-         .map((e) => String(e).replace(/^\./, "").toLowerCase())
-         .filter(Boolean)
-     );
-      /** matchesExt — true when `name` ends in one of the picker's allowed extensions. */
-      const matchesExt = (name) => {
-        const s = String(name);
-       const dot = s.lastIndexOf(".");
-       if (dot < 1) return false;
-       return filterSet.has(s.slice(dot + 1).toLowerCase());
-     };
-
-     return new Promise(async (resolve) => {
-       const modal = showModalBase({
-         label: mode === "save" ? "Choose a location to save to" : "Open a file",
-       });
-       const { box, finish } = modal;
-
-       const h = document.createElement("h3");
-       h.textContent = mode === "save" ? "Save to…" : "Open…";
-
-        const pathbar = document.createElement("div");
-        pathbar.className = "picker-pathbar";
-
-        // A small interactive control button that renders consistently across
-        // both light and dark themes (WebKitGTK renders emoji as flat/missing
-        // glyphs; an inline SVG with `currentColor` always matches the text
-        // color and stays visible). Used for the Home / Up navigation buttons.
-        if (!window.__pickCtrlGlyphs) {
-          window.__pickCtrlGlyphs = {
-            HOME: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10l9-7 9 7v11a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg>',
-            UP: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
-          };
-        }
-        /**
-         * makeCtrl — build a theme-tinted control button (role=button) from a glyph.
-         * @param {string} glyphKey — key into `__pickCtrlGlyphs` (HOME / UP).
-         * @param {string} label — accessible name (aria-label + title).
-         * @param {Function} onClick — fires on click / Enter / Space.
-         * @returns {HTMLSpanElement} the control element.
-         */
-        const makeCtrl = (glyphKey, label, onClick) => {
-          const el = document.createElement("span");
-          el.className = "ctrl";
-          el.setAttribute("role", "button");
-          el.tabIndex = 0;
-          el.title = label;
-          el.setAttribute("aria-label", label);
-          el.innerHTML = window.__pickCtrlGlyphs[glyphKey];
-          el.addEventListener("click", onClick);
-          el.addEventListener("keydown", (ev) => {
-            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(); }
-          });
-          return el;
-        };
-
-        const list = document.createElement("ul");
-       list.className = "picker-list";
-       list.setAttribute("role", "listbox");
-
-       let nameInput = null;
-       const nameRow = document.createElement("div");
-       nameRow.className = "picker-name";
-       if (mode === "save") {
-         const lab = document.createElement("label");
-         lab.textContent = "Name:";
-         nameInput = document.createElement("input");
-         nameInput.type = "text";
-         nameInput.value = opts.defaultFilename || "untitled.md";
-         nameInput.setAttribute("spellcheck", "false");
-         nameRow.append(lab, nameInput);
-       }
-
-       const status = document.createElement("div");
-       status.className = "picker-status";
-       status.setAttribute("aria-live", "polite");
-
-        /**
-         * setStatus — update the picker's status line and (optionally) its tone.
-         * @param {string} [text] — the message (empty clears it).
-         * @param {string} [kind] — `error`/`info`/… sets `data-kind`; omit to clear.
-         */
-        const setStatus = (text, kind) => {
-          status.textContent = text || "";
-         if (kind) status.dataset.kind = kind; else status.removeAttribute("data-kind");
-       };
-
-       const row = document.createElement("div");
-       row.className = "savedlg-btns";
-       const cancelBtn = document.createElement("button");
-       cancelBtn.type = "button";
-       cancelBtn.className = "btn";
-       cancelBtn.textContent = "Cancel";
-       const confirmBtn = document.createElement("button");
-       confirmBtn.type = "button";
-       confirmBtn.className = "btn primary";
-       confirmBtn.textContent = mode === "save" ? "Save" : "Open";
-       row.append(cancelBtn, confirmBtn);
-
-       if (mode === "save") box.append(h, pathbar, list, nameRow, status, row);
-       else                 box.append(h, pathbar, list, status, row);
-
-       let cwd = opts.defaultDir || null;
-       if (!cwd) {
-         try { cwd = await tauriHomeDir(); } catch (_) { cwd = null; }
-       }
-       if (cwd) { try { cwd = decodeURIComponent(String(cwd)); } catch (_) {} }
-       cwd = String(cwd || "/").replace(/\/+$/, "") || "/";
-
-       const state = { cwd, picked: null };
-       let listToken = 0;
-       let settled = false;
-
-        /**
-         * done — settle the picker once with `result` (idempotent), then resolve.
-         * @param {string|null} result — the chosen path, or null on cancel.
-         */
-        const done = (result) => {
-          if (settled) return;
-         settled = true;
-         finish();
-         resolve(result);
-       };
-
-        /** renderCrumb — rebuild the breadcrumb pathbar (Home + Up + clickable crumbs). */
-        const renderCrumb = () => {
-          pathbar.innerHTML = "";
-          // Home and Up are ALWAYS present: the Home button is the "escape hatch"
-          // back to the user's home dir no matter how deep (or how far off home)
-          // the user has navigated. Up is inert at "/" (no parent to go to).
-          const homeBtn = makeCtrl("HOME", "Home directory", () => goToHome());
-          const upBtn = makeCtrl("UP", "Go up", () => goToUp());
-          pathbar.appendChild(homeBtn);
-          pathbar.appendChild(upBtn);
-          const parts = state.cwd.split("/").filter(Boolean);
-          if (state.cwd === "/" || parts.length === 0) {
-            // We're at the filesystem root: show it as a plain current-location
-            // label (not a button — there's nothing above it and Home already
-            // covers "escape to a useful place").
-            const c = document.createElement("span");
-            c.textContent = "/";
-            c.className = "crumb-cur";
-            pathbar.appendChild(c);
-            return;
-          }
-          for (let i = 0; i < parts.length; i++) {
-           const c = document.createElement("span");
-           c.textContent = parts[i];
-           c.dataset.crumb = "/" + parts.slice(0, i + 1).join("/");
-           if (i === parts.length - 1) c.classList.add("crumb-cur");
-           c.addEventListener("click", () => goToDir(c.dataset.crumb));
-           pathbar.appendChild(c);
-           const sep = document.createElement("span");
-           sep.className = "sep"; sep.textContent = "/";
-           pathbar.appendChild(sep);
-         }
-         // Remove the trailing separator (visual polish).
-         const last = pathbar.lastElementChild;
-         if (last && last.classList.contains("sep")) pathbar.removeChild(last);
-       };
-
-        /** render — paint the directory listing for `entries` into the list. */
-        const render = (entries) => {
-          list.innerHTML = "";
-          if (!Array.isArray(entries) || !entries.length) {
-            const li = document.createElement("li");
-            li.textContent = "(no folders or files here)";
-            li.style.color = "var(--fg-dim)";
-            li.style.cursor = "default";
-            list.appendChild(li);
-            setStatus("Empty: " + state.cwd);
-            return;
-          }
-          /** norm — natural-cased file-name comparator. */
-          const norm = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" });
-          /** isDir — true when the entry is a directory (snake or camel accessor). */
-          const isDir = (e) => e.isDirectory || e.is_directory || e.is_dir;
-          /** isFile — true when the entry is a regular file. */
-          const isFile = (e) => e.isFile || e.is_file;
-          const dirs = entries.filter((e) => e && isDir(e)).sort(norm);
-          const files = entries.filter((e) => e && isFile(e)).sort(norm);
-         const frag = document.createDocumentFragment();
-         for (const d of dirs) {
-           const li = document.createElement("li");
-           li.setAttribute("role", "option");
-           li.dataset.name = d.name;
-            li.innerHTML = '<span class="glyph">\u25B8</span><span class="dir"></span>';
-           li.lastElementChild.textContent = d.name;
-           li.addEventListener("click", () => goToDir(state.cwd + "/" + d.name));
-           frag.appendChild(li);
-         }
-         for (const f of files) {
-           const li = document.createElement("li");
-           li.setAttribute("role", "option");
-           li.dataset.name = f.name;
-           const dim = mode === "save" && !matchesExt(f.name);
-            li.innerHTML = '<span class="glyph">\u2013</span><span class="fname"></span>';
-           li.lastElementChild.textContent = f.name;
-           if (dim) li.style.color = "var(--fg-dim)";
-            li.addEventListener("click", () => {
-              state.picked = f.name;
-              if (mode === "save") nameInput.value = f.name;
-              list.querySelectorAll("li.sel").forEach((x) => x.classList.remove("sel"));
-              li.classList.add("sel");
-            });
-            li.addEventListener("dblclick", () => confirmFile(f.name));
-            frag.appendChild(li);
-          }
-          list.appendChild(frag);
-          setStatus(dirs.length + " folder" + (dirs.length === 1 ? "" : "s"), "ok");
-        };
-
-          /**
-           * goToDir — navigate the picker into `dir` (read + render + crumb).
-           * @param {string} dir — absolute path to list.
-           * @returns {Promise<void>}
-           */
-          const goToDir = async (dir) => {
-            const token = ++listToken;
-           // Only surface "Loading…" once a read has been in flight >2s. Fast
-           // (local) loads then never flash it — this kills the status text
-           // jitter when navigating between directories.
-           const loadingTimer = setTimeout(() => {
-             if (token === listToken) setStatus("Loading…");
-           }, 2000);
-           let entries;
-           try { entries = await tauriReadDir(dir); }
-           catch (e) {
-             clearTimeout(loadingTimer);
-             if (token !== listToken) return;
-             // Read failed (e.g. a forbidden path). Keep state.cwd and the crumb
-             // on the last readable directory — do NOT adopt the failed path.
-             setStatus("Cannot read " + dir + " — " + ((e && (e.message || e)) || "error"), "error");
-             return;
-           }
-           clearTimeout(loadingTimer);
-           if (token !== listToken) return;
-           // Only commit the path after a successful read.
-           state.cwd = dir;
-           state.picked = null;
-           renderCrumb();
-           render(entries);
-           setStatus("");
-         };
-
-        /** goToUp — navigate to the parent directory (no-op at "/"). */
-        const goToUp = () => {
-          if (state.cwd === "/") return;
-          const dir = state.cwd.split("/").slice(0, -1).join("/") || "/";
-          goToDir(dir);
-        };
-
-        // Jump the picker to the user's home directory. Resolved lazily so the
-        // home is always the caller's real $HOME, however deep we've navigated.
-        // Guarded by isTauri() because homeDir() is a Tauri IPC call (in a plain
-        // browser it would reject); the button is still shown — tapping it in a
-        // browser simply no-ops (the picker only exists in the Tauri build anyway).
-        /**
-         * goToHome — jump the picker to the user's home dir (lazily resolved).
-         * @returns {Promise<void>}
-         */
-        const goToHome = async () => {
-          if (!isTauri()) return;
-          let home = null;
-          try { home = await tauriHomeDir(); } catch (_) { home = null; }
-          if (!home) return;
-          try { home = decodeURIComponent(String(home)); } catch (_) {}
-          home = String(home).replace(/\/+$/, "") || "/";
-          goToDir(home);
-        };
-
-        /** confirmFile — settle the picker on `name` in the current directory. */
-        const confirmFile = (name) => {
-          const full = state.cwd + "/" + name;
-          done({ path: full, name });
-        };
-
-        /** onConfirm — Confirm-button handler; validates save name or open selection. */
-        const onConfirm = () => {
-         if (mode === "save") {
-           const v = (nameInput.value || "").trim();
-           if (!v) { setStatus("Name is required", "warn"); nameInput.focus(); return; }
-           if (/\//.test(v)) {
-             // The user typed an absolute or relative path in the name row —
-             // honor it literally (the Tauri scope is ** anyway).
-             done({ path: v, name: v.split("/").filter(Boolean).pop() || v });
-             return;
-           }
-           if (state.picked && state.picked === v) { done({ path: state.cwd + "/" + v, name: v }); return; }
-           done({ path: state.cwd + "/" + v, name: v });
-           return;
-         }
-         // open mode: must have selected a file
-         if (!state.picked) { setStatus("Select a file first", "warn"); return; }
-         confirmFile(state.picked);
-       };
-
-       confirmBtn.addEventListener("click", onConfirm);
-       cancelBtn.addEventListener("click", () => done({ path: null }));
-       if (nameInput) {
-         nameInput.addEventListener("keydown", (ev) => {
-           if (ev.key === "Enter") { ev.preventDefault(); onConfirm(); }
-         });
-       }
-
-       renderCrumb();
-       goToDir(state.cwd);
-
-       // Default focus to the name input (save) or the list (open).
-       const focusTarget = mode === "save" ? nameInput : list;
-       if (focusTarget && focusTarget.focus) requestAnimationFrame(() => focusTarget.focus());
-     });
-   }
+  const { pickPath } = createPathPicker({
+    showModalBase,
+    readDir: tauriReadDir,
+    homeDir: tauriHomeDir,
+    isTauri,
+  });
 
   /**
    * resetLastTab — empty the last tab in place and reset it to a blank, clean
@@ -1336,389 +763,29 @@ export function createApp(root) {
     r.disabled = d.redo.length === 0;
   }
 
-  /**
-   * captureTypeSnapshot — record one snapshot at the start of a typing burst.
-   *
-   * Typing is a STREAM (one input event per keystroke), not a discrete action,
-   * so we coalesce a burst into a single undo step. This snapshots the "from"
-   * state exactly once per burst (only if no snapshot is pending). The "from"
-   * text comes from `d._typeBase` (the last SETTLED text), NOT the live value —
-   * at the moment an "input" event fires the value is ALREADY post-insertion, so
-   * reading it would record the new text as "from" and undo would be a no-op.
-   * `d._typeBase` is maintained everywhere a settled text otherwise changes the
-   * document (commit, undo, redo, open, programmatic set).
-   * @param {object} d Doc whose burst snapshot is recorded.
-   */
-  function captureTypeSnapshot(d) {
-    if (d._typeMark) return;
-    d._typeMark = { from: d._typeBase, fromSelS: d.input.selectionStart, fromSelE: d.input.selectionEnd };
-  }
-  /**
-   * flushTypeCommit — settle a pending typing burst into one undo step.
-   *
-   * Pushes baseline → current as a single step, clears the pending snapshot and
-   * its settle timer, and bumps `d._typeBase` to the current text (the new
-   * settled baseline). This is the single choke point to call before any
-   * programmatic stack change (commit, undo, redo) so those see a consistent
-   * stack.
-   * @param {object} d Doc whose burst is settled.
-   */
-  function flushTypeCommit(d) {
-    if (d && d._typeSettle) { clearTimeout(d._typeSettle); d._typeSettle = 0; }
-    if (d && d._typeMark) {
-      d.undo.push({
-        label: "type",
-        from: d._typeMark.from, fromSelS: d._typeMark.fromSelS, fromSelE: d._typeMark.fromSelE,
-        to: d.input.value, selS: d.input.selectionStart, selE: d.input.selectionEnd,
-      });
-      if (d.undo.length > 400) d.undo.shift();
-      d._typeMark = null;
-      d._typeBase = d.input.value;
-    }
-  }
-  /**
-   * scheduleTypeSettle — wait COALESCE_MS of quiet after typing, then settle the
-   * burst as one undo step.
-   *
-   * A debounce window: each keystroke in the burst resets the timer, so the
-   * single snapshot gets pushed as soon as the user pauses. If still active on
-   * the tab, the toolbar undo button re-enables.
-   * @param {object} d Doc whose settle timer is (re)armed.
-   */
-  function scheduleTypeSettle(d) {
-    if (d._typeSettle) clearTimeout(d._typeSettle);
-    d._typeSettle = setTimeout(() => {
-      d._typeSettle = 0;
-      if (!d._typeMark) return;
-      flushTypeCommit(d);
-      if (d === activeTab) setUndoRedoState();
-    }, COALESCE_MS);
-  }
-  /* ---- undo / redo (custom stack; DOM = source of truth) ---- */
-  /**
-   * commit — record one undo step and apply a programmatic text change.
-   *
-   * Settle any pending typing burst first (flushTypeCommit), push
-   * `{label, from, fromSelS, fromSelE, to, selS, selE}` onto `d.undo` (clearing
-   * `d.redo` — a new branch), then apply `to` / caret to the textarea, set the new
-   * settled baseline, mark dirty, and refresh. Single choke point for all
-   * programmatic edits (formats, opens, etc.).
-   * @param {string} label Human label for the step (status/undo UI).
-   * @param {string} to The new full text.
-   * @param {number} selS New selection start.
-   * @param {number} selE New selection end.
-   */
-  function commit(label, to, selS, selE) {
-    const d = activeTab;
-    if (!d) return;
-    flushTypeCommit(d); // settle a pending typing burst into the stack first
-    d.undo.push({
-      label, from: d.input.value,
-      fromSelS: d.input.selectionStart, fromSelE: d.input.selectionEnd,
-      to, selS, selE,
-    });
-    if (d.undo.length > 400) d.undo.shift();
-    d.redo.length = 0;
-    suppressInput = true;
-    d.input.value = to;
-    suppressInput = false;
-    d.input.setSelectionRange(selS, selE);
-    d.dirty = true;
-    d._typeBase = d.input.value; // new settled state; next typing burst snapshots from here
-    d._lastVal = d.input.value; // programmatic write; input handler baseline
-    refresh();
-  }
-  /** undo — pop the last step off the undo stack and apply its "from" state. */
-  function undo() {
-    const d = activeTab;
-    if (!d) return;
-    flushTypeCommit(d);
-    if (!d.undo.length) return;
-    const act = d.undo.pop();
-    d.redo.push(act);
-    suppressInput = true;
-    d.input.value = act.from;
-    suppressInput = false;
-    d.input.setSelectionRange(act.fromSelS, act.fromSelE);
-    d.dirty = true;
-    d._typeBase = d.input.value; // this is now a settled state; next burst snapshots from here
-    d._lastVal = d.input.value; // programmatic write; input handler baseline
-    refresh();
-  }
-  /** redo — pop the last step off the redo stack and apply its "to" state. */
-  function redo() {
-    const d = activeTab;
-    if (!d) return;
-    flushTypeCommit(d);
-    if (!d.redo.length) return;
-    const act = d.redo.pop();
-    d.undo.push(act);
-    suppressInput = true;
-    d.input.value = act.to;
-    suppressInput = false;
-    d.input.setSelectionRange(act.selS, act.selE);
-    d.dirty = true;
-    d._typeBase = d.input.value; // settled state; next typing burst snapshots from here
-    d._lastVal = d.input.value; // programmatic write; input handler baseline
-    refresh();
-  }
+  const { captureTypeSnapshot, flushTypeCommit, scheduleTypeSettle, commit, undo, redo } = createHistoryHandlers({
+    getActiveDoc: () => activeTab,
+    coalesceMs: COALESCE_MS,
+    setUndoRedoState,
+    setSuppressInput: (value) => { suppressInput = value; },
+    refresh,
+  });
 
-  /* ---- formatting toggles ---- */
-  /**
-   * toggleFormat — apply (or toggle off) an inline format over the current
-   * word/selection.
-   *
-   * Resolves the active word, detects any EXISTING format on it (incl. sentence
-   * punctuation at the token edges, see detectFormat/trimmedSpan), then splices the
-   * target span: strip the matching format, rewrap a different format's inner
-   * text, or freshly wrap a plain token — preserving adjacent punctuation. Link
-   * is special-cased: strip a link → keep its inner text; apply → `[text](https://)`.
-   * Commits as one undo step.
-   * @param {string} kind 'bold'|'italic'|'underline'|'strike'|'code'|'link'.
-   */
-  function toggleFormat(kind) {
-    const d = activeTab, input = d.input, text = d.input.value;
-    const a = input.selectionStart;
-    const [lineStart, lineEnd] = lineBounds(text, a);
-    const line = text.slice(lineStart, lineEnd);
-    const [ws, we] = wordAt(line, a - lineStart);
-    const det = detectFormat(line, ws, we);
-    const span = det ? { fs: det.fs, fe: det.fe } : trimmedSpan(line, ws, we);
-    const { fs, fe } = span;
-    let newLine, ns, ne;
-    // The target span (sentence punctuation trimmed) is what we splice over —
-    // this keeps adjacent punctuation like the trailing comma in
-    // `- Live **bold**, …` in place whether we are removing, re-formatting, or
-    // freshly applying a format.
-    const target = line.slice(fs, fe);
-    if (kind === "link") {
-      if (det && det.fmt === "link") {
-        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
-        ns = fs; ne = ns + det.inner.length;
-      } else {
-        const w = target || "link";
-        newLine = line.slice(0, fs) + `[${w}](https://)` + line.slice(fe);
-        ns = fs + 3 + w.length; ne = ns + 8;
-      }
-    } else {
-      if (det && det.fmt === kind) {
-        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
-        ns = fs; ne = ns + det.inner.length;
-      } else {
-        // Reformat an existing (different) format → rewrap its inner text
-        // (drop the old markers); apply to a plain (unformatted) token → trim
-        // the token's sentence punctuation before wrapping so it survives.
-        const inner = det ? det.inner : target;
-        newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
-        ns = fs; ne = ns + inner.length;
-      }
-    }
-    commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
-  }
+  const { toggleFormat, toggleBlock, indentLines } = createEditingHandlers({
+    getActiveDoc: () => activeTab,
+    commit,
+    lineBounds,
+    detectFormat,
+    trimmedSpan,
+    wrapFor,
+    isTableSep,
+  });
 
-  /**
-   * blockLine — rewrite a single line to (un)mark it as a block element.
-   *
-   * Pure helper: strips any existing block marker, and if the line is already
-   * the target `kind` returns its bare content (toggle OFF); otherwise returns
-   * the content prefixed with the marker for `kind`. Unknown kinds pass through.
-   * @param {string} kind 'h1'|'h2'|'h3'|'quote'|'ul'|'ol'.
-   * @param {string} line The raw source line.
-   * @returns {string} The rewritten line.
-   */
-  function blockLine(kind, line) {
-    const m = line.match(/^\s*(#{1,4}\s|>\s?|[-*+]\s+|\d+\.\s+)/);
-    const marker = m ? m[0] : "";
-    const contentLine = line.slice(marker.length);
-    const isSame =
-      (kind === "h1" && /^\s*#\s/.test(line)) ||
-      (kind === "h2" && /^\s*##\s/.test(line)) ||
-      (kind === "h3" && /^\s*###\s/.test(line)) ||
-      (kind === "quote" && /^\s*>/.test(line)) ||
-      (kind === "ul" && /^\s*[-*+]\s+/.test(line)) ||
-      (kind === "ol" && /^\s*\d+\.\s+/.test(line));
-    if (isSame) return contentLine;
-    switch (kind) {
-      case "h1": return "# " + contentLine;
-      case "h2": return "## " + contentLine;
-      case "h3": return "### " + contentLine;
-      case "quote": return "> " + contentLine;
-      case "ul": return "- " + contentLine;
-      case "ol": return "1. " + contentLine;
-    }
-    return line;
-  }
-
-  /**
-   * toggleBlock — wrap/unwrap the selected range as a block element.
-   *
-   * Kinds: h1/h2/h3, quote, ul, ol (per-line via blockLine), table (GFM insert
-   * / remove over the detected rows), codeblock (wrap in a ``` fence, or unwrap
-   * an existing one). Range is `a..b` across lines. Commits as one undo step.
-   * @param {string} kind Block kind to apply/strip.
-   */
-  function toggleBlock(kind) {
-    const d = activeTab, input = d.input, text = d.input.value;
-    const a = input.selectionStart, b = input.selectionEnd;
-    const startLine = lineBounds(text, a)[0];
-    const endLine = lineBounds(text, b)[1];
-
-    if (kind === "table") {
-      // detect GFM table: a line with `|` and no block markers AND the line right below is a separator
-      const lines = text.split("\n");
-      const cur = lineBounds(text, a)[0];
-      let row = cur;
-      while (row > 0 && (lines[row - 1] || "").includes("|")) row--;
-      let endRow = row;
-      while (endRow < lines.length && (lines[endRow] || "").includes("|")) endRow++;
-      if (endRow - row >= 2 && (lines[row] || "").includes("|") && isTableSep(lines[row + 1] || "")) {
-        // remove the whole table (keep the trailing newline if present)
-        const hasTable = true;
-        const before = lines.slice(0, row).join("\n");
-        const after = lines.slice(endRow).join("\n");
-        const to = (before && after) ? before + "\n" + after : (before || after);
-        commit("remove table", to, row > 0 ? before.length : 0, row > 0 ? before.length : to.length);
-        return;
-      }
-      const tbl = `| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |`;
-      const pre = (lines[cur] || "").trim() !== "" ? "\n" : "";
-      const post = "\n";
-      const to = text.slice(0, startLine) + pre + tbl + post + text.slice(endLine);
-      commit("insert table", to, startLine + pre.length, startLine + pre.length + tbl.length);
-      return;
-    }
-
-    if (kind === "codeblock") {
-      const block = text.slice(startLine, endLine);
-      const arr = block.split("\n");
-      const first = (arr[0] || "").trim(), last = (arr[arr.length - 1] || "").trim();
-      if (/^(```|~~~)/.test(first) || /^(```|~~~)/.test(last)) {
-        if (/^(```|~~~)/.test(arr[0].trim())) arr.shift();
-        if (arr.length && /^(```|~~~)/.test(arr[arr.length - 1].trim())) arr.pop();
-        const nb = arr.join("\n");
-        commit("unwrap code block", text.slice(0, startLine) + nb + text.slice(endLine), startLine, startLine + nb.length);
-        return;
-      }
-      const nb = "```\n" + block + "\n```";
-      commit("wrap code block", text.slice(0, startLine) + nb + text.slice(endLine), startLine, startLine + nb.length);
-      return;
-    }
-
-    const block = text.slice(startLine, endLine);
-    const newBlock = block.split("\n").map((l) => blockLine(kind, l)).join("\n");
-    commit("block " + kind, text.slice(0, startLine) + newBlock + text.slice(endLine), startLine, startLine + newBlock.length);
-  }
-
-  /**
-   * indentLines — indent or outdent the selected range.
-   *
-   * dir=+1 prefixes a TAB (indent), dir=-1 strips up to one leading TAB or 1–4
-   * spaces (outdent). Skips blank lines. Commits as one undo step.
-   * @param {number} dir +1 to indent, -1 to outdent.
-   */
-  function indentLines(dir) {
-    const d = activeTab, input = d.input, text = d.input.value;
-    const a = input.selectionStart, b = input.selectionEnd;
-    const s = lineBounds(text, a)[0];
-    const e = lineBounds(text, b)[1];
-    const lines = text.slice(s, e).split("\n");
-    const newLines = dir > 0
-      ? lines.map((l) => (l === "" ? l : "\t" + l))
-      : lines.map((l) => l.replace(/^(\t| {1,4})/, ""));
-    commit(dir > 0 ? "indent" : "outdent", text.slice(0, s) + newLines.join("\n") + text.slice(e), s, s + newLines.join("\n").length);
-  }
-
-  /* ---- link open (Ctrl+Click on the source, or a URL / [..](..) token) ---- */
-  /**
-   * findLinkToken — detect the link/URL at a caret position and return it.
-   *
-   * Returns `{url, text}` for:
-   *  - a `[text](url)` token at `pos` (the bracket must begin at a word boundary); or
-   *  - a bare URL (`https?://`, `mailto:`, or `www.`) at `pos` on the same line.
-   * Otherwise returns `null`.
-   * @param {string} text The full document text.
-   * @param {number} pos The caret offset to probe.
-   * @returns {{url: string, text: string}|null} The matched link or null.
-   */
-  function findLinkToken(text, pos) {
-    // [..](url)
-    {
-      const i = text.lastIndexOf("[", pos);
-      const open = i >= 0 && (i === pos || /\s|^/.test(text[i - 1] || ""));
-      if (open) {
-        const close = text.indexOf("](", i);
-        if (close !== -1 && close - i < 200) {
-          const end = text.indexOf(")", close);
-          if (end !== -1 && end - i < 400) {
-            const tok = text.slice(i, end + 1);
-            const m = tok.match(/^\[([^\]]*)\]\(([^)]*)\)$/);
-            if (m) return { url: m[2], text: m[1] };
-          }
-        }
-      }
-    }
-    // bare URL around pos
-    {
-      const L = text.slice(
-        text.lastIndexOf("\n", pos - 1) + 1,
-        (idx => idx === -1 ? text.length : idx)(text.indexOf("\n", pos)),
-      );
-      const off = pos - (text.lastIndexOf("\n", pos - 1) + 1);
-      const trimmed = L.trim();
-      if (/\S/.test(trimmed)) {
-        const m = trimmed.match(/(^|\s)((?:https?:\/\/|mailto:)[^\s]+|www\.[^\s]+)/i);
-        if (m && off > 0 && off < L.length) {
-          const urlStart = L.indexOf(m[2]);
-          if (off >= urlStart && off <= urlStart + m[2].length) {
-            return { url: m[2], text: m[2] };
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
-   * tauriOpenUrl — open a URL via Tauri's opener plugin.
-   *
-   * Browser fallback happens on the caller (openAtCaret); we return `false` when
-   * Tauri is not available or the invoke rejects so the caller can fall through.
-   * @param {string} url Absolute URL to open in the default handler.
-   * @returns {Promise<boolean>} true on success, false on unavailability/error.
-   */
-  async function tauriOpenUrl(url) {
-    if (!isTauri()) return false;
-    try {
-      await tauriOpenUrlApi(url);
-      return true;
-    } catch { return false; }
-  }
-
-  /**
-   * openAtCaret — open the link underneath (or over) the caret.
-   *
-   * Uses findLinkToken to detect a [text](url) or bare URL at the caret, then
-   * opens it in the default handler (Tauri first, browser `window.open` as a
-   * fallback for `mailto:` and any non-browser URL after normalization to https).
-   * @returns {Promise<void>}
-   */
-  async function openAtCaret() {
-    const d = activeTab, input = d.input, text = d.input.value;
-    const a = input.selectionStart;
-    const tok = findLinkToken(text, a);
-    if (!tok) return;
-    let url = tok.url;
-    if (/^mailto:/i.test(url)) {
-      if (await tauriOpenUrl(url)) return;
-      window.open(url);
-      return;
-    }
-    if (/^\/\//i.test(url)) url = "https:" + url;
-    else if (/^www\./i.test(url)) url = "https://" + url;
-    else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = "https://" + url;
-    if (await tauriOpenUrl(url)) return;
-    window.open(url, "_blank");
-  }
+  const { findLinkToken, tauriOpenUrl, openAtCaret } = createLinkHandlers({
+    getActiveDoc: () => activeTab,
+    isTauri,
+    openUrl: (url, target) => window.open(url, target),
+  });
 
   /**
    * setMode — switch the editor's view mode: split | edit | preview.
@@ -1827,103 +894,18 @@ export function createApp(root) {
     requestAnimationFrame(() => { requestAnimationFrame(apply); });
   }
 
-  /* ---- Export helpers (PDF / HTML) ----
-     Both take the current document, render it to an offscreen `.preview` node,
-     and either rasterize (PDF) or ship the DOM + standalone CSS (HTML). The
-     preview CSS is duplicated below so a standalone .html file looks like the
-     on-screen preview without needing the app's stylesheet at all — a plain
-     HTML export should be self-contained. */
-    const EXPORT_PREVIEW_CSS = `
-body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px;
-  line-height:1.65;color:#1a1d21;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#fff}
-.preview h1{font-size:30px;line-height:1.25;margin:.2em 0 .5em;font-weight:700}
-.preview h2{font-size:24px;margin:.9em 0 .5em;font-weight:700}
-.preview h3{font-size:19px;margin:.9em 0 .4em;font-weight:600}
-.preview h4{font-size:16px;margin:.9em 0 .4em;font-weight:600}
-.preview p{margin:.55em 0}
-.preview code{background:#eef1f5;color:#c25e4a;padding:1px 5px;border-radius:5px;font-size:.9em}
-.preview pre{background:#eef1f5;padding:12px 14px;border-radius:8px;overflow:auto;margin:.6em 0}
-.preview pre code{background:none;padding:0;color:#1a1d21}
-.preview blockquote{border-left:3px solid #2f6feb;margin:.6em 0;padding:2px 14px;color:#4a5568}
-.preview a{color:#2f6feb}
-.preview hr{border:0;border-top:1px solid #e2e4e9;margin:1em 0}
-.preview ul,.preview ol{padding-left:1.6em;margin:.5em 0}
-.preview li{margin:.15em 0}
-.preview img{max-width:100%;border-radius:6px}
-.preview table{border-collapse:collapse;margin:.7em 0;width:100%}
-.preview th,.preview td{border:1px solid #e2e4e9;padding:6px 12px;text-align:left}
-.preview th{background:#f5f6f8;font-weight:600}
- .preview u{text-decoration:underline}
- .preview s{text-decoration:line-through}
- .preview .mermaid-diagram{margin:.8em 0;text-align:center}
- .preview .mermaid-diagram svg{max-width:100%;height:auto}
- .preview .mermaid-diagram-err{background:#fdecec;border-left:3px solid #d73a49;padding:8px 14px;border-radius:6px;font-size:.9em;color:#b02a37;margin:.6em 0}
-    `.trim();
-
-    /**
-     * exportHtmlDoc — render `text` to a self-contained HTML document string.
-     *
-     * Wraps the marked-rendered body (plus inlined Mermaid SVGs) in a full
-     * doctype/head with the embedded EXPORT_PREVIEW_CSS so the file is
-     * standalone — no external stylesheet needed.
-     * @param {string} text The raw markdown source.
-     * @returns {Promise<string>} A complete HTML document string.
-     */
-    async function exportHtmlDoc(text) {
-      let body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
-      try { body = await renderMermaidInHtml(body); } catch { /* mermaid failed — export the raw fence */ }
-     return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
-   }
-
-    /**
-     * renderPreviewCanvas — rasterize `text` to a canvas via html2canvas.
-     *
-     * Builds an offscreen, VISIBLE node (html2canvas cannot rasterize
-     * display:none), at a fixed width so the output matches the on-screen
-     * preview in every mode. Renders Mermaid fences to SVG, waits one rAF for
-     * layout to settle, then rasterizes. Cleans up the host on completion/error.
-     * @param {string} text The raw markdown source.
-     * @param {number} [width=780] The render width in px.
-     * @returns {Promise<HTMLCanvasElement>} The rasterized canvas.
-     */
-    async function renderPreviewCanvas(text, width) {
-      // Build an offscreen, visible node: html2canvas cannot rasterize display:none
-     // content, so push it far off the viewport instead of hiding it. Render a
-     // fixed-width `.preview` clone so the output matches the on-screen preview
-     // regardless of the current Split/Edit/Preview mode (the live preview pane may
-     // be collapsed to width:0 in edit-only mode and must not be captured empty).
-     const host = document.createElement("div");
-     host.style.cssText = "position:fixed;left:-100000px;top:0;z-index:99999;pointer-events:none;";
-     const body = document.createElement("div");
-     body.className = "preview";
-     body.style.width = (width || 780) + "px";
-     body.innerHTML = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
-      host.appendChild(body);
-      document.body.appendChild(host);
-      try {
-        await renderMermaidInNode(body); // replace ```mermaid``` fences with rendered SVG
-        await new Promise((r) => requestAnimationFrame(r)); // let layout settle
-       return await html2canvas(body, { scale: 2, backgroundColor: "#ffffff", useCORS: true, logging: false, width: body.clientWidth, height: body.scrollHeight });
-     } finally {
-       document.body.removeChild(host);
-     }
-   }
-
-    /** downloadBlob — trigger a browser download of `blob`. */
-    function downloadBlob(blob, filename) {
-      const el = document.createElement("a");
-     el.href = URL.createObjectURL(blob);
-     el.download = filename;
-     el.click();
-     setTimeout(() => URL.revokeObjectURL(el.href), 1000);
-   }
-
-    /** defaultExportName — derive `<name-no-ext>.<ext>` from the doc name. */
-    function defaultExportName(d, ext) {
-      const base = (d && d.name) || "untitled";
-     const noExt = base.replace(/\.[^./\\]+$/, "");
-     return noExt + "." + ext;
-   }
+    /* ---- Export helpers (PDF / HTML) ----
+      The implementation lives in export.js; this factory wiring keeps the
+      app-owned active document, picker, and native write callbacks local. */
+  const exportHandlers = createExportHandlers({
+    getActiveDoc: () => activeTab,
+    isTauri,
+    pickPath,
+    confirmOverwriteIfNeeded,
+    writeTextFile: tauriWriteTextFile,
+    writeFile: tauriWriteFile,
+    messageModal,
+  });
 
     /**
      * exportAsHtml — render the current doc to a standalone HTML file.
@@ -1934,32 +916,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      * @returns {Promise<boolean>}
      */
     async function exportAsHtml() {
-      const d = activeTab; if (!d) return;
-      const html = await exportHtmlDoc(d.input.value);
-     const filename = defaultExportName(d, "html");
-     if (isTauri()) {
-       const { path } = await pickPath({
-         mode: "save",
-         defaultFilename: filename,
-         filters: [{ name: "HTML", extensions: ["html", "htm"] }],
-       });
-       if (!path) return false;
-       try {
-         if (!(await confirmOverwriteIfNeeded(path))) return false;
-         await tauriWriteTextFile(path, html);
-         return true;
-       } catch (e) {
-         await messageModal({
-           title: "Export failed",
-           message: "Could not save “" + path + "”: " + ((e && (e.message || e)) || "unknown error"),
-           buttons: [{ label: "OK", kind: "primary", value: "ok" }],
-           kind: "error",
-         });
-         return false;
-       }
-     }
-     downloadBlob(new Blob([html], { type: "text/html" }), filename);
-     return true;
+      return exportHandlers.exportAsHtml();
    }
 
     /**
@@ -1973,70 +930,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
      * @returns {Promise<boolean>}
      */
     async function exportAsPdf() {
-      const d = activeTab; if (!d) return;
-      const filename = defaultExportName(d, "pdf");
-      try {
-        // Capture the rendered preview to a canvas, then slice it into A4
-        // page-height bands and lay each band on (possibly many) PDF pages.
-        // We do the pagination explicitly rather than relying on jsPDF's
-        // html() API, which expects `window.html2canvas` to be a global and
-        // paginates with its own heuristics — manual slicing is deterministic
-        // and keeps the full-fidelity raster we already produced.
-        const host = await renderPreviewCanvas(d.input.value, 780);
-        const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
-        const pageW = pdf.internal.pageSize.getWidth();
-        const pageH = pdf.internal.pageSize.getHeight();
-        const ratio = pageW / host.width;       // PDF points per canvas px
-        const pxPerPage = pageH * (1 / ratio); // px that fit on one page
-        for (let y = 0, pageIndex = 0; ; y += pxPerPage, pageIndex++) {
-          const slicePx = Math.min(pxPerPage, host.height - y);
-          if (slicePx <= 0) break;
-          const slice = document.createElement("canvas");
-          slice.width = host.width;
-          slice.height = slicePx;
-          const ctx = slice.getContext("2d");
-          ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, slice.width, slice.height);
-          ctx.drawImage(host, 0, y, host.width, slicePx, 0, 0, host.width, slicePx);
-          const dataUrl = slice.toDataURL("image/jpeg", 0.92);
-          if (pageIndex > 0) pdf.addPage("a4", "portrait");
-          pdf.addImage(dataUrl, "JPEG", 0, 0, pageW, slicePx * ratio);
-          if (y + pxPerPage >= host.height) break;
-        }
-       if (isTauri()) {
-         const out = pdf.output("arraybuffer");
-         const bytes = new Uint8Array(out);
-         const { path } = await pickPath({
-           mode: "save",
-           defaultFilename: filename,
-           filters: [{ name: "PDF", extensions: ["pdf"] }],
-         });
-         if (!path) return false;
-         try {
-           if (!(await confirmOverwriteIfNeeded(path))) return false;
-           await tauriWriteFile(path, bytes);
-           return true;
-         } catch (e) {
-           await messageModal({
-             title: "Export failed",
-             message: "Could not save “" + path + "”: " + ((e && (e.message || e)) || "unknown error"),
-             buttons: [{ label: "OK", kind: "primary", value: "ok" }],
-             kind: "error",
-           });
-           return false;
-         }
-       }
-        const blob = pdf.output("blob");
-        downloadBlob(blob, filename);
-        return true;
-     } catch (e) {
-       await messageModal({
-         title: "Export failed",
-         message: "PDF export failed: " + ((e && (e.message || e)) || "unknown error"),
-         buttons: [{ label: "OK", kind: "primary", value: "ok" }],
-         kind: "error",
-       });
-       return false;
-     }
+      return exportHandlers.exportAsPdf();
    }
 
     /* ==== Export functions above; save() below unchanged ==== */
@@ -2374,47 +1268,12 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
     setBlockActive("table", onTbl);
   }
 
-  let sessionTimer = 0;
-  /** saveSessionSoon — debounce a saveSession call to ≤ one per 250 ms. */
-  function saveSessionSoon() {
-    if (sessionTimer) return;
-    sessionTimer = setTimeout(() => { sessionTimer = 0; saveSession(); }, 250);
-  }
-  /**
-   * saveSession — persist tabs + active-tab id to localStorage (v2 schema).
-   *
-   * Silently ignores writes that would exceed the 2 MB budget (huge docs). The
-   * schema is `{v, activeTab, tabs: [{id, name, text, dirty, path}]}` — the
-   * `v: 2` tag guards against loading a stale (v1) payload.
-   */
-  function saveSession() {
-    try {
-      const data = {
-        v: 2,
-        activeTab: activeTab ? activeTab.id : null,
-        tabs: TABS.map((d) => ({ id: d.id, name: d.name, text: d.input.value, dirty: d.dirty, path: d.path })),
-      };
-      const s = JSON.stringify(data);
-      if (s.length > 2 * 1024 * 1024) return;
-      localStorage.setItem(LS_KEY, s);
-    } catch { /* ignore */ }
-  }
-  /**
-   * loadSession — read the stored session from localStorage and validate it.
-   *
-   * Returns the `{v, activeTab, tabs: [...]}` object, or `null` if absent,
-   * malformed, or not the v2 schema. Never throws.
-   * @returns {(object|null)} The parsed session or null.
-   */
-  function loadSession() {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return null;
-      const d = JSON.parse(raw);
-      if (!d || d.v !== 2) return null;
-      return d;
-    } catch { return null; }
-  }
+  const { saveSession, saveSessionSoon, loadSession } = createSessionStore({
+    storage: localStorage,
+    key: "mdeditor.session.v2",
+    getActiveTabId: () => activeTab ? activeTab.id : null,
+    getTabs: () => TABS,
+  });
 
   /* ---- Tauri window close confirm ----
     * Close-requested contract (see @tauri-apps/api window.js onCloseRequested):

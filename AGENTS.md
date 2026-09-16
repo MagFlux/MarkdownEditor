@@ -242,7 +242,14 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 | Path | Role |
 |---|---|
-| `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence. Keeps the STATIC Tauri + export imports (see invariant 2) and re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
+| `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence. Keeps the STATIC Tauri imports and wires the extracted export handlers; it re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
+| `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. |
+| `src/session.js` | Versioned localStorage session persistence and debounced saves, using callbacks for the active tab and serializable tab records. |
+| `src/dialogs.js` | Centered in-app modal primitives, unsaved-changes prompts, and overwrite confirmation, with native filesystem checks supplied by callbacks. |
+| `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. |
+| `src/editing.js` | Formatting mutation factory: inline and block toggles plus indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
+| `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, Tauri gate, and browser fallback. |
+| `src/history.js` | Undo/redo history factory, with injected active-doc, typing-flush, input-suppression, and refresh callbacks. |
 | `src/render.js` | Pure overlay-highlight renderer: `esc`, `matchTok`, `renderInline`, `isTableSep`, `computeBlocks`, `lineToHtml`, `highlightToHtml` (round-trip invariant enforced by `test/test.mjs`). |
 | `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `restoreMermaid`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). Also owns the **anti-flicker SVG cache**: `_svgCache` (source → rendered `{svg, bindFunctions}`), `_inflight` (concurrent-render dedup), `restoreMermaid(node)` (synchronous cache-restore after `syncDom` rewrites the preview so an already-seen diagram NEVER flashes raw code), and `mermaidSourceKey(md)` (per-doc "did any fence change" fingerprint that `scheduleMermaidRender` uses to skip render when the source didn't change). |
 | `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `detectFormat`, `trimmedSpan`, `wrapFor`. |
@@ -348,8 +355,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     internally that would normally produce a separate chunk; we force it inline
     with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
-     `jspdf` and `html2canvas` are static top-level imports in `src/markdown.js`, and
-     `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
+    `jspdf` and `html2canvas` are static top-level imports in `src/export.js`, and
+    `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
      they're inert until called), never `await import(...)`.
 
 ## Conventions
@@ -477,7 +484,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   "outside" and closes the menu the instant the toolbar handler opens it).
 - **`test/test.mjs` polyfills the browser env for Node.** It stubs `globalThis.window`
   (with `document`, `location.href`, `atob`, `btoa`) so jsPDF's UMD wrapper and
-  html2canvas's `CacheStorage.setContext` don't throw when `markdown.js`'s static
+  html2canvas's `CacheStorage.setContext` don't throw when `export.js`'s static
   imports load under Node. If you add another browser-global library import, extend the
    same stubs there rather than making it a dynamic import.
  - **Mermaid anti-flicker cache (do not regress).** `syncDom` rewrites

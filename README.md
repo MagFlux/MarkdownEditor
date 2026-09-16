@@ -35,7 +35,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - The renderer is in `src/render.js` — `computeBlocks()` classifies each line (heading, list, quote, code, table…) and `lineToHtml()` turns a line into highlighted spans.
 - **Invariant**: stripping every `<span>` tag out of the produced HTML must reproduce the exact source text. This is what keeps the caret aligned; all renderer changes must preserve it. There is a round-trip test that checks this.
 - The DOM (the textarea) is the single source of truth. The "overlay" and the "preview" are both re-rendered from it on every change — the reverse direction never happens, so undo/redo is a simple stack of text snapshots. Inline overlay styles preserve each source character's horizontal width; code highlighting must not add horizontal padding that would shift later text.
-- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle are **statically imported** at the top of `src/markdown.js`; the PDF/HTML export libraries `jsPDF` and `html2canvas` are likewise static there, and the diagram renderer `mermaid` is a static import at the top of `src/mermaid.js` (all pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. A static import also keeps the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
+- Tauri plugins for filesystem I/O (the in-app file picker reads directories via `plugin-fs`, opens/closes windows via the core API), opening links, and window lifecycle are **statically imported** at the top of `src/markdown.js`; the PDF/HTML export libraries `jsPDF` and `html2canvas` are static imports in `src/export.js`, and the diagram renderer `mermaid` is a static import at the top of `src/mermaid.js` (all pure JS until called). Tauri calls are guarded by `isTauri()`. This is deliberate: in the real Tauri GTK webview, *dynamically* imported chunks can fail to resolve, causing `save()` to silently fall through to a no-op download and `onCloseRequested` to never register — both silently corrupt or lose work. Static imports also keep the production bundle a **single `index-*.js` file**; jsPDF ships an internal `await import("dompurify")` that would otherwise emit a second chunk, so `vite.config.js` sets `build.rollupOptions.output.codeSplitting: false`. The **real** Tauri gate is `isTauri()`: this is a Vite/bundler build (no `withGlobalTauri`), so Tauri injects `window.__TAURI_INTERNALS__`, **not** `window.__TAURI__`; `isTauri()` must detect the former or every native branch falls through to the browser no-op in the actual app (see the gotchas below).
 
 ---
 
@@ -48,7 +48,14 @@ MarkdownEditor/
 ├── package.json
 ├── src/
 │   ├── main.js                 # bootstrap: createApp(#app) + sample content
-│   ├── markdown.js             # the app: createApp() — tabs, undo, keybinds, save/open, DnD, modals; static Tauri + export imports
+│   ├── markdown.js             # app shell: createApp() — tabs, undo, keybinds, save/open, DnD, modals; static Tauri imports
+│   ├── export.js               # static PDF/HTML export pipeline and native/browser save adapters
+│   ├── session.js              # versioned localStorage persistence and debounced saves
+│   ├── dialogs.js              # centered in-app modals and overwrite confirmation
+│   ├── picker.js               # in-app Save/Open filesystem picker and navigation
+│   ├── editing.js              # formatting mutations and indentation factory
+│   ├── links.js                # link detection and Tauri/browser opening factory
+│   ├── history.js              # undo/redo history factory
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
 │   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import) + anti-flicker SVG cache
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
@@ -82,7 +89,7 @@ MarkdownEditor/
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
-`src/markdown.js` is the largest file — the `createApp()` app core (tabs, undo, keybinds, save/open, DnD, native/IPC wiring). The pure helpers have since been factored out into `src/render.js` (highlighter), `src/mermaid.js` (diagrams), `src/format.js` (selection/format detect), and `src/paste.js` (HTML→Markdown). All are static cross-file imports, so the production build still emits the required single `dist/assets/index-*.js` (no runtime code-split chunks). Further splitting is safe as long as the single-bundle invariant holds and no dynamic `import()` is introduced.
+`src/markdown.js` is the app shell — the `createApp()` core (tabs, keybinds, save/open, DnD, native/IPC wiring). Formatting mutations, link handling, and undo/redo are factored into the static factories `src/editing.js`, `src/links.js`, and `src/history.js`; the PDF/HTML pipeline lives in `src/export.js`, and versioned session persistence lives in `src/session.js`. All are static cross-file imports, so the production bundle still emits the required single `dist/assets/index-*.js` (no runtime code-split chunks). Further splitting is safe as long as the single-bundle invariant holds and no dynamic `import()` is introduced.
 
 ---
 
