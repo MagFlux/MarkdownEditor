@@ -1795,6 +1795,38 @@ export function createApp(root) {
     }
   }
 
+  /**
+   * toggleTheme — switch the app theme without moving the visible document.
+   *
+   * Records each pane's scroll ratio before the theme CSS reflows the layout,
+   * then restores those ratios after the repaint has settled. The value-based
+   * echo guards keep the restore from being treated as a user scroll.
+   */
+  function toggleTheme() {
+    const doc = activeTab;
+    const oldTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "";
+    const nextTheme = oldTheme === "dark" ? "" : "dark";
+    const ratio = (sc) => {
+      const max = sc.scrollHeight - sc.clientHeight;
+      return max > 0 ? sc.scrollTop / max : 0;
+    };
+    const keep = doc ? { editor: ratio(doc.editorScroll), preview: ratio(doc.previewScroll) } : null;
+    document.documentElement.dataset.theme = nextTheme;
+    if (!doc || !keep) return;
+    const apply = () => {
+      if (doc !== activeTab || document.documentElement.dataset.theme !== nextTheme) return;
+      for (const [sc, fraction, key] of [[doc.editorScroll, keep.editor, "__suppE"], [doc.previewScroll, keep.preview, "__suppP"]]) {
+        const max = sc.scrollHeight - sc.clientHeight;
+        if (max <= 0) continue;
+        const value = fraction * max;
+        doc[key] = { deadline: performance.now() + ECHO_MS, value };
+        sc.scrollTop = value;
+      }
+      doc.__lead = null;
+    };
+    requestAnimationFrame(() => { requestAnimationFrame(apply); });
+  }
+
   /* ---- Export helpers (PDF / HTML) ----
      Both take the current document, render it to an offscreen `.preview` node,
      and either rasterize (PDF) or ship the DOM + standalone CSS (HTML). The
@@ -2514,7 +2546,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
         // behavior — so we deliberately fall through to it (do NOT return).
         if (next === "preview") return;
       }
-      else if (action === "theme") { const dark = document.documentElement.dataset.theme === "dark"; document.documentElement.dataset.theme = dark ? "" : "dark"; }
+      else if (action === "theme") { toggleTheme(); return; }
       else if (action === "menu") { // toggle; stop the app-level ctrl+click/escape from stealing focus
         const open = !menuDropdown.classList.contains("open");
         setMenuOpen(open);

@@ -23,7 +23,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Enter** auto-continues list items and numbered lists; press Enter on an empty list item to exit the list
 - **Session persistence** — tabs and their contents are saved to `localStorage` so a crash or close does not lose work
 - **Unsaved-changes guard** — confirms before closing a tab or window with uncommitted edits
-- **Light / Dark** theme
+- **Light / Dark** theme; switching themes preserves the current vertical position in both editor and preview panes.
 - Saves & opens from the filesystem via Tauri's `fs` plugin, using an **in-app file picker** (centered over the window; the native rfd GTK picker drifts off-window) with a browser-file-input fallback so the web app still works in the browser. The picker has a clickable path breadcrumb plus an **always-visible Home button** (and Up) so you can jump back to your home directory no matter how far you have navigated. Hidden (dot-prefixed) folders are reachable on Unix — the fs scope's `**` glob matches dot-path segments (via `plugins.fs.requireLiteralLeadingDot: false` in `src-tauri/tauri.conf.json`), so you can open/save inside `~/.config`, `~/dev/.github`, etc.
 - Native saves and exports check the destination first and show an in-app **Overwrite existing file?** prompt before replacing an existing file. Cancel leaves the document dirty and performs no write.
 
@@ -77,6 +77,7 @@ MarkdownEditor/
     ├── verifyModeFocus.mjs     # mode-click focus skipped only entering preview (13 cases)
     ├── verifyTabClick.mjs      # redundant tab-click is a no-op (6 cases)
     ├── verifyTabScroll.mjs     # cross-tab scroll persistence (7 cases)
+    ├── verifyThemeScroll.mjs   # theme-switch scroll preservation (4 cases)
     ├── verifyMermaidFlicker.mjs # mermaid anti-flicker: keystroke outside fence does not flash raw code (7 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```

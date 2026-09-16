@@ -157,6 +157,8 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                            # openAtTop), stamping the value-based echo guard so the restore
                             # reads as a programmatic write (7 cases: scrollability probe +
                             # Alpha@50% round trip, Beta@25% independence, no cross-tab clobber).
+ npm run verify-themescroll # Theme-switch scroll preservation: changing light/dark preserves
+                            # the current editor and preview scroll ratios in both directions (4 cases).
    npm run verify-mermaidflicker # Mermaid anti-flicker: a keystroke in prose OUTSIDE a fence
    # must not flash raw code — the already-rendered holder is present in the SAME
    # synchronous tick as the keystroke (restoreMermaid from _svgCache); a keystroke
@@ -183,7 +185,7 @@ After any edit to `src/`, **run `npm run build`** and confirm the production bun
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
 see the invariant below. Then re-run the fourteen verify/test steps (`verify`, `verify-undo`,
 `verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-scroll`,
-`verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-mermaidflicker`, `verify-tauri`, and `npm test`); all must be green.
+`verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-themescroll`, `verify-mermaidflicker`, `verify-tauri`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
 ## CI/CD (GitHub Actions)

@@ -20,6 +20,7 @@
     "verify-modefocus": "node test/verifyModeFocus.mjs",
     "verify-tabclick": "node test/verifyTabClick.mjs",
     "verify-tabscroll": "node test/verifyTabScroll.mjs",
+    "verify-themescroll": "node test/verifyThemeScroll.mjs",
     "verify-mermaidflicker": "node test/verifyMermaidFlicker.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "tauri": "tauri",
