@@ -261,7 +261,7 @@ body {
   color: var(--fg-dim); flex: none; user-select: none; }
 .savedlg .picker-pathbar .ctrl svg { width: 14px; height: 14px; display: block; }
 .savedlg .picker-pathbar .ctrl:hover { background: var(--bg-hover); color: var(--fg); }
- .savedlg .picker-list { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border);
+ .savedlg .picker-list { list-style: none; margin: 4px 0 0; padding: 4px; border: 1px solid var(--border);
    border-radius: 8px; height: 260px; overflow-y: auto; background: var(--bg-panel); }
 .savedlg .picker-list li { padding: 5px 8px; border-radius: 6px; cursor: pointer;
   font-size: 13px; display: flex; align-items: center; gap: 8px; color: var(--fg); }
