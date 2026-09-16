@@ -25,6 +25,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Unsaved-changes guard** — confirms before closing a tab or window with uncommitted edits
 - **Light / Dark** theme
 - Saves & opens from the filesystem via Tauri's `fs` plugin, using an **in-app file picker** (centered over the window; the native rfd GTK picker drifts off-window) with a browser-file-input fallback so the web app still works in the browser. The picker has a clickable path breadcrumb plus an **always-visible Home button** (and Up) so you can jump back to your home directory no matter how far you have navigated. Hidden (dot-prefixed) folders are reachable on Unix — the fs scope's `**` glob matches dot-path segments (via `plugins.fs.requireLiteralLeadingDot: false` in `src-tauri/tauri.conf.json`), so you can open/save inside `~/.config`, `~/dev/.github`, etc.
+- Native saves and exports check the destination first and show an in-app **Overwrite existing file?** prompt before replacing an existing file. Cancel leaves the document dirty and performs no write.
 
 ---
 
@@ -314,7 +315,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-tabclick` | Headless redundant-tab-click test: an already-active tab re-click is a no-op (scroll preserved, preview DOM untouched, mermaid not re-rendered) (6 cases, needs Playwright) |
 | `npm run verify-tabscroll` | Headless cross-tab scroll-persistence test: a tab's editor + preview scroll survive leaving and returning (no cross-tab clobber) (7 cases, needs Playwright) |
  | `npm run verify-mermaidflicker` | Headless mermaid anti-flicker test: a keystroke in prose outside a fence does NOT flash raw code — the holder is restored synchronously from cache in the same tick; a keystroke inside the fence still re-renders (7 cases, needs Playwright) |
-| `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, 43 cases incl. picker Home button + hidden-folder navigation) |
+| `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, overwrite confirmation, picker Home button + hidden-folder navigation) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |
 

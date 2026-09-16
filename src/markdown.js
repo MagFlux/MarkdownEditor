@@ -26,7 +26,7 @@ import { marked } from "marked";
    browser (they only touch window.__TAURI_INTERNALS__ when called), so importing
    them here is browser-safe. All uses below stay guarded by isTauri(). */
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile } from "@tauri-apps/plugin-fs";
+import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists } from "@tauri-apps/plugin-fs";
 import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
 import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
 
@@ -781,6 +781,35 @@ export function createApp(root) {
 
      return modal.promise;
    }
+
+  /**
+   * confirmOverwrite — ask before replacing an existing native file.
+   * @param {string} path The file that is about to be replaced.
+   * @returns {Promise<boolean>} true to continue, false to leave the file untouched.
+   */
+  async function confirmOverwrite(path) {
+    const choice = await messageModal({
+      title: "Overwrite existing file?",
+      message: "“" + path + "” already exists. Replace it?",
+      buttons: [
+        { label: "Cancel", value: false },
+        { label: "Overwrite", kind: "danger", value: true },
+      ],
+      kind: "warn",
+    });
+    return choice === true;
+  }
+
+  /**
+   * confirmOverwriteIfNeeded — check a native destination and prompt before replacing it.
+   * @param {string} path The destination file.
+   * @returns {Promise<boolean>} true when the destination may be written.
+   */
+  async function confirmOverwriteIfNeeded(path) {
+    if (!isTauri()) return true;
+    if (!(await tauriExists(path))) return true;
+    return confirmOverwrite(path);
+  }
 
   /**
    * pickPath — in-app Save-As / Open file chooser (folder browser + name row).
@@ -1884,6 +1913,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
        });
        if (!path) return false;
        try {
+         if (!(await confirmOverwriteIfNeeded(path))) return false;
          await tauriWriteTextFile(path, html);
          return true;
        } catch (e) {
@@ -1950,6 +1980,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
          });
          if (!path) return false;
          try {
+           if (!(await confirmOverwriteIfNeeded(path))) return false;
            await tauriWriteFile(path, bytes);
            return true;
          } catch (e) {
@@ -2002,6 +2033,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
       try {
         // Known location: write straight back to that file.
         if (d.path) {
+          if (!(await confirmOverwriteIfNeeded(d.path))) return false;
           await tauriWriteTextFile(d.path, t);
           d.dirty = false; syncDom(d); updateStatus(d); saveSession();
           return true;
@@ -2017,6 +2049,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
           // already communicates it; just leave the tab dirty and stay put.
           return false;
         }
+        if (!(await confirmOverwriteIfNeeded(p))) return false;
         await tauriWriteTextFile(p, t);
         d.name = name || d.name; d.path = p; d.dirty = false;
         syncDom(d); updateStatus(d); saveSession();

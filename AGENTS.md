@@ -162,7 +162,8 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
    # synchronous tick as the keystroke (restoreMermaid from _svgCache); a keystroke
    # INSIDE a fence still re-renders after the 120 ms debounce. (7 cases.)
    npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
-                         # real api/IPC (43 cases) — save→in-app picker→write+close,
+                         # real api/IPC (49 cases) — save→in-app picker→write+close,
+                        # overwrite-confirmation→write, overwrite-cancel→stays,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
                         # navigate-into-forbidden-dir→crumb stays on last readable,
@@ -253,7 +254,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
 | `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. Also `plugins.fs.requireLiteralLeadingDot: false` — lets the fs scope `**` match hidden (dot) path segments on Unix so the picker can open `~/.config` etc. (see invariant 7). |
- | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
+ | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-exists`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |

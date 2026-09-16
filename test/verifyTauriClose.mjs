@@ -68,7 +68,7 @@ function installInternals() {
   let cbid = 0;
   const callbacks = new Map();
   const eventCbs = new Map();
-    const S = { ipc: [], writes: [], destroyed: false, firedClose: 0, homeDir: 0, readDir: [] , readText: [], failingDirs: [] };
+    const S = { ipc: [], writes: [], destroyed: false, firedClose: 0, homeDir: 0, readDir: [] , readText: [], failingDirs: [], existing: ["/home/user/existing.md"] };
    /** emitClose — increment the close counter and fire all close-requested listeners. */
    function emitClose() {
       S.firedClose++;
@@ -111,6 +111,8 @@ function installInternals() {
             { name: "existing.md", isDirectory: false, isFile: true, isSymlink: false },
           ];
         }
+        case "plugin:fs|exists":
+          return S.existing.includes(args && args.path);
         case "plugin:fs|write_text_file": {
           let bytes = args;
           if (bytes instanceof ArrayBuffer) bytes = new Uint8Array(bytes);
@@ -233,6 +235,38 @@ await scenario("A2: SAVE → picker cancelled → stays open", async ({ page, st
   // the cancel already communicated it. Assert no extra info/error modal remains.
   const hasCancelMsg = !!(await page.$(".savedlg .savedlg-msg"));
   ok("A2d picker cancel: no redundant 'save cancelled' message modal", hasCancelMsg === false);
+});
+
+// ---- A3: Save-As existing file -> overwrite confirmation gates the write ----
+await scenario("A3: existing Save-As file requires overwrite confirmation", async ({ page, st, emit, ok, wait }) => {
+  await page.evaluate(() => { const a = window.editor.activeTab; a.input.value = "replacement"; a.dirty = true; a.name = "Replace.md"; a.path = null; });
+  await emit();
+  await page.waitForSelector(".savedlg", { timeout: 2500 });
+  await byRole(page, "button", "Save", true).click();
+  await page.waitForSelector(".picker-name", { timeout: 2500 });
+  await page.locator(".picker-list li", { hasText: "existing.md" }).first().click();
+  await page.locator(".savedlg button.primary").click();
+  await page.waitForSelector('.savedlg h3:has-text("Overwrite existing file?")', { timeout: 2500 });
+  let S = await st();
+  ok("A3a overwrite prompt appears before writing", S.writes.length === 0, JSON.stringify(S));
+  await byRole(page, "button", "Cancel", true).click();
+  await wait(200);
+  S = await st();
+  ok("A3b overwrite cancel leaves the window open", S.destroyed === false, "destroyed=" + S.destroyed);
+  ok("A3c overwrite cancel leaves the file untouched", S.writes.length === 0, JSON.stringify(S.writes));
+  ok("A3d overwrite cancel keeps the tab dirty", await page.evaluate(() => window.editor.activeTab.dirty === true));
+  await emit();
+  await page.waitForSelector(".savedlg", { timeout: 2500 });
+  await byRole(page, "button", "Save", true).click();
+  await page.waitForSelector(".picker-name", { timeout: 2500 });
+  await page.locator(".picker-list li", { hasText: "existing.md" }).first().click();
+  await page.locator(".savedlg button.primary").click();
+  await page.waitForSelector('.savedlg h3:has-text("Overwrite existing file?")', { timeout: 2500 });
+  await byRole(page, "button", "Overwrite", true).click();
+  await wait(200);
+  S = await st();
+  ok("A3e overwrite confirmation permits the write", S.writes.length === 1, JSON.stringify(S.writes));
+  ok("A3f overwrite confirmation closes the window", S.destroyed === true, "destroyed=" + S.destroyed);
 });
 
 // ---- B: dirty, choose CANCEL at save-discard → window stays, nothing written ----
