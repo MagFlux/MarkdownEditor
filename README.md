@@ -307,9 +307,10 @@ every push (saves runner compute). It runs on:
 
 ### Cut a release
 
-1. Bump `version` in `src-tauri/tauri.conf.json` (e.g. `0.1.0` → `0.1.1`), commit & push to `main`.
-2. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` (must match the version in `tauri.conf.json` plus a `v` prefix) → **Publish** (or `git tag v0.1.1 && git push --tags`).
-3. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0` (installers) plus a portable-packaging step (no extra compile — re-packages the already-built output, uploaded with `gh release upload`):
+The git tag is the single source of truth for the version — there are no version files to bump by hand (`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` keep a `0.0.0` placeholder; CI injects the tag version into both before `tauri build`).
+
+1. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` → **Publish** (or `git tag v0.1.1 && git push --tags`).
+2. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0` (installers) plus a portable-packaging step (no extra compile — re-packages the already-built output, uploaded with `gh release upload`):
    - **Windows** (`windows-latest`) → `nsis` (`.exe`) + `msi` + `*-windows-x64-portable.zip` (raw `markdown-editor.exe`, no install)
    - **macOS** (`macos-14`) → `dmg` + `*-macos-aarch64-portable.zip` (the `.app` bundle via `ditto`, no install)
    - **Linux** (`ubuntu-22.04`) → `appimage` + `deb` + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary)

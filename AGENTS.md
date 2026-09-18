@@ -216,7 +216,11 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
    Gated on `test` passing **and** `github.event_name == 'release'` (so it
    never runs on PRs or plain pushes). Installers + portables attach to the exact
-   `v<version>` release that was just created — see below for the recipe.
+   release tag that was just created. The tag (`vX.Y.Z`) is the version: the
+   build job strips the `v` and injects it into `src-tauri/tauri.conf.json`
+   and `src-tauri/Cargo.toml` (both keep a `0.0.0` placeholder in the repo)
+   before `tauri build`, so the bundled app/installers carry the tag.
+   Never bump a version file by hand — just cut the release.
 
 ### `tauri-action` inputs (what actually works)
 
@@ -225,7 +229,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 | `projectPath` | `.` (repo root) | The action uses this as the **cwd** for both `tauri build` and `beforeBuildCommand: npm run build`. It also auto-discovers `src-tauri/` by globbing for `tauri.conf.json` (glob: `**/tauri.conf.json`). Setting it to `src-tauri` would make both commands run inside `src-tauri/` where there is no `package.json` → instant failure. |
 | `tauriScript` | `npx tauri` | Bare `tauri` is not on PATH. `npx` resolves `@tauri-apps/cli` from the root `node_modules/`. The action's auto-detect would work too, but being explicit avoids the `install -g` fallback. |
 | `args` | `--bundles <list>` | Passes through to `tauri build`. Without it, all platforms would attempt `targets: "all"`. |
-| `tagName` | `v__VERSION__` | `__VERSION__` is replaced by the action with the version from `tauri.conf.json` (`0.1.0` today). The `v` prefix is literal. |
+| `tagName` | `${{ github.event.release.tag_name }}` | The release tag itself (e.g. `v0.1.1`) — the tag is the version, no `__VERSION__` lookup. |
 | `releaseDraft` | `true` | Keeps the release hidden until you manually publish. |
 
 **Do NOT add**: `project` (rejected — use `projectPath`), `artifactName` (rejected),
