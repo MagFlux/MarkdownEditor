@@ -70,7 +70,7 @@ MarkdownEditor/
 │   ├── src/main.rs             # tauri::Builder + plugin init
 │   └── icons/                  # .png / .ico / .icns bundle icons
 ├── .github/workflows/ci.yml    # CI: test suite + 3-OS build → draft GitHub Release
-├── LICENSE                     # AGPL-3.0 (copyright MagFlux, 2026)
+├── LICENSE                     # AGPL-3.0 (copyright Project Contributors, 2026)
 ├── NOTICE                      # third-party dependency notices
 └── test/
     ├── test.mjs                # round-trip invariant (no server, instant)
@@ -350,7 +350,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 
 ## License
 
-- **License**: [AGPL-3.0](LICENSE) — copyright 2026 MagFlux. We chose a strong copyleft deliberately: everything we ship, and anything run over a network, stays free and open-source. You may not take this code (or a fork) into a proprietary product.
+- **License**: [AGPL-3.0](LICENSE) — copyright 2026 Project Contributors. We chose a strong copyleft deliberately: everything we ship, and anything run over a network, stays free and open-source. You may not take this code (or a fork) into a proprietary product.
 - **Third-party notice**: [NOTICE](NOTICE) lists bundled dependencies and which license each is under — permissive (MIT / Apache-2.0 / BSD, incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0) — plus the test-only `playwright` (Apache-2.0) and the Linux-only system WebKitGTK runtime (LGPL, not bundled).
 - **Compatibility note**: the top-level AGPL-3.0 license is the umbrella. Permissive dependencies join the combined work under AGPL terms while keeping their own notice; the compatible copyleft exceptions (`elkjs`, EPL-2.0) and the unmodified shared runtime WebKitGTK (LGPL) do not conflict with AGPL-3.0. The **LGPL** system WebKitGTK we merely link to is a System Library we don't bundle, and it therefore does not force any additional copyleft on this project.
 - **Adding a dependency?** Per [AGENTS.md](AGENTS.md), prefer permissive (MIT / Apache-2.0 / BSD) libraries. Copyleft (GPL-3.0, AGPL-3.0, EPL-2.0, MPL-2.0, LGPL-3.0) is *compatible with AGPL-3.0* but should still be a deliberate, user-reviewed call. Source-available / non-free (SSPL, BUSL, Elastic, Commons Clause) and any license with further restrictions AGPL §7/§10 treats as incompatible must be flagged to the maintainer before use. Then update `NOTICE` in the same change.

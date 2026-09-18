@@ -45,7 +45,7 @@ confirm `LICENSE` still correctly describes the project. Never let `NOTICE` desc
 
 ## Licensing (mandatory for every dependency change)
 
-This project is **AGPL-3.0-licensed** (see `LICENSE`; copyright MagFlux, 2026). We chose
+This project is **AGPL-3.0-licensed** (see `LICENSE`; copyright Project Contributors, 2026). We chose
 **strong copyleft deliberately**: *everything we ship, and anything run over a network,
 stays free and open-source* — no one can take our code (or a fork served by it) and
 produce a closed-source product. That is heavier than MIT (we can no longer release a
@@ -269,7 +269,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |
-| `LICENSE` | **AGPL-3.0** — the license for *this* project's code (copyright MagFlux, 2026). |
+| `LICENSE` | **AGPL-3.0** — the license for *this* project's code (copyright Project Contributors, 2026). |
 | `NOTICE` | Third-party dependency notices: which bundled deps are permissive (MIT vs. Apache-2.0, incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
 
 ## Hard invariants (do not regress)
