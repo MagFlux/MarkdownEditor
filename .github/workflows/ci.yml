@@ -1,8 +1,13 @@
 # CI for MarkdownEditor — a Tauri v2 desktop app (Rust shell + JS editor).
 #
-# Two jobs:
+# Three jobs:
 # Computed only on PR + Release (not on every push, to save runner time).
 #
+#   0. validate-tag — fail-fast gate on `release.created`: the tag must be
+#              `vX.Y.Z` or `vX.Y.Z-N` (numeric N <= 65535). Text prereleases
+#              like `-rc.1` fail the Windows MSI bundle (WiX requires
+#              numeric-only prerelease), so we reject them in seconds before
+#              `test`/`build` burn any runner time. No-op on PRs.
 #   1. test  — runs the full Node/Playwright verification suite on Ubuntu.
 #              Fast feedback, no Rust. Runs on every PR and on release.
 #   2. build — builds platform installers + portable standalone archives
@@ -53,9 +58,40 @@ permissions:
   contents: write
 
 jobs:
+  # --------------------------------------------- fail-fast tag gate (release)
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check tag is MSI-compatible semver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "release" ]; then
+            echo "Not a release event — skipping tag check."
+            exit 0
+          fi
+          TAG="${{ github.event.release.tag_name }}"
+          echo "Release tag: $TAG"
+          # Allowed: vX.Y.Z or vX.Y.Z-N with numeric N (MSI/WiX rejects
+          # non-numeric prereleases like -rc.1, so fail here in seconds
+          # instead of after the 5-minute Windows compile).
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]; then
+            echo "::error::Invalid release tag '$TAG'. Use vX.Y.Z (e.g. v0.1.4) or vX.Y.Z-N with numeric N <= 65535 (e.g. v0.1.4-1). Text prereleases like -rc.1 fail the Windows MSI build (WiX requires numeric-only prerelease <= 65535)."
+            exit 1
+          fi
+          if [[ "$TAG" == *-* ]]; then
+            PRE="${TAG#*-}"
+            if [ "$PRE" -gt 65535 ]; then
+              echo "::error::Prerelease number $PRE exceeds MSI limit 65535."
+              exit 1
+            fi
+          fi
+          echo "Tag OK: $TAG"
+
   # ------------------------------------------------------------------ tests
   test:
     name: Test (round-trip + Playwright UI + native-path)
+    needs: validate-tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +143,7 @@ jobs:
   # ----------------------------------------------------- build + release
   build:
     name: Build ${{ matrix.os }} + release
-    needs: test
+    needs: [validate-tag, test]
     # Build installers ONLY when a Release is cut (event `release.created`) —
     # not on PRs and not on plain pushes to main. That's the whole point of
     # the new trigger set: saves runner compute on every commit.

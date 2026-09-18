@@ -309,8 +309,8 @@ every push (saves runner compute). It runs on:
 
 The git tag is the single source of truth for the version — there are no version files to bump by hand (`src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` keep a `0.0.0` placeholder; CI injects the tag version into both before `tauri build`).
 
-1. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` → **Publish** (or `git tag v0.1.1 && git push --tags`).
-2. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0` (installers) plus a portable-packaging step (no extra compile — re-packages the already-built output, uploaded with `gh release upload`):
+1. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` → **Publish** (or `git tag v0.1.1 && git push --tags`). Allowed tags: `vX.Y.Z` (e.g. `v0.1.4`) or `vX.Y.Z-N` with numeric `N <= 65535` (e.g. `v0.1.4-1`). Text prereleases like `v0.1.4-rc.1` are rejected — the Windows MSI bundler (WiX) requires a numeric-only prerelease.
+2. On `release: created`, a `validate-tag` gate runs first (seconds, fails fast on a bad tag before any build time is spent), then the `test` job. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0` (installers) plus a portable-packaging step (no extra compile — re-packages the already-built output, uploaded with `gh release upload`):
    - **Windows** (`windows-latest`) → `nsis` (`.exe`) + `msi` + `*-windows-x64-portable.zip` (raw `markdown-editor.exe`, no install)
    - **macOS** (`macos-14`) → `dmg` + `*-macos-aarch64-portable.zip` (the `.app` bundle via `ditto`, no install)
    - **Linux** (`ubuntu-22.04`) → `appimage` + `deb` + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary)

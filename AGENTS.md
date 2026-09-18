@@ -200,6 +200,8 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
 **Jobs**:
 
+ 0. **`validate-tag`** (ubuntu-latest) — fail-fast gate on `release.created`: the tag must match `^v\d+\.\d+\.\d+(-\d+)?$` with numeric prerelease `<= 65535` (MSI/WiX rejects text like `-rc.1`). Rejects bad tags in seconds before `test`/`build` burn runner time. No-op on PRs (but `test` still `needs` it, so it runs as a fast skip there).
+
  1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
       cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
        `verify-toolbar` → `verify-paste` → `verify-export` → `verify-scroll` →
@@ -214,7 +216,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
    - `macos-14`: `--bundles dmg` + `*-macos-aarch64-portable.zip` (the `.app` is extracted from the `.dmg` via `hdiutil attach` + `ditto -c -k --keepParent` — `dmg` alone leaves no loose `.app` on disk, so the step mounts the dmg and copies whatever `*.app` it contains)
    - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg) + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary; NOT fully self-contained — Tauri links WebKitGTK dynamically, so the target machine must provide the runtime libs `libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2` — the AppImage remains the most portable Linux option, the `.deb` pulls these in automatically)
 
-   Gated on `test` passing **and** `github.event_name == 'release'` (so it
+   Gated on `validate-tag` + `test` passing **and** `github.event_name == 'release'` (so it
    never runs on PRs or plain pushes). Installers + portables attach to the exact
    release tag that was just created. The tag (`vX.Y.Z`) is the version: the
    build job strips the `v` and injects it into `src-tauri/tauri.conf.json`
