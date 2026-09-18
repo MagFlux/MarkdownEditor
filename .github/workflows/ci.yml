@@ -5,15 +5,25 @@
 #
 #   1. test  — runs the full Node/Playwright verification suite on Ubuntu.
 #              Fast feedback, no Rust. Runs on every PR and on release.
-#   2. build — builds platform installers (one per OS) and attaches them to
+#   2. build — builds platform installers + portable standalone archives
+#              (one per OS) and attaches them to
 #              a GitHub Release. Runs only after `test` is green AND only on
 #              the `release.created` event (i.e. when you actually cut a release).
 #              Skipped on PRs and plain pushes to main.
 #
+#              Installers come from `tauri-action` (`--bundles ...` per OS).
+#              Portables are packaged from the already-built output in a
+#              follow-up step (no extra compile): Windows zips the raw
+#              `markdown-editor.exe`, Linux tar.gz's the raw `markdown-editor`
+#              binary (AppImage remains the most portable Linux option — the
+#              raw binary still needs system WebKitGTK), macOS zips the
+#              `Markdown Editor.app` bundle via `ditto`. Each archive is then
+#              uploaded to the same release with `gh release upload`.
+#
 # How to cut a release: bump `version` in `src-tauri/tauri.conf.json`, commit
 # & push, then create a Release at that exact `v<version>` tag (e.g. `v0.1.0`)
 # via the Releases page. CI picks it up on `release.created`, tests, builds all
-# three platforms, and attaches the installers to that release.
+# three platforms, and attaches the installers + portables to that release.
 
 name: CI
 
@@ -154,11 +164,11 @@ jobs:
           tagName: v__VERSION__
           releaseName: "Markdown Editor"
           releaseBody: |
-            Cross-platform installers:
+            Cross-platform installers + portable standalones:
 
-            - **Windows**: `*_x64-setup.exe` (NSIS) / `*_x64_en-US.msi`
-            - **macOS**: `*_aarch64.dmg` (Apple Silicon)
-            - **Linux**: `*_amd64.AppImage` / `*_amd64.deb`
+            - **Windows**: `*_x64-setup.exe` (NSIS) / `*_x64_en-US.msi` / `*-windows-x64-portable.zip` (standalone `.exe`, no install)
+            - **macOS**: `*_aarch64.dmg` (Apple Silicon) / `*-macos-aarch64-portable.zip` (standalone `.app`, no install)
+            - **Linux**: `*_amd64.AppImage` / `*_amd64.deb` / `*-linux-x86_64-portable.tar.gz` (standalone binary — needs system WebKitGTK)
 
             Built by GitHub Actions.
           # If the action ends up *creating* a new release (e.g. the user's
@@ -166,3 +176,42 @@ jobs:
           # `tagName: v__VERSION__` lookup missed it), make it a draft so
           # we don't silently publish an unreleased build.
           releaseDraft: true
+
+      # Portable standalones: re-package the already-built output from the
+      # step above (no extra compile). Each OS zips/tars its raw binary and
+      # uploads it to the SAME release via `gh release upload`.
+      # Caveats (documented in the release body + README):
+      # - Linux raw binary still needs system WebKitGTK/GTK — the AppImage
+      #   remains the most portable Linux option.
+      # - macOS/Windows portables are unsigned (Gatekeeper/SmartScreen warn).
+      - name: Package Windows portable (standalone .exe .zip)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ver = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $zip = "markdown-editor-$ver-windows-x64-portable.zip"
+          Compress-Archive -Path src-tauri/target/release/markdown-editor.exe -DestinationPath $zip -Force
+          echo "PORTABLE_ARCHIVE=$zip" >> $env:GITHUB_ENV
+
+      - name: Package Linux portable (standalone binary .tar.gz)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          ARCHIVE="markdown-editor-$VER-linux-x86_64-portable.tar.gz"
+          tar -czf "$ARCHIVE" -C src-tauri/target/release markdown-editor
+          echo "PORTABLE_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Package macOS portable (standalone .app .zip)
+        if: matrix.os == 'macos-14'
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          ARCHIVE="Markdown-Editor-$VER-macos-aarch64-portable.zip"
+          # ditto preserves .app resource forks / quarantine attrs where zip would not.
+          ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Markdown Editor.app" "$ARCHIVE"
+          echo "PORTABLE_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Upload portable to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "$PORTABLE_ARCHIVE" --clobber

@@ -207,13 +207,15 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
     Runs on PR and on release.
 
 2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
-   packages installers via `tauri-apps/tauri-action@v0`:
-   - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`)
-   - `macos-14`: `--bundles dmg`
-   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg)
+   packages installers via `tauri-apps/tauri-action@v0`, then re-packages a
+   portable standalone archive per OS from the already-built output (no extra
+   compile) and uploads it to the same release via `gh release upload`:
+   - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`) + `*-windows-x64-portable.zip` (raw `markdown-editor.exe` zipped via `Compress-Archive`)
+   - `macos-14`: `--bundles dmg` + `*-macos-aarch64-portable.zip` (the `.app` bundle zipped via `ditto -c -k --keepParent`)
+   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg) + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary; still needs system WebKitGTK — the AppImage remains the most portable Linux option)
 
    Gated on `test` passing **and** `github.event_name == 'release'` (so it
-   never runs on PRs or plain pushes). Installers attach to the exact
+   never runs on PRs or plain pushes). Installers + portables attach to the exact
    `v<version>` release that was just created — see below for the recipe.
 
 ### `tauri-action` inputs (what actually works)
@@ -268,7 +270,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
  | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-exists`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
 | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
-| `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → draft release). See § CI/CD. |
+| `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → installers + portable archives → draft release). See § CI/CD. |
 | `LICENSE` | **AGPL-3.0** — the license for *this* project's code. |
 | `NOTICE` | Third-party dependency notices: which bundled deps are permissive (MIT vs. Apache-2.0, incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
 

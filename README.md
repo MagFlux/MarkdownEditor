@@ -69,7 +69,7 @@ MarkdownEditor/
 │   ├── capabilities/default.json  # permissions (fs, dialog, opener)
 │   ├── src/main.rs             # tauri::Builder + plugin init
 │   └── icons/                  # .png / .ico / .icns bundle icons
-├── .github/workflows/ci.yml    # CI: test suite + 3-OS build → draft GitHub Release
+├── .github/workflows/ci.yml    # CI: test suite + 3-OS build (installers + portables) → draft GitHub Release
 ├── LICENSE                     # AGPL-3.0
 ├── NOTICE                      # third-party dependency notices
 └── test/
@@ -280,18 +280,18 @@ every push (saves runner compute). It runs on:
 | Event | Triggers | What it does |
 |---|---|---|
 | A new or updated PR | `pull_request: opened, synchronize, reopened, ready_for_review` | `test` only — the full Playwright suite (no installers) |
-| You cut a release | `release: created` | `test` first; if green, three `build` jobs in parallel → installers attached to the release |
+| You cut a release | `release: created` | `test` first; if green, three `build` jobs in parallel → installers + portables attached to the release |
 
 ### Cut a release
 
 1. Bump `version` in `src-tauri/tauri.conf.json` (e.g. `0.1.0` → `0.1.1`), commit & push to `main`.
 2. From the repo's **Releases** page, go to **Draft a new release** → enter the tag `v0.1.1` (must match the version in `tauri.conf.json` plus a `v` prefix) → **Publish** (or `git tag v0.1.1 && git push --tags`).
-3. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0`:
-   - **Windows** (`windows-latest`) → `nsis` (`.exe`) + `msi`
-   - **macOS** (`macos-14`) → `dmg`
-   - **Linux** (`ubuntu-22.04`) → `appimage` + `deb`
+3. On `release: created`, the `test` job runs first. If green, the three build jobs run in parallel via `tauri-apps/tauri-action@v0` (installers) plus a portable-packaging step (no extra compile — re-packages the already-built output, uploaded with `gh release upload`):
+   - **Windows** (`windows-latest`) → `nsis` (`.exe`) + `msi` + `*-windows-x64-portable.zip` (raw `markdown-editor.exe`, no install)
+   - **macOS** (`macos-14`) → `dmg` + `*-macos-aarch64-portable.zip` (the `.app` bundle via `ditto`, no install)
+   - **Linux** (`ubuntu-22.04`) → `appimage` + `deb` + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary)
 
-   Installers are attached to the same `v<version>` release you just cut.
+   Installers + portables are attached to the same `v<version>` release you just cut. The Linux portable still needs system WebKitGTK/GTK on the target machine — the AppImage remains the most portable Linux option. The macOS/Windows portables are unsigned, so Gatekeeper/SmartScreen will warn on first run.
 
 ### Signing
 
