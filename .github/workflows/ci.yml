@@ -16,8 +16,9 @@
 #              follow-up step (no extra compile): Windows zips the raw
 #              `markdown-editor.exe`, Linux tar.gz's the raw `markdown-editor`
 #              binary (AppImage remains the most portable Linux option — the
-#              raw binary still needs system WebKitGTK), macOS zips the
-#              `Markdown Editor.app` bundle via `ditto`. Each archive is then
+#              raw binary still needs system WebKitGTK), macOS mounts the
+#              `.dmg` and zips the `.app` out of it via `ditto` (the dmg
+#              build leaves no loose .app on disk). Each archive is then
 #              uploaded to the same release with `gh release upload`.
 #
 # How to cut a release: bump `version` in `src-tauri/tauri.conf.json`, commit
@@ -208,16 +209,30 @@ jobs:
           ARCHIVE="Markdown-Editor-$VER-macos-aarch64-portable.zip"
           echo "Bundle layout:"
           find src-tauri/target/release/bundle -maxdepth 3 -print || true
-          # Don't hardcode the .app name (productName has a space and may
-          # change) — pick whatever .app the dmg build just produced.
-          APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" -print -quit)
+          # `--bundles dmg` leaves only the .dmg (no loose .app on disk),
+          # so mount the dmg and copy the .app out of it. Don't hardcode the
+          # .app name (productName has a space and may change) — pick
+          # whatever *.app the dmg contains.
+          DMG=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" -print -quit)
+          if [ -z "$DMG" ]; then
+            echo "No .dmg found under src-tauri/target/release/bundle/dmg"
+            exit 1
+          fi
+          echo "Found dmg: $DMG"
+          MNT=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -mountpoint "$MNT"
+          APP=$(find "$MNT" -maxdepth 2 -name "*.app" -print -quit)
           if [ -z "$APP" ]; then
-            echo "No .app found under src-tauri/target/release/bundle/macos"
+            echo "No .app found inside $DMG"
+            hdiutil detach "$MNT" || true
             exit 1
           fi
           echo "Found app: $APP"
+          cp -R "$APP" ./portable-app-tmp
+          hdiutil detach "$MNT"
           # ditto preserves .app resource forks / quarantine attrs where zip would not.
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+          ditto -c -k --sequesterRsrc --keepParent ./portable-app-tmp "$ARCHIVE"
+          rm -rf ./portable-app-tmp
           echo "PORTABLE_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload portable to release
