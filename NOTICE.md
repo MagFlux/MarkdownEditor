@@ -1,8 +1,6 @@
 Markdown Editor
 ===============
 
-Copyright (c) 2026 Project Contributors
-
 This product bundles and depends on the following third-party
 software. License grants apply to the use, reproduction, and
 distribution of each component. The source of each is available
