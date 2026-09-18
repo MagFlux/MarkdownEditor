@@ -206,8 +206,18 @@ jobs:
         run: |
           VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
           ARCHIVE="Markdown-Editor-$VER-macos-aarch64-portable.zip"
+          echo "Bundle layout:"
+          find src-tauri/target/release/bundle -maxdepth 3 -print || true
+          # Don't hardcode the .app name (productName has a space and may
+          # change) — pick whatever .app the dmg build just produced.
+          APP=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" -print -quit)
+          if [ -z "$APP" ]; then
+            echo "No .app found under src-tauri/target/release/bundle/macos"
+            exit 1
+          fi
+          echo "Found app: $APP"
           # ditto preserves .app resource forks / quarantine attrs where zip would not.
-          ditto -c -k --sequesterRsrc --keepParent "src-tauri/target/release/bundle/macos/Markdown Editor.app" "$ARCHIVE"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
           echo "PORTABLE_ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload portable to release
