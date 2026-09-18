@@ -142,7 +142,30 @@ Output locations:
 | Linux | `src-tauri/target/release/bundle/deb/*.deb`, `.../rpm/*.rpm`, `.../appimage/*.AppImage` (whichever tools are installed) |
 | Windows | `src-tauri/target/release/bundle/msi/*.msi`, `.../nsis/*.exe` |
 
-The release binary itself lives at `src-tauri/target/release/markdown-editor` (or `markdown-editor.exe` on Windows) — you can copy that to any machine with the same OS/arch and the system dependencies (WebKitGTK on Linux) and it will run without Node.
+The release binary itself lives at `src-tauri/target/release/markdown-editor` (or `markdown-editor.exe` on Windows) — you can copy that to any machine with the same OS/arch and the system dependencies and it will run without Node.
+
+### Portable standalones (from GitHub Releases)
+
+Each release also attaches a portable archive per OS (no install step — just unpack and run):
+
+- Windows: `*-windows-x64-portable.zip` → `markdown-editor.exe` (WebView2 is preinstalled on Win 10/11).
+- macOS: `*-macos-aarch64-portable.zip` → `Markdown Editor.app` (drag anywhere, double-click).
+- Linux: `*-linux-x86_64-portable.tar.gz` → `markdown-editor` binary.
+
+Yes — the Linux portable is **not** fully self-contained. Tauri renders via the system WebKitGTK, which is dynamically linked rather than bundled, so the target machine must provide it (same reason the CI build installs `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`). If it is missing the binary fails at startup with a `libwebkit2gtk` load error. Install the runtime libs first, e.g. on Ubuntu/Debian:
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
+```
+
+then:
+
+```bash
+tar -xzf markdown-editor-*-linux-x86_64-portable.tar.gz
+./markdown-editor
+```
+
+If you cannot install system libraries, use the `*.AppImage` instead — it bundles most dependencies and remains the most portable Linux option. The `.deb` declares these as package dependencies and pulls them in automatically.
 
 ### Use only what you need
 

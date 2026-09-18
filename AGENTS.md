@@ -212,7 +212,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
    compile) and uploads it to the same release via `gh release upload`:
    - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`) + `*-windows-x64-portable.zip` (raw `markdown-editor.exe` zipped via `Compress-Archive`)
    - `macos-14`: `--bundles dmg` + `*-macos-aarch64-portable.zip` (the `.app` bundle zipped via `ditto -c -k --keepParent`)
-   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg) + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary; still needs system WebKitGTK — the AppImage remains the most portable Linux option)
+   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg) + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary; NOT fully self-contained — Tauri links WebKitGTK dynamically, so the target machine must provide the runtime libs `libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2` — the AppImage remains the most portable Linux option, the `.deb` pulls these in automatically)
 
    Gated on `test` passing **and** `github.event_name == 'release'` (so it
    never runs on PRs or plain pushes). Installers + portables attach to the exact
