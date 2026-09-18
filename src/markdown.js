@@ -109,8 +109,8 @@ export function createApp(root) {
         </div>
       </span>
       <span class="sep"></span>
-      <button class="btn" data-action="undo" title="Undo — Ctrl+Z / Ctrl+&larr;">${icons.undo}</button>
-      <button class="btn" data-action="redo" title="Redo — Ctrl+Shift+Z / Ctrl+Y / Ctrl+&rarr;">${icons.redo}</button>
+      <button class="btn" data-action="undo" title="Undo — Ctrl+Z">${icons.undo}</button>
+      <button class="btn" data-action="redo" title="Redo — Ctrl+Shift+Z / Ctrl+Y">${icons.redo}</button>
       <span class="sep"></span>
       <button class="btn" data-action="newtab" title="New tab — ctrl+click anywhere for new">${icons.plus}</button>
       <button class="btn" data-action="open" title="Open file into new tab">${icons.open}</button>
@@ -1127,9 +1127,10 @@ export function createApp(root) {
    *
    * Bound on `window` (not the textarea) so they fire regardless of which
    * element holds focus — on WebKitGTK focus can slip off the overlay textarea.
-   * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z / ←/→), bold, italic,
+   * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), bold, italic,
    * underline, save (Ctrl+S), link, open (Ctrl+O), close tab (Ctrl+W), new
-   * tab (Ctrl+T).
+   * tab (Ctrl+T). Ctrl/Shift+Arrow word-wise caret moves and selections are
+   * intentionally left to the textarea's native behavior.
    * @param {KeyboardEvent} ev The keydown event.
    * @returns {Promise<void>}
    */
@@ -1141,8 +1142,10 @@ export function createApp(root) {
     if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
     if (k === "y" && !ev.shiftKey) { ev.preventDefault(); redo(); return; }
     if (k === "z" && ev.shiftKey) { ev.preventDefault(); redo(); return; }
-    if (ev.key === "ArrowLeft") { ev.preventDefault(); undo(); return; }
-    if (ev.key === "ArrowRight") { ev.preventDefault(); redo(); return; }
+    // NOTE: Ctrl/Meta+ArrowLeft/Right are intentionally NOT bound here (they
+    // used to be undo/redo aliases). They are left to the textarea's native
+    // word-wise caret move (Ctrl+Left/Right) and word-wise selection extend
+    // (Ctrl+Shift+Left/Right), so direction follows the arrow key used.
 
     if (k === "b" && !ev.shiftKey) { ev.preventDefault(); toggleFormat("bold"); return; }
     if (k === "i" && !ev.shiftKey) { ev.preventDefault(); toggleFormat("italic"); return; }
