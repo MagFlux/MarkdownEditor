@@ -58,16 +58,16 @@ MarkdownEditor/
 │   ├── links.js                # link detection and Tauri/browser opening factory
 │   ├── history.js              # undo/redo history factory
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
-│   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import) + anti-flicker SVG cache
+│   ├── mermaid.js              # mermaid SVG rendering (static `mermaid` import) + anti-flicker SVG cache + stale-render guard
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
 │   ├── paste.js                # rich-paste HTML→Markdown (mdFromHtml, mdTableFromHtml, …)
-│   ├── icons.js                # inline-SVG toolbar icons (B I S code link table + save/open + new-tab + undo/redo + hamburger/file-doc + theme + view-mode glyphs)
+│   ├── icons.js                # inline-SVG toolbar icons (B I S code link table + save/open + new-tab + undo/redo + hamburger/file-doc + theme + view-mode glyphs; the hamburger export menu itself is text-only)
 │   └── style.css               # all styles, light + dark themes, editor/preview/tab bar
 ├── src-tauri/
 │   ├── tauri.conf.json         # Tauri config (window, bundle, plugin wiring)
 │   ├── Cargo.toml              # Rust deps: tauri, plugin-fs, plugin-dialog, plugin-opener
 │   ├── capabilities/default.json  # permissions (fs, dialog, opener)
-│   ├── src/main.rs             # tauri::Builder + plugin init
+│   ├── src/main.rs             # tauri::Builder + plugin init (no console window on Windows release builds)
 │   └── icons/                  # .png / .ico / .icns bundle icons
 ├── .github/workflows/ci.yml    # CI: test suite + 3-OS build (installers + portables) → draft GitHub Release
 ├── LICENSE                     # AGPL-3.0
@@ -279,7 +279,7 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-tabscroll
   ```
 
-- **Mermaid anti-flicker** — a keystroke in prose **outside** a ` ```mermaid ` fence must never flash raw code. The old flow was `syncDom` → `d.preview.innerHTML = marked.parse(...)` (which re-creates all `pre > code.language-mermaid` fences back to raw text) → 120 ms debounce → `mermaid.render`. Any keystroke in the prose section wiped the already-rendered SVG holder; the re-render only arrived after 120 ms, producing a visible flash of raw code. The fix (in `src/mermaid.js`) has two co-operating parts: **(a)** after every successful `mermaid.render`, the SVG string + the `bindFunctions` closure are stored in a `_svgCache` keyed by the exact fence source; **(b)** in `syncDom`, immediately after `d.preview.innerHTML = marked.parse(...)`, a synchronous call to `restoreMermaid(d.preview)` walks every `pre > code.language-mermaid` element and substitutes the cached `<div class="mermaid-diagram">` holder in place — zero async, zero timers. A separate `mermaidSourceKey(md)` gate in `scheduleMermaidRender` skips the 120 ms timer entirely when the fence source didn't change. Coverage (`npm run verify-mermaidflicker`, 7 cases): the diagram holder is present in the same synchronous tick as a prose keystroke (no raw code visible at any poll); typing inside the fence source invalidates the cache and the 120 ms debounce re-renders; the cache survives a tab switch and return; two distinct fences cache and restore independently; and a prose keystroke does not fire a redundant `mermaid.render` call. The test fixture uses valid mermaid (`A[Start] --> B[End]`) — invalid source would throw and populate no cache entry, making the anti-flicker path untestable.
+- **Mermaid anti-flicker** — a keystroke in prose **outside** a ` ```mermaid ` fence must never flash raw code. The old flow was `syncDom` → `d.preview.innerHTML = marked.parse(...)` (which re-creates all `pre > code.language-mermaid` fences back to raw text) → 120 ms debounce → `mermaid.render`. Any keystroke in the prose section wiped the already-rendered SVG holder; the re-render only arrived after 120 ms, producing a visible flash of raw code. The fix (in `src/mermaid.js`) has two co-operating parts: **(a)** after every successful `mermaid.render`, the SVG string + the `bindFunctions` closure are stored in a `_svgCache` keyed by the exact fence source; **(b)** in `syncDom`, immediately after `d.preview.innerHTML = marked.parse(...)`, a synchronous call to `restoreMermaid(d.preview)` walks every `pre > code.language-mermaid` element and substitutes the cached `<div class="mermaid-diagram">` holder in place — zero async, zero timers. A separate `mermaidSourceKey(md)` gate in `scheduleMermaidRender` skips the 120 ms timer entirely when the fence source didn't change. Coverage (`npm run verify-mermaidflicker`, 7 cases): the diagram holder is present in the same synchronous tick as a prose keystroke (no raw code visible at any poll); typing inside the fence source invalidates the cache and the 120 ms debounce re-renders; the cache survives a tab switch and return; two distinct fences cache and restore independently; and a prose keystroke does not fire a redundant `mermaid.render` call. The test fixture uses valid mermaid (`A[Start] --> B[End]`) — invalid source would throw and populate no cache entry, making the anti-flicker path untestable. A **stale-render guard** in `renderMermaidInNode` (plus `restoreMermaid`) checks `pre.isConnected && node.contains(pre)` before and after the async `mermaid.render` and skips instead of appending when detached — previously the `else node.appendChild(holder)` fallback appended a stale duplicate diagram above the real one on Windows WebView2.
 
    ```bash
    npm run verify-mermaidflicker

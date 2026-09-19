@@ -72,7 +72,12 @@ export function createExportHandlers({
    */
   async function renderPreviewCanvas(text, width = 780) {
     const host = document.createElement("div");
-    host.style.cssText = "position:fixed;left:-100000px;top:0;z-index:99999;pointer-events:none;";
+    // Off-screen but VISIBLE: html2canvas must rasterize real pixels, so this
+    // host cannot be visibility:hidden / opacity:0 (that would export blank).
+    // Kept at -9999px (not -100000px) so Windows WebView2 never composites a
+    // ghost of it on-screen; removed in `finally` below.
+    host.setAttribute("aria-hidden", "true");
+    host.style.cssText = "position:fixed;left:-9999px;top:0;pointer-events:none;";
     const body = document.createElement("div");
     body.className = "preview";
     body.style.width = width + "px";

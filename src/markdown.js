@@ -104,8 +104,8 @@ export function createApp(root) {
       <span class="menu-wrap">
         <button class="btn" data-action="menu" data-menu-open="false" title="More actions" aria-haspopup="true" aria-expanded="false">${icons.menu}</button>
         <div class="menu-dropdown" role="menu" aria-label="More actions">
-          <button class="menu-item" data-menu="pdf" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as PDF&hellip;</span></button>
-          <button class="menu-item" data-menu="html" role="menuitem">${icons.fileDoc}<span class="mi-label">Export as HTML&hellip;</span></button>
+          <button class="menu-item" data-menu="pdf" role="menuitem"><span class="mi-label">Export as PDF&hellip;</span></button>
+          <button class="menu-item" data-menu="html" role="menuitem"><span class="mi-label">Export as HTML&hellip;</span></button>
         </div>
       </span>
       <span class="sep"></span>

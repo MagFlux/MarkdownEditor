@@ -90,6 +90,10 @@ body {
 .menu-item .mi-label { flex: 1 1 auto; }
 .menu-sep { height: 1px; background: var(--border); margin: 5px 4px; }
 .menu-item .mi-icon svg { width: 16px; height: 16px; display: block; }
+/* Belt-and-braces: menu items are text-only now, but any bare <svg> child
+   (past or future) must stay 16px — an unconstrained viewBox SVG defaults to
+   300x150-ish on Chromium/WebView2 and blew the menu up huge on Windows. */
+.menu-item > svg { width: 16px; height: 16px; flex: 0 0 auto; display: block; }
 
 /* ===== Tab bar ===== */
 /* Explicitly stack the tab bar ABOVE the editor's textarea: .input is z-index 2
@@ -151,7 +155,12 @@ body {
 .input { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; resize: none;
   background: transparent; border: 0; outline: none; box-shadow: none;
   color: transparent; caret-color: var(--fg); z-index: 2; }
-.input::selection { background: var(--sel); color: transparent; }
+/* Translucent (not opaque var(--sel)): the textarea glyphs are transparent and
+   the visible text lives in the overlay underneath, so an opaque selection
+   rect paints OVER the overlay text on Windows WebView2 (selected text looks
+   blanked out). A translucent wash tints without hiding the glyphs. */
+.input::selection { background: rgba(47, 111, 235, .28); color: transparent; }
+[data-theme="dark"] .input::selection { background: rgba(75, 139, 255, .38); }
 .editor.placeholder::before { content: attr(data-placeholder); color: var(--fg-dim); pointer-events: none; }
 
 /* ----- overlay inline formatting (monospace; width/height constant → caret stays aligned) ----- */

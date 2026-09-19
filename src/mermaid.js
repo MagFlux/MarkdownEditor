@@ -94,22 +94,30 @@ async function renderMermaidSvg(text) {
     let theme = "default";
     try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
     try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
-    const id = "md-mermaid-" + (++_mmSeq);
-    // Mermaid measures against a real (visible) node, so mount it off-screen in the
-    // doc, render into it, then fully clean up. Never left behind.
+    const id = "md-mermaid-" + (++_mmSeq) + "-" + Math.floor(Math.random() * 1e6).toString(36);
+    // Mermaid needs a laid-out node to measure text (getBBox), so mount a
+    // host in the doc, render into it, then fully clean up. Never left behind.
+    // The host sits off-screen (absolute, -9999px) with visibility:hidden:
+    // hidden elements keep layout (so measurement matches the preview column
+    // width below) but never paint. display:none would break measurement;
+    // a zero-size host would wrap htmlLabels at 0px and misplace nodes.
+    // Each render uses a unique id so concurrent renders never share marker /
+    // gradient ids inside the serialized SVG string.
     const container = document.createElement("div");
-    container.style.cssText = "position:fixed;left:-100000px;top:0;z-index:-1;visibility:hidden;";
+    container.setAttribute("aria-hidden", "true");
+    container.style.cssText = "position:absolute;left:-9999px;top:0;width:960px;visibility:hidden;pointer-events:none;";
     document.body.appendChild(container);
     try {
       const res = await mermaid.render(id, text, container);
       let svg = (typeof res === "string") ? res : ((res && (res.svg || res.str)) || (container && container.innerHTML) || "");
       // Make the inline SVG scale to its container width rather than a fixed
       // mermaid width, so narrow diagrams don't overflow the preview column.
-      svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;"');
+      svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;display:block;"');
       const entry = { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
       _cacheSvg(text, entry);
       return entry;
     } finally {
+      try { container.innerHTML = ""; } catch { /* ignore */ }
       if (container.parentNode) container.parentNode.removeChild(container);
       const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
       if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
@@ -139,17 +147,29 @@ async function renderMermaidInNode(node) {
   if (!blocks.length) return;
   for (const code of blocks) {
     const pre = code.closest ? code.closest("pre") : code.parentNode;
+    // STALE-RENDER GUARD (Windows/WebView2 artifact fix): syncDom rewrites
+    // preview.innerHTML on every keystroke while this async render is in
+    // flight. When that happens `pre` is detached from the live DOM — the old
+    // code fell through to `node.appendChild(holder)` and left a stale
+    // duplicate diagram (boxes/lines echoing the real diagram above it).
+    // If `pre` is no longer in `node`, the DOM has moved on: skip instead of
+    // appending a ghost.
+    if (!pre || !pre.isConnected || !node.contains(pre)) continue;
     const text = code.textContent; // textContent is already entity-decoded
     let out = _svgCache.get(text) || { svg: "", bindFunctions: null };
     if (!out.svg) {
       try { out = await renderMermaidSvg(text); }
       catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
+      // Re-check after the await: another keystroke may have detached `pre`
+      // while mermaid was rendering. Same skip — never append a ghost.
+      if (!pre.isConnected || !node.contains(pre)) continue;
     }
     const holder = document.createElement("div");
     holder.className = "mermaid-diagram";
     holder.innerHTML = out.svg;
     if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
-    else node.appendChild(holder);
+    // NOTE: no `else appendChild` fallback — appending here is exactly what
+    // created the duplicate-diagram ghost. If `pre` is gone, do nothing.
     if (out.bindFunctions) { try { out.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
   }
 }
@@ -212,6 +232,10 @@ function restoreMermaid(node) {
   let n = 0;
   for (const code of blocks) {
     const pre = code.closest ? code.closest("pre") : code.parentNode;
+    // Same stale guard as renderMermaidInNode: only replace when `pre` is
+    // still attached inside `node`. restoreMermaid is synchronous so the
+    // window is tiny, but the check is free.
+    if (!pre || !pre.isConnected || !node.contains(pre)) continue;
     const text = code.textContent;
     const entry = _svgCache.get(text);
     if (!entry || !entry.svg) continue;

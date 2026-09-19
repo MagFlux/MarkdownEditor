@@ -512,9 +512,15 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   The in-app modals are centered by construction inside the single webview.
 - **Export-as-PDF/HTML (hamburger menu).** The PDF/HTML actions live in a `.menu-wrap`
   dropdown toggled by the hamburger (`data-action="menu"`), with `data-menu="pdf"` /
-  `data-menu="html"` items. HTML export re-renders the markdown to a styled preview and
+  `data-menu="html"` items — **text-only** (no icons; a past `${icons.fileDoc}` with
+  no `.mi-icon` wrapper rendered unconstrained and blew the menu huge on Windows
+  WebView2, while WebKitGTK happened to size it small). `style.css` also carries a
+  `.menu-item > svg` 16px belt-and-braces rule for any bare SVG child. HTML export
+  re-renders the markdown to a styled preview and
   writes it; PDF renders that preview off-screen via `html2canvas` (a 780px-wide host
-  at `fixed; left:-100000px`, `scale:2`, white bg) and slices the canvas into A4
+  at `fixed; left:-9999px`, `scale:2`, white bg — VISIBLE, because html2canvas must
+  rasterize real pixels; `-100000px` risked a WebView2 composite ghost) and slices
+  the canvas into A4
   (595×842 pt) pages into a `jsPDF` doc. Both save through `pickPath` + Tauri
   `fs.writeFile` (binary) with a browser `Blob`-download fallback — the SAME in-app
   picker as save, never a native print dialog. The outside-click close guard must test
@@ -546,6 +552,30 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    The test fixture diagram in `verifyMermaidFlicker.mjs` uses **valid** mermaid
    (invalid source would cause mermaid to throw and produce no cache entry —
    making the anti-flicker path untestable).
+ - **Mermaid stale-render guard (do not regress — Windows ghost diagrams).**
+   `renderMermaidInNode` is async: `syncDom` can rewrite `preview.innerHTML`
+   while a `mermaid.render` is still in flight, detaching the `pre` it captured.
+   The old `else node.appendChild(holder)` fallback then appended the stale SVG
+   as a DUPLICATE above the real diagram (boxes/lines echoing the diagram below
+   — seen on Windows WebView2 where timing differs). The fix: check
+   `pre.isConnected && node.contains(pre)` before AND after the `await`, and
+   skip (never append) when detached. `restoreMermaid` carries the same guard.
+   The measuring host is `absolute; left:-9999px; width:960px; visibility:hidden`
+   (hidden keeps layout for getBBox measurement; `display:none`/zero-size would
+   mismeasure; `-100000px` risked a WebView2 composite ghost). Each render uses
+   a unique id so concurrent renders never share marker/gradient ids.
+ - **Textarea selection is translucent (do not regress — Windows blanking).**
+   The visible editor text lives in the overlay; the textarea glyphs are
+   `color:transparent`. `.input::selection` must be a TRANSLUCENT wash
+   (`rgba(47,111,235,.28)`, dark: `rgba(75,139,255,.38)`), never the opaque
+   `var(--sel)` — the opaque rect paints over the overlay text on WebView2 so
+   selected text looks blanked out (WebKitGTK composites it underneath, hiding
+   the bug on Linux).
+ - **No console window on Windows release builds (do not regress).**
+   `src-tauri/src/main.rs` carries
+   `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — without
+   it the bundled exe spawns a console that must stay open (closing it kills the
+   app). Debug builds keep the console for logs.
 
 ## Known limitations (browser fallback)
 
