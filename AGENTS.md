@@ -569,15 +569,15 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    SVG's `<style>` block — the shapes carry no fill/stroke attributes. On Windows
    WebView2 that block can fail to apply (solid-black flowchart nodes, invisible
    edges, labels floating outside shapes; sequence lifelines/messages vanish).
-   `inlineMermaidFallback(svg, theme)` in `src/mermaid.js` stamps the theme's
-   fill/stroke as inline presentation attributes (bare node rect/circle/ellipse,
-   `polygon.label-container` diamonds, actor rects/lifelines, messageLine
-   `stroke="none"`→theme stroke, flowchart-link paths, edgeLabel backings).
-   CSS rules beat presentation attributes, so the normal path is pixel-identical;
-   the attributes only carry the diagram when the stylesheet is missing. Fills
-   are sampled from mermaid v12 default/dark themeVariables — re-sample if
-   mermaid is upgraded. Verified by emptying `.mermaid-diagram style` headlessly
-   and screenshotting (see `/tmp/mmfb4-*.png` method).
+   `installMermaidStyles(holder)` in `src/mermaid.js` copies the SVG's generated
+   `<style>` into a document-level `<style data-mermaid-style="SVG_ID">` element
+   scoped by the SVG's unique id. The original SVG style stays in place too, so
+   platforms that do apply it (Linux/WebKitGTK) are unaffected and Mermaid's full
+   cascade is preserved without per-shape attribute guessing. The old per-shape
+   `inlineMermaidFallback` was removed because platform-specific attribute
+   rewriting changed selector precedence and broke valid diagrams on Linux.
+   `installMermaidStyles` is called in both `renderMermaidInNode` and
+   `restoreMermaid` immediately after setting `holder.innerHTML`.
  - **Textarea selection is translucent (do not regress — Windows blanking).**
    The visible editor text lives in the overlay; the textarea glyphs are
    `color:transparent`. `.input::selection` must be a TRANSLUCENT wash
