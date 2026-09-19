@@ -906,6 +906,14 @@ export function createApp(root) {
        if (nextTheme) localStorage.setItem("me.theme", "dark");
        else localStorage.removeItem("me.theme");
      } catch { /* no storage — theme just won't persist */ }
+    // Mermaid diagrams are keyed by (theme + source) and the SVG's baked-in
+    // sheet is theme-specific — a toggle MUST re-render them in the new theme,
+    // or a dark-rendered diagram would keep its dark sheet + stamped colors in
+    // a light app (the "light app, dark diagrams" mismatch). Reset the per-tab
+    // fingerprints (they now include the theme) and refresh, so syncDom's
+    // restoreMermaid misses, the debounce re-arms, and the new theme renders.
+    for (const t of TABS) t.__mmLastKey = null;
+    if (doc) refresh();
     if (!doc || !keep) return;
     const apply = () => {
       if (doc !== activeTab || document.documentElement.dataset.theme !== nextTheme) return;

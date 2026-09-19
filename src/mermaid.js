@@ -27,9 +27,25 @@ let _mmSeq = 0;
        the user NEVER sees raw code for a diagram they have already seen rendered.
    (c) skip the debounced render entirely when the mermaid-source key did not
        change, so typing outside a mermaid fence no longer re-runs mermaid at all. */
-const _svgCache = new Map();      // source text -> {svg, bindFunctions}
-const _inflight = new Map();      // source text -> Promise<{svg, bindFunctions}>
+const _svgCache = new Map();      // (theme + source) -> {svg, bindFunctions}
+const _inflight = new Map();      // (theme + source) -> Promise<{svg, bindFunctions}>
 const _SVG_CACHE_MAX = 200;
+
+/**
+ * mmCacheKey — composite SVG-cache key: the mermaid THEME plus the fence
+ * source. The theme MUST be part of the key: the sheet baked into the SVG
+ * (and therefore every stamped presentation attribute) is theme-specific, so
+ * a diagram rendered while the app was dark must not be reused after the
+ * user toggles back to light (the "light app, dark diagrams" state — exactly
+ * the Windows/Linux mismatch report). With the theme in the key, a toggle
+ * makes every lookup miss and `scheduleMermaidRender` (whose fingerprint also
+ * mixes the theme) re-arms, so diagrams re-render in the new theme.
+ * @param {string} text — the mermaid fence source.
+ * @returns {string} `<theme>\x00<source>`.
+ */
+function mmCacheKey(text) {
+  return mermaidTheme() + "\x00" + text;
+}
 
 /**
  * _cacheSvg — remember a rendered SVG in `_svgCache`, evicting the oldest entry
@@ -138,19 +154,29 @@ function stampSvgStyles(holder, src) {
         if (!prop || !val || prop.startsWith("--")) continue;
         const attr = attrName(prop);
         for (const el of targets) {
-          // An inline `stroke="none"` / `fill="none"` is a Mermaid PLACEHOLDER
-          // that its own stylesheet overrides (sequence messageLines ship
-          // stroke="none" and the sheet restyles them). Presentation
-          // attributes lose to author CSS, so on platforms where the sheet
-          // applies this is invisible — but where it doesn't, the placeholder
-          // would win and the line vanishes. So "none" placeholders must be
-          // overwritten by the sheet's real value. Any OTHER existing
-          // attribute (e.g. actor fill="#eaeaea") stays untouched: the sheet's
-          // matching rule stamps the same computed color anyway, and leaving
-          // mermaid's own markup alone keeps html2canvas/PDF parity exact.
-          const existing = el.getAttribute(attr);
-          const placeholder = (prop === "fill" || prop === "stroke") && /^none$/i.test(existing || "");
-          if (existing != null && existing !== "" && !placeholder) continue;
+          // HTML labels (mermaid's foreignObject text) are NOT SVG shapes:
+          // properties like text-align / color / background-color have no
+          // presentation-attribute form, so setAttribute() would be ignored
+          // and labels would render left-aligned with the wrong color when
+          // the stylesheet fails (the "text not centered" report). For those
+          // elements apply the declaration as an inline STYLE instead — the
+          // exact value the sheet declares — but never clobber an inline
+          // style mermaid itself set.
+          if (!(el instanceof SVGElement)) {
+            if (!el.style.getPropertyValue(prop)) {
+              el.style.setProperty(prop, val);
+              stamped++;
+            }
+            continue;
+          }
+          // SVG shapes: ALWAYS overwrite. Presentation attributes lose to
+          // author CSS, so on platforms where the sheet applies (Linux)
+          // nothing changes; where it doesn't, the attributes carry the
+          // sheet's values — including replacing mermaid's own placeholders
+          // (messageLine stroke="none") and inline defaults the sheet
+          // overrides (sequence actor fill="#eaeaea" → the sheet's #ECECFF,
+          // matching the Linux screenshot). Later matching rules overwrite
+          // earlier ones, approximating the cascade's source order.
           el.setAttribute(attr, val);
           stamped++;
         }
@@ -229,18 +255,20 @@ function mermaidTheme() {
  */
 async function renderMermaidSvg(text) {
   if (typeof document === "undefined" || !document.body) { return { svg: "", bindFunctions: null }; } // Node/headless: never render
+  // Composite (theme + source) key: a diagram rendered in the other theme is
+  // NOT a hit — its baked-in sheet (and stamped attributes) are theme-specific.
+  const key = mmCacheKey(text);
   // Cache hit — no render, no DOM, no timer. This is the fast path behind the
   // flicker fix: `restoreMermaid` walks the DOM and finds the holder already
   // in place with a cached SVG, so mermaid.render is never consulted again.
-  const hit = _svgCache.get(text);
+  const hit = _svgCache.get(key);
   if (hit) return hit;
   // In-flight share — two concurrent callers (e.g. tab A and the PDF export both
   // asking for the same source) collapse into one mermaid.render.
-  const shared = _inflight.get(text);
+  const shared = _inflight.get(key);
   if (shared) return shared;
   const p = (async () => {
-    let theme = "default";
-    try { theme = (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme === "dark") ? "dark" : "default"; } catch { /* ignore */ }
+    const theme = mermaidTheme();
     try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
     const id = "md-mermaid-" + (++_mmSeq) + "-" + Math.floor(Math.random() * 1e6).toString(36);
     // Mermaid needs a laid-out node to measure text (getBBox), so mount a
@@ -266,7 +294,7 @@ async function renderMermaidSvg(text) {
       // per-shape attribute rewriting broke valid diagrams on Linux, so we
       // preserve Mermaid's original markup and cascade here instead.
       const entry = { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
-      _cacheSvg(text, entry);
+      _cacheSvg(key, entry);
       return entry;
     } finally {
       try { container.innerHTML = ""; } catch { /* ignore */ }
@@ -275,9 +303,9 @@ async function renderMermaidSvg(text) {
       if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
     }
   })();
-  _inflight.set(text, p);
+  _inflight.set(key, p);
   try { return await p; }
-  finally { _inflight.delete(text); }
+  finally { _inflight.delete(key); }
 }
 
 /**
@@ -308,7 +336,7 @@ async function renderMermaidInNode(node) {
     // appending a ghost.
     if (!pre || !pre.isConnected || !node.contains(pre)) continue;
     const text = code.textContent; // textContent is already entity-decoded
-    let out = _svgCache.get(text) || { svg: "", bindFunctions: null };
+    let out = _svgCache.get(mmCacheKey(text)) || { svg: "", bindFunctions: null };
     if (!out.svg) {
       try { out = await renderMermaidSvg(text); }
       catch (e) { out.svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
@@ -351,7 +379,7 @@ async function renderMermaidInHtml(html) {
   while ((m = re.exec(html))) {
     out.push(html.slice(last, m.index));
     const src = decode(m[1]);
-    let svg = (_svgCache.get(src) || {}).svg || "";
+    let svg = (_svgCache.get(mmCacheKey(src)) || {}).svg || "";
     if (!svg) {
       try { svg = (await renderMermaidSvg(src)).svg; }
       catch (e) { svg = `<div class="mermaid-diagram-err">Mermaid render failed: ${esc((e && e.message) || e)}</div>`; }
@@ -390,7 +418,7 @@ function restoreMermaid(node) {
     // window is tiny, but the check is free.
     if (!pre || !pre.isConnected || !node.contains(pre)) continue;
     const text = code.textContent;
-    const entry = _svgCache.get(text);
+    const entry = _svgCache.get(mmCacheKey(text));
     if (!entry || !entry.svg) continue;
     const holder = document.createElement("div");
     holder.className = "mermaid-diagram";
@@ -447,8 +475,10 @@ function mermaidSourceKey(md) {
  *   and `d.__mmLastKey`, and renders into `d.preview`.
  */
 function scheduleMermaidRender(d) {
-  const key = mermaidSourceKey(d.input ? d.input.value : "");
-  if (key === d.__mmLastKey) return; // no mermaid source change → no render, no flicker
+  // Fingerprint = THEME + fence sources: a theme toggle must re-render the
+  // diagrams even though no mermaid source changed (see mmCacheKey).
+  const key = mermaidTheme() + "\x00" + mermaidSourceKey(d.input ? d.input.value : "");
+  if (key === d.__mmLastKey) return; // no theme/source change → no render, no flicker
   d.__mmLastKey = key;
   if (d.__mmTimer) clearTimeout(d.__mmTimer);
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);

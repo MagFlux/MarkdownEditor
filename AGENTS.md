@@ -620,9 +620,22 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    Presentation attributes lose to
    author CSS, so where the stylesheet applies (Linux/WebKitGTK) rendering is
    pixel-identical; where NO `<style>` applies at all (the observed WebView2
-   failure), the attributes carry the diagram. The inline `stroke="none"`
-   placeholders mermaid puts on sequence messageLines ARE overwritten (they are
-   placeholders the sheet replaces); other existing attributes are left alone.
+   failure), the attributes carry the diagram. SVG shapes are ALWAYS
+   overwritten (last matching rule wins ≈ source order): the inline
+   `stroke="none"` placeholders on sequence messageLines ARE replaced, and
+   mermaid's own inline actor `fill="#eaeaea"` is replaced by the sheet's
+   `#ECECFF` so a stylesheet-failed Windows matches the Linux render — do not
+   re-add a "skip existing attributes" check, it is what left Windows actors
+   grey while Linux showed lavender. For HTML labels (mermaid's
+   foreignObject text) the declaration is applied as an inline STYLE instead
+   of an attribute: text-align/color/background have no presentation-attribute
+   form, so attributes would be ignored there (the "Windows text not
+   centered" report) — existing inline styles mermaid set are not clobbered.
+   The mermaid SVG cache and the schedule fingerprint are keyed by
+   THEME + source (`mmCacheKey`) — a theme toggle re-renders every diagram in
+   the new theme; `toggleTheme()` resets `__mmLastKey` and calls `refresh()`
+   for the same reason (a dark-rendered diagram must never keep its dark
+   colors in a light app).
    The old per-shape `inlineMermaidFallback` was removed because platform-specific
    attribute rewriting changed selector precedence and broke valid diagrams on
    Linux. `installMermaidStyles` is called in both `renderMermaidInNode` and
