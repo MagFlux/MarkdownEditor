@@ -269,7 +269,20 @@ async function renderMermaidSvg(text) {
   if (shared) return shared;
   const p = (async () => {
     const theme = mermaidTheme();
-    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme }); } catch { /* ignore */ }
+    // FONT CONSISTENCY (Windows label-centering fix): Mermaid v12 measures
+    // label text with the DIAGRAM config's fontFamily default — flowchart/
+    // sequence use '"trebuchet ms", verdana, arial, sans-serif' — but paints
+    // it with themeVariables.fontFamily, whose v12 default is a DIFFERENT
+    // stack ('"Recursive Variable", arial, sans-serif'; "Recursive Variable"
+    // is not bundled/shipped, so the paint resolves to the next fallback).
+    // On Windows BOTH faces exist (Trebuchet MS vs Arial) but their glyph
+    // widths and ascent metrics differ, so labels overflow / sit off-center
+    // inside boxes sized for the other font — horizontally OR vertically
+    // depending on the glyphs ("no pattern"). On Linux every stack in both
+    // lists is missing, so fontconfig resolves BOTH to one substitute and
+    // the bug is invisible. Pinning fontFamily to the SAME stack both sides
+    // use removes the mismatch (measure == paint on every platform).
+    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme, fontFamily: '"trebuchet ms", verdana, arial, sans-serif' }); } catch { }
     const id = "md-mermaid-" + (++_mmSeq) + "-" + Math.floor(Math.random() * 1e6).toString(36);
     // Mermaid needs a laid-out node to measure text (getBBox), so mount a
     // host in the doc, render into it, then fully clean up. Never left behind.

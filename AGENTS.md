@@ -170,10 +170,12 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
    # must not flash raw code — the already-rendered holder is present in the SAME
    # synchronous tick as the keystroke (restoreMermaid from _svgCache); a keystroke
    # INSIDE a fence still re-renders after the 120 ms debounce. (7 cases.)
-   npm run verify-mermaidstyle # Mermaid stylesheet-failure robustness: node rects carry stamped
-   # fill/stroke, messageLine stroke="none" placeholders are overwritten, and after
-   # removing EVERY <style> element in the document the computed styles STILL match
-   # the theme (the Windows WebView2 black-node regression, simulated) (8 cases).
+    npm run verify-mermaidstyle # Mermaid stylesheet-failure robustness: node rects carry stamped
+    # fill/stroke, messageLine stroke="none" placeholders are overwritten, and after
+    # removing EVERY <style> element in the document the computed styles STILL match
+   # the theme (the Windows WebView2 black-node regression, simulated) (10 cases,
+    # incl. the font-consistency check: the sheet paints the SAME fontFamily stack
+    # mermaid measures with — the Windows label-centering fix).
    npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
                          # real api/IPC (49 cases) — save→in-app picker→write+close,
                         # overwrite-confirmation→write, overwrite-cancel→stays,
@@ -642,10 +644,28 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `restoreMermaid` immediately after setting `holder.innerHTML`. A Ctrl+Shift+M
    diagnostics modal (`src/main.js`) reports per-diagram layer state (SVG style
    length, head mirror present, stamped attrs, computed fill) plus stamped-
-   attribute counts, so a Windows report can pin down which layer failed.
-   `test/verifyMermaidStyle.mjs` (8 cases)
-   asserts the stamped attrs exist and that computed styles survive removing
-   EVERY `<style>` element from the document.
+    attribute counts, so a Windows report can pin down which layer failed.
+    `test/verifyMermaidStyle.mjs` (10 cases)
+    asserts the stamped attrs exist, that computed styles survive removing
+    EVERY `<style>` element from the document, and (font consistency, cases
+    5a/5b) that the generated sheet carries the SAME fontFamily stack mermaid
+    measures with plus the `p{margin:0}` rule label centering depends on.
+  - **Mermaid font consistency (do not regress — Windows off-center labels).**
+    Mermaid measures label text with the DIAGRAM config's fontFamily default
+    (`flowchart`/`sequence`: `"trebuchet ms", verdana, arial, sans-serif`) but
+    paints it with `themeVariables.fontFamily`, whose v12 default is a
+    DIFFERENT stack (`"Recursive Variable", arial, sans-serif`; "Recursive
+    Variable" ships inside mermaid but is not installed on the OS). On Windows
+    both faces exist, so boxes get sized with Trebuchet MS metrics while the
+    foreignObject/`<text>` labels paint in Arial — different glyph widths and
+    ascent → text overflows or floats inside its box, horizontally OR
+    vertically depending on the glyphs ("no pattern"). On Linux every face in
+    both stacks is missing, so fontconfig resolves BOTH to one substitute and
+    the bug is invisible here. The fix (in `renderMermaidSvg`, `src/mermaid.js`):
+    `mermaid.initialize({ …, fontFamily: '"trebuchet ms", verdana, arial,
+    sans-serif' })` pins the PAINTED sheet font to the same stack mermaid
+    measures with — measure == paint on every platform. Do not change or remove
+    that fontFamily override without revisiting this note.
  - **Textarea selection is translucent (do not regress — Windows blanking).**
    The visible editor text lives in the overlay; the textarea glyphs are
    `color:transparent`. `.input::selection` must be a TRANSLUCENT wash

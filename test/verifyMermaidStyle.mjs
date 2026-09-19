@@ -109,6 +109,40 @@ const idem = await p.evaluate(() => {
 });
 ok("4a re-stamp with same source is a no-op", idem.has && !idem.changed, JSON.stringify(idem));
 
+// ---------------------------------------------------------------------------
+// CASE 5 — font consistency (Windows off-center labels): the SVG stylesheet
+// mermaid generates MUST carry the same fontFamily stack that mermaid's
+// calculateTextDimensions measures with ('"trebuchet ms", verdana, arial,
+// sans-serif'). Mermaid's v12 default themeVariables.fontFamily is a
+// DIFFERENT stack ('"Recursive Variable", arial…'), which exists on Windows
+// as two physically different fonts (Trebuchet MS painted-by-measure vs
+// Arial painted-by-sheet) — labels then overflow/off-center their boxes.
+// Passing fontFamily in OUR initialize bakes the measure stack into the
+// sheet (asserted here); on Linux the override is a no-op (all faces of
+// both stacks are missing there anyway) but must not change colors.
+// ---------------------------------------------------------------------------
+// forces a re-render in the same theme. The alive-copy "<style>" is rebuilt by
+// restoreMermaid's cache path? No — style elements live INSIDE the svg markup
+// which the cache re-inserts, but CASE 3 removed the AGGREGATE document
+// mirrors too; re-set the doc so every fence is freshly restored/restyled.
+const fonts = await p.evaluate(async () => {
+  window.editor.setDocumentText(
+    "# Font consistency\n\n" +
+    "```mermaid\nflowchart LR\n    A[Left] --> B[Right]\n```\n"
+  );
+  await new Promise((r) => setTimeout(r, 1600));
+  const svg = document.querySelector(".mermaid-diagram svg");
+  const css = svg ? svg.querySelector("style")?.textContent || "" : "";
+  const rootRule = css.match(/^#[^{]+\{[^}]*\}/);
+  return {
+    rootFont: rootRule ? rootRule[0].slice(0, 140) : null,
+    trebuchet: /trebuchet ms/.test(rootRule ? rootRule[0] : ""),
+    pRule: /p\{margin:0;\}/.test(css),
+  };
+});
+ok("5a sheet paints the measure fontFamily (trebuchet stack)", fonts.trebuchet, JSON.stringify(fonts));
+ok("5b p{margin:0} present in the sheet (label vertical centering depends on it)", fonts.pRule, JSON.stringify(fonts));
+
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);
 await b.close();
