@@ -55,7 +55,7 @@ import { createHistoryHandlers } from "./history.js";
 /* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
    `highlightToHtml` from here; the app itself calls it from the closure). */
 export { highlightToHtml, computeBlocks, lineToHtml, isTableSep, esc } from "./render.js";
-export { renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender } from "./mermaid.js";
+export { renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles } from "./mermaid.js";
 export { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "./paste.js";
 

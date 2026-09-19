@@ -50,116 +50,160 @@ function _cacheSvg(text, entry) {
 }
 
 /**
- * installMermaidStyles — mirror Mermaid's generated SVG stylesheet into the
- * document head so it applies even when an inline SVG `<style>` fails.
+ * attrName — map a camelCase CSS property to its SVG presentation-attribute
+ * name (`stroke-dasharray` stays lowercase; `strokeWidth` → `stroke-width`).
+ * @param {string} prop — the CSS property name from a CSSStyleDeclaration.
+ * @returns {string} the attribute name to stamp.
+ */
+function attrName(prop) {
+  return prop.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+}
+
+/**
+ * stampSvgStyles — bake Mermaid's own generated CSS into presentation
+ * attributes on the rendered SVG, via the browser's real CSS engine.
  *
- * WHY: Mermaid encodes fills, strokes, markers, filters, label alignment, and
- * sequence-diagram rules in an SVG-internal `<style>` element. Some WebView2
- * builds intermittently fail to apply those nested styles, producing black
- * nodes and missing edges. Copying the same rules into a document-level
- * `<style>` preserves Mermaid's complete cascade without guessing at
- * individual shapes or changing the Linux rendering path. The original SVG
- * style stays in place too, so platforms that do apply it are unaffected.
+ * WHY: Mermaid v12 emits shape colors ONLY as `#id .selector{fill:...}` rules
+ * inside the SVG's <style> block — the shapes carry no fill/stroke attributes.
+ * On Windows WebView2 that block can fail to apply (solid-black flowchart
+ * nodes, invisible sequence messages whose inline stroke="none" then wins),
+ * while on WebKitGTK it applies fine. Any fix must therefore be a no-op where
+ * the stylesheet works and a faithful re-application of THE SAME RULES where
+ * it doesn't. Hand-written per-shape fallbacks change selector precedence and
+ * broke valid diagrams on Linux — this does not guess: it parses Mermaid's own
+ * stylesheet with CSSOM (`insertRule`, which silently drops only the rules the
+ * engine itself rejects — e.g. the `#id :root{...}` custom-property rule,
+ * which is meaningless outside the SVG anyway), reads back every parsed rule,
+ * and stamps its declarations onto matching elements as presentation
+ * attributes. Presentation attributes sit BELOW all author CSS in the cascade,
+ * so wherever the stylesheet applies, behavior is pixel-identical; where it
+ * doesn't, the attributes carry the diagram. Only class/element selectors are
+ * stamped (the sheet's `#id` prefix is stripped from each compound); keyframes
+ * and other non-style rules are skipped. Idempotent: skips holders already
+ * stamped with the same source text.
  *
  * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
+ * @param {string} [src] — the mermaid source (cache key for idempotency).
+ * @returns {number} the number of declarations stamped (0 → nothing to do).
+ */
+function stampSvgStyles(holder, src) {
+  if (!holder || typeof document === "undefined") return 0;
+  if (src && holder.__mmStamped === src) return 0;
+  const svg = holder.querySelector && holder.querySelector("svg");
+  const styleEl = svg && svg.querySelector("style");
+  if (!svg || !styleEl || !styleEl.textContent) return 0;
+  holder.__mmStamped = src || true;
+  // Parse Mermaid's sheet through the engine. A throwaway <style> + sheet is
+  // used because new CSSStyleSheet() + replaceSync is not available on older
+  // WebView2 builds. Scan for top-level `selector{decls}` pairs (a tiny state
+  // machine, NOT a `{` split — declaration values like `rgba(232,232,232,0.8)`
+  // contain braces that would corrupt naive splitting). insertRule drops bad
+  // rules per-rule (e.g. the `#id :root{...}` custom-property rule), which is
+  // exactly the filtering we want.
+  const probe = document.createElement("style");
+  document.head.appendChild(probe);
+  let rules = [];
+  try {
+    const sheet = probe.sheet;
+    const css = styleEl.textContent;
+    let i = 0;
+    while (i < css.length) {
+      const open = css.indexOf("{", i);
+      if (open === -1) break;
+      const selector = css.slice(i, open).trim();
+      // Find the matching close brace, skipping any inside quoted strings.
+      let depth = 1, j = open + 1, quote = null;
+      while (j < css.length && depth > 0) {
+        const ch = css[j];
+        if (quote) { if (ch === quote && css[j - 1] !== "\\") quote = null; }
+        else if (ch === '"' || ch === "'") quote = ch;
+        else if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        j++;
+      }
+      if (depth !== 0) break; // unbalanced tail — stop
+      const body = css.slice(open + 1, j - 1);
+      i = j;
+      if (!selector || selector.startsWith("@")) continue; // at-rules carry no shape styling
+      try { sheet.insertRule(`${selector}{${body}}`, sheet.cssRules.length); } catch { /* engine rejects this rule — skip it */ }
+    }
+    rules = Array.from(sheet.cssRules);
+  } catch { /* no CSSOM access — leave the SVG untouched */ }
+  finally { document.head.removeChild(probe); }
+  let stamped = 0;
+  for (const rule of rules) {
+    if (!rule.style || !rule.selectorText) continue; // @keyframes etc.
+    for (let sel of rule.selectorText.split(",")) {
+      sel = sel.trim();
+      if (!sel) continue;
+      // Strip the unique `#svg-id` prefix Mermaid scopes every rule with.
+      let local = sel.replace(/^#[A-Za-z_][\w-]*/, "").trim();
+      if (!local) continue; // the bare `#id{...}` root rule — skip
+      // Skip anything still carrying an id or pseudo-element we can't match.
+      if (/::|:root/.test(local)) continue;
+      let targets;
+      try { targets = svg.querySelectorAll(local); } catch { continue; } // invalid outside SVG scope
+      for (const el of targets) {
+        for (let i = 0; i < rule.style.length; i++) {
+          const prop = rule.style[i];
+          let val = rule.style.getPropertyValue(prop);
+          if (!val) continue;
+          // An inline `stroke="none"` / `fill="none"` is a Mermaid PLACEHOLDER
+          // that its own stylesheet overrides (sequence messageLines ship
+          // stroke="none" and the sheet restyles them). Presentation
+          // attributes lose to author CSS, so on platforms where the sheet
+          // applies this is invisible — but where it doesn't, the placeholder
+          // would win and the line vanishes. So "none" placeholders must be
+          // overwritten by the sheet's real value. Any OTHER existing
+          // attribute (e.g. actor fill="#eaeaea") stays untouched: the sheet's
+          // matching rule stamps the same computed color anyway, and leaving
+          // mermaid's own markup alone keeps html2canvas/PDF parity exact.
+          const placeholder = /^(?:stroke|fill)$/i.test(prop) && /^none$/i.test(el.getAttribute(attrName(prop)) || "");
+          if (el.hasAttribute(attrName(prop)) && !placeholder) continue;
+          el.setAttribute(attrName(prop), val);
+          stamped++;
+        }
+      }
+    }
+  }
+  return stamped;
+}
+
+/**
+ * installMermaidStyles — make a freshly inserted diagram holder robust against
+ * a platform that fails to apply the SVG-internal stylesheet.
+ *
+ * Two layers, both derived from Mermaid's OWN generated CSS (no hardcoded
+ * theme values): (1) mirror the SVG <style> into a document-level <style>
+ * scoped by the SVG's unique id — cheap, preserves the full cascade including
+ * pseudo-elements and animations on engines that parse it; (2) stamp the
+ * parsed rules onto the shapes as presentation attributes (see
+ * stampSvgStyles) — survives even when NO <style> element in the document
+ * applies, which is the observed WebView2 failure mode. Layer 2 uses only
+ * presentation attributes, so on platforms where the stylesheet applies
+ * (Linux/WebKitGTK) the result is pixel-identical either way.
+ *
+ * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
+ * @param {string} [src] — the mermaid source, for the idempotency check.
  * @returns {void} nothing; missing DOM/style elements are ignored safely.
  */
-function installMermaidStyles(holder) {
+function installMermaidStyles(holder, src) {
   if (!holder || typeof document === "undefined" || !document.head) return;
   const svg = holder.querySelector && holder.querySelector("svg");
   const source = svg && svg.querySelector("style");
   if (!svg || !source || !source.textContent) return;
   const id = svg.getAttribute("id");
-  if (!id) return;
-  const attr = `data-mermaid-style="${id}"`;
-  let style = document.head.querySelector(`style[${attr}]`);
-  if (!style) {
-    style = document.createElement("style");
-    style.setAttribute("data-mermaid-style", id);
-    document.head.appendChild(style);
+  if (id) {
+    const attr = `data-mermaid-style="${id}"`;
+    let style = document.head.querySelector(`style[${attr}]`);
+    if (!style) {
+      style = document.createElement("style");
+      style.setAttribute("data-mermaid-style", id);
+      document.head.appendChild(style);
+    }
+    if (style.textContent !== source.textContent) style.textContent = source.textContent;
   }
-  if (style.textContent !== source.textContent) style.textContent = source.textContent;
-}
-
-/**
- * inlineMermaidFallback — preserved for API compatibility only.
- *
- * WHY: platform-specific per-shape attribute rewriting changed selector
- * precedence and broke valid diagrams on Linux. The generic stylesheet
- * mirror above now handles WebView2 stylesheet failures instead.
- *
- * @param {string} svg — the rendered SVG string from mermaid.
- * @param {"dark"|"default"} _theme — unused; kept for signature compatibility.
- * @returns {string} the original SVG, unchanged.
- */
-function inlineMermaidFallback(svg, _theme) {
-  return svg;
-}
-
-/* Historical per-shape fallback removed. Kept below only as dead context
-   until the next cleanup pass deletes this comment block entirely. */
-function _unusedInlineMermaidFallbackLegacy(svg, theme) {
-  const dark = theme === "dark";
-  // Theme fills sampled from mermaid v12 default/dark themeVariables output.
-  const nodeFill = dark ? "#1f2020" : "#ECECFF";
-  const nodeStroke = dark ? "#81B1DB" : "#9370DB";
-  const clusterFill = dark ? "#1f2020" : "#ffffde";
-  const actorFill = dark ? "#1f2020" : "#eaeaea";
-  const actorStroke = dark ? "#81B1DB" : "#666";
-  const lifelineStroke = dark ? "#81B1DB" : "#999";
-  const edgeStroke = dark ? "#ccc" : "#333333";
-  const labelBg = dark ? "rgba(30,30,30,0.85)" : "rgba(232,232,232,0.8)";
-  let out = svg;
-  // Flowchart node OUTER boxes: `<rect class="basic label-container">` directly
-  // under <g class="node">. Despite the "label-container" name this IS the
-  // visible node box (stylesheet: fill #ECECFF / stroke #9370DB). Must be
-  // stamped — skipping it leaves solid-black boxes on stylesheet failure.
-  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bbasic label-container\b[^>]*)>/g,
-    (m, tag, rest) => `<${tag} fill="${nodeFill}" stroke="${nodeStroke}"${rest}>`);
-  // Flowchart node INNER backing rects: bare <rect> (no class/fill/stroke)
-  // inside <g class="label"> behind the text. Same theme fill/stroke.
-  out = out.replace(/<(rect|circle|ellipse)(?![^>]*(?:fill=|class=|stroke=))([^>]*)>/g,
-    (m, tag, rest) => `<${tag} fill="${nodeFill}" stroke="${nodeStroke}"${rest}>`);
-  out = out.replace(/<(polygon)(?![^>]*fill=)([^>]*class="[^"]*\blabel-container\b[^>]*)>/g,
-    (m, tag, rest) => `<${tag} fill="${nodeFill}" stroke="${nodeStroke}"${rest}>`);
-  // Bare edge paths (no class/stroke): flowchart-link shapes mermaid emits
-  // without a class get the edge stroke + fill none.
-  out = out.replace(/<(path)(?![^>]*(?:stroke=|fill=|class=|d="M0))([^>]*)>/g,
-    (m, tag, rest) => `<${tag} stroke="${edgeStroke}" fill="none"${rest}>`);
-  // Cluster (subgraph) rects.
-  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bcluster\b[^"]*"[^>]*)>/g,
-    (m, tag, rest) => `<${tag} fill="${clusterFill}" stroke="${nodeStroke}"${rest}>`);
-  // Sequence actor boxes: mermaid v12 emits fill="#eaeaea" INLINE (before the
-  // class attribute), but the stylesheet overrides it (.actor{fill:#ECECFF} —
-  // the light purple in the Linux screenshot). With no stylesheet the inline
-  // grey wins and the color is wrong, so REWRITE the inline fill to the theme
-  // node fill. Scoped to actor-class rects only (fill may precede class).
-  out = out.replace(/<(rect)([^>]*class="[^"]*\bactor\b[^"]*"[^>]*)>/g,
-    (m, tag, rest) => rest.includes('fill="#eaeaea"')
-      ? `<${tag}${rest.replace('fill="#eaeaea"', `fill="${nodeFill}"`)}`
-      : (rest.includes("fill=") ? m : `<${tag} fill="${nodeFill}" stroke="${actorStroke}"${rest}>`));
-  // Actor lifelines.
-  out = out.replace(/<(line)(?![^>]*stroke=)([^>]*class="[^"]*\bactor-line\b[^"]*"[^>]*)>/g,
-    (m, tag, rest) => `<${tag} stroke="${lifelineStroke}"${rest}>`);
-  // Sequence message lines: mermaid emits stroke="none" INLINE (the
-  // stylesheet's .messageLine0/1{stroke:#333} rule normally overrides it, but
-  // with no stylesheet the inline none wins and the line vanishes). Rewrite
-  // stroke="none" → the theme stroke. Scoped to messageLine classes only.
-  // messageLine1 is the DOTTED reply line (.messageLine1{stroke-dasharray:2,2}
-  // in the stylesheet) — also stamp the dasharray so it stays dotted instead
-  // of rendering solid.
-  out = out.replace(/<(line)([^>]*class="[^"]*\bmessageLine[01]\b[^"]*"[^>]*)stroke="none"([^>]*)>/g,
-    (m, tag, before, after) => `<${tag}${before}stroke="${edgeStroke}"${after}>`);
-  out = out.replace(/<(line)([^>]*class="[^"]*\bmessageLine1\b[^"]*"[^>]*)(?![^>]*stroke-dasharray)([^>]*)>/g,
-    (m, tag, before, after) => `<${tag}${before}stroke-dasharray="2,2"${after}>`);
-  // Edge paths: flowchart-link (only when missing a stroke; sequence messages
-  // are <line>, handled above).
-  out = out.replace(/<(path)(?![^>]*stroke=)([^>]*class="[^"]*\bflowchart-link\b[^"]*"[^>]*)>/g,
-    (m, tag, rest) => `<${tag} stroke="${edgeStroke}" fill="none"${rest}>`);
-  // Edge-label backings.
-  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bedgeLabel\b[^"]*"[^>]*)>/g,
-    (m, tag, rest) => `<${tag} fill="${labelBg}"${rest}>`);
-  return out;
+  try { stampSvgStyles(holder, src); } catch { /* keep whatever applied so far */ }
 }
 
 /**
@@ -284,7 +328,7 @@ async function renderMermaidInNode(node) {
     const holder = document.createElement("div");
     holder.className = "mermaid-diagram";
     holder.innerHTML = out.svg;
-    installMermaidStyles(holder);
+    installMermaidStyles(holder, text);
     if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
     // NOTE: no `else appendChild` fallback — appending here is exactly what
     // created the duplicate-diagram ghost. If `pre` is gone, do nothing.
@@ -360,7 +404,7 @@ function restoreMermaid(node) {
     const holder = document.createElement("div");
     holder.className = "mermaid-diagram";
     holder.innerHTML = entry.svg;
-    installMermaidStyles(holder);
+    installMermaidStyles(holder, text);
     if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
     if (entry.bindFunctions) { try { entry.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
     n++;
@@ -419,4 +463,4 @@ function scheduleMermaidRender(d) {
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
 }
 
-export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender };
+export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles };

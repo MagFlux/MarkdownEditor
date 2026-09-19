@@ -9,6 +9,7 @@
  * Exposes: `window.editor` — the live `createApp` result (for Playwright).
  */
 import { createApp } from "./markdown.js";
+import { stampSvgStyles, installMermaidStyles } from "./mermaid.js";
 import "./style.css";
 
 // Restore the persisted light/dark theme before first paint so the scrollbars,
@@ -73,3 +74,102 @@ if (app.getDocumentText() === "") {
 }
 app.refresh();
 window.editor = app;
+// Expose the mermaid style-stampers for the diagnostics hook + tests.
+window.editor.stampSvgStyles = stampSvgStyles;
+window.editor.installMermaidStyles = installMermaidStyles;
+
+/* ---- Mermaid diagnostics hook (Ctrl+Shift+M) ---------------------------------
+   The Windows WebView2 "black nodes" bug is invisible from Linux: we can only
+   SIMULATE the stylesheet failure headlessly, never reproduce it. This hook
+   reports, in an in-app modal (same centered-modal convention as every other
+   dialog — never alert()), what the live DOM actually looks like for each
+   rendered diagram: stamped fill/stroke attributes, computed styles, whether
+   the SVG <style> and its document-level mirror exist, and how many rules
+   stampSvgStyles parsed + applied. On Windows this tells us exactly which
+   layer failed. Harmless on every platform; no text mutation. */
+document.addEventListener("keydown", async (ev) => {
+  if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return;
+  if (ev.key !== "M" && ev.key !== "m") return;
+  ev.preventDefault();
+  const holders = Array.from(document.querySelectorAll(".mermaid-diagram"));
+  const lines = [];
+  lines.push(`UA: ${navigator.userAgent}`);
+  lines.push(`diagrams: ${holders.length}`);
+  holders.forEach((h, i) => {
+    const svg = h.querySelector("svg");
+    const styleEl = svg && svg.querySelector("style");
+    const rect = svg && svg.querySelector(".node rect.basic, rect.actor, rect");
+    const cs = rect ? getComputedStyle(rect) : null;
+    lines.push(
+      `#${i}: id=${svg?.getAttribute("id")} svgStyle=${styleEl ? (styleEl.textContent || "").length + "ch" : "none"} ` +
+      `mirror=${svg?.id ? !!document.head.querySelector(`style[data-mermaid-style="${svg.id}"]`) : "?"} ` +
+      `stamped=${h.__mmStamped ? "yes" : "no"} ` +
+      `rect[${rect?.tagName.toLowerCase()}] attr.fill=${rect?.getAttribute("fill") ?? "-"} computed.fill=${cs?.fill ?? "-"}`
+    );
+  });
+  // Count what CSSOM parsing yields right now (the same path stampSvgStyles uses).
+  try {
+    const probe = document.createElement("style");
+    document.head.appendChild(probe);
+    let parsed = 0;
+    const src = holders.map((h) => h.querySelector("svg > style")).filter(Boolean)[0];
+    if (src) {
+      const css = src.textContent;
+      let i = 0;
+      while (i < css.length) {
+        const open = css.indexOf("{", i);
+        if (open === -1) break;
+        const selector = css.slice(i, open).trim();
+        let depth = 1, j = open + 1, quote = null;
+        while (j < css.length && depth > 0) {
+          const ch = css[j];
+          if (quote) { if (ch === quote && css[j - 1] !== "\\") quote = null; }
+          else if (ch === '"' || ch === "'") quote = ch;
+          else if (ch === "{") depth++;
+          else if (ch === "}") depth--;
+          j++;
+        }
+        if (depth !== 0) break;
+        const body = css.slice(open + 1, j - 1);
+        i = j;
+        if (!selector || selector.startsWith("@")) continue;
+        try { probe.sheet.insertRule(`${selector}{${body}}`, probe.sheet.cssRules.length); parsed++; } catch { /* rejected */ }
+      }
+    }
+    document.head.removeChild(probe);
+    lines.push(`cssom: parsed ${parsed} rules from first sheet`);
+  } catch (e) { lines.push("cssom: ERROR " + e.message); }
+  const backdrop = document.createElement("div");
+  backdrop.className = "savedlg-backdrop";
+  const box = document.createElement("div");
+  box.className = "savedlg";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  const h3 = document.createElement("h3");
+  h3.textContent = "Mermaid diagnostics";
+  const pre = document.createElement("pre");
+  pre.style.cssText = "white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto;margin:.4em 0";
+  pre.textContent = lines.join("\n");
+  const row = document.createElement("div");
+  row.className = "savedlg-btns";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn primary";
+  btn.textContent = "Copy";
+  btn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(lines.join("\n")); btn.textContent = "Copied!"; }
+    catch { btn.textContent = "Copy failed"; }
+    setTimeout(() => backdrop.remove(), 700);
+  });
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "btn";
+  close.textContent = "Close";
+  close.addEventListener("click", () => backdrop.remove());
+  row.append(btn, close);
+  box.append(h3, pre, row);
+  backdrop.appendChild(box);
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+  document.body.appendChild(backdrop);
+  btn.focus();
+});

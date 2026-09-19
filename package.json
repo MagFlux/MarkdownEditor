@@ -22,6 +22,7 @@
     "verify-tabscroll": "node test/verifyTabScroll.mjs",
     "verify-themescroll": "node test/verifyThemeScroll.mjs",
     "verify-mermaidflicker": "node test/verifyMermaidFlicker.mjs",
+    "verify-mermaidstyle": "node test/verifyMermaidStyle.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
