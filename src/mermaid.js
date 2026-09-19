@@ -221,6 +221,55 @@ function installMermaidStyles(holder, src) {
     if (style.textContent !== source.textContent) style.textContent = source.textContent;
   }
   try { stampSvgStyles(holder, src); } catch { /* keep whatever applied so far */ }
+  try { centerForeignObjectLabels(holder); } catch { /* keep whatever applied so far */ }
+}
+
+/**
+ * centerForeignObjectLabels — vertically center each HTML label inside its
+ * foreignObject when the content DOESN'T fill the allocated box.
+ *
+ * WHY (Windows label mis-centering, second layer): mermaid sizes every HTML
+ * label box from getBBox MEASUREMENTS taken in the off-screen measure host;
+ * on Windows the measured height can exceed the painted one-line content
+ * (the Windows diagnostics dump showed ALL flowchart labels rendered into
+ * 120x56 foreignObjects whose painted div is a single ~24px line — on Linux
+ * the same diagram renders FO height 24/48 matching the content exactly).
+ * Mermaid centers the FO on the shape, but the text sits at the TOP of the
+ * oversized FO → the user sees the label floating high/off-center inside
+ * its box, varying per label. The deterministic fix is engine-independent:
+ * when the label's inner line-box height is less than 75% of the FO height,
+ * switch the label div to a centered flex column — the text
+ * then centers itself inside WHATEVER box mermaid allocated. On Linux the
+ * content always fills the FO (single line 21-24px in a 24px FO, wrapped
+ * 42px in 48px), so the 25% threshold never triggers there — a pure no-op.
+ * Applied as inline styles, so it works even when every stylesheet fails.
+ *
+ * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
+ * @returns {number} the number of labels re-centered (0 → nothing to do).
+ */
+function centerForeignObjectLabels(holder) {
+  if (!holder || typeof document === "undefined" || !holder.querySelectorAll) return 0;
+  let n = 0;
+  holder.querySelectorAll("foreignObject").forEach((fo) => {
+    const div = fo.firstElementChild;
+    if (!div) return;
+    // Measure the INNER text block (the <p>), not the div itself: some
+    // engines stretch the root div/table to the foreignObject's full height
+    // inside the FO (Chromium/WebView2 do; WebKit does not), so the div rect
+    // can equal the FO height while the text inside still sits top-anchored.
+    // The p's line-box height is the honest "painted content" measurement.
+    const p = div.querySelector("p") || div.firstElementChild;
+    const pH = (p || div).getBoundingClientRect().height;
+    const fH = fo.getBoundingClientRect().height;
+    if (!(fH > 0) || (fH - pH) < fH * 0.25) return; // content fills the box → nothing to do
+    div.style.height = "100%";
+    div.style.display = "flex";
+    div.style.flexDirection = "column";
+    div.style.alignItems = "center";
+    div.style.justifyContent = "center";
+    n++;
+  });
+  return n;
 }
 
 /**
@@ -497,4 +546,4 @@ function scheduleMermaidRender(d) {
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
 }
 
-export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles };
+export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels };

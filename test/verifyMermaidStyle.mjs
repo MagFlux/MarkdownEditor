@@ -143,6 +143,40 @@ const fonts = await p.evaluate(async () => {
 ok("5a sheet paints the measure fontFamily (trebuchet stack)", fonts.trebuchet, JSON.stringify(fonts));
 ok("5b p{margin:0} present in the sheet (label vertical centering depends on it)", fonts.pRule, JSON.stringify(fonts));
 
+// ---------------------------------------------------------------------------
+// CASE 6 — label centering inside foreignObject (Windows oversized FO fix):
+// mermaid can allocate a label box TALLER than the painted single-line
+// content (observed on Windows: every flowchart label got a 120x56 FO whose
+// div paints one ~24px line). centerForeignObjectLabels() flips such a
+// label's div to a centered flex column — a no-op where the content already
+// fills the FO (as on Linux). Asserts: (a) the real render needs no flex
+// (content ≈ FO height, inline centering NOT applied); (b) a synthetic
+// oversized FO gets flex + centered content.
+// ---------------------------------------------------------------------------
+const foCheck = await p.evaluate(() => {
+  // Real Linux render: single-line FOs (content ≈ FO height) must NOT flex.
+  const real = Array.from(document.querySelectorAll(".mermaid-diagram foreignObject"))
+    .map((fo) => fo.firstElementChild ? fo.firstElementChild.style.display : null);
+  const touched = real.filter((d) => d === "flex").length;
+  // Synthetics reproducing the Windows condition: a 56px and a 200px FO each
+  // holding a single ~24px line; plus a tight 24px FO that must stay table.
+  const host = document.createElement("div");
+  host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg">' +
+    '<foreignObject width="120" height="56"><div xmlns="http://www.w3.org/1999/xhtml" style="display:table;white-space:nowrap;line-height:1.5;text-align:center;width:120px;"><span><p>Oversized</p></span></div></foreignObject>' +
+    '<foreignObject width="120" height="200"><div xmlns="http://www.w3.org/1999/xhtml" style="display:table;white-space:nowrap;line-height:1.5;text-align:center;width:120px;"><span><p>Taller box</p></span></div></foreignObject>' +
+    '<foreignObject width="120" height="24"><div xmlns="http://www.w3.org/1999/xhtml" style="display:table;white-space:nowrap;line-height:1.5;text-align:center;width:120px;"><span><p>Tight</p></span></div></foreignObject>' +
+    '</svg>';
+  document.body.appendChild(host);
+  window.editor.centerForeignObjectLabels(host);
+  const fos = Array.from(host.querySelectorAll("foreignObject"));
+  const bigFlexed = fos.slice(0, 2).map((fo) => fo.firstElementChild.style.display === "flex");
+  const tightUntouched = fos[2].firstElementChild.style.display !== "flex";
+  host.remove();
+  return { realTouched: touched, realCount: real.length, bigFlexed, tightUntouched };
+});
+ok("6a real Linux render untouched (content fills its FOs)", foCheck.realTouched === 0, JSON.stringify(foCheck));
+ok("6b oversized FOs flex-centered; tight FO untouched", foCheck.bigFlexed.every(Boolean) && foCheck.tightUntouched, JSON.stringify(foCheck));
+
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);
 await b.close();

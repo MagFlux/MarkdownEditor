@@ -9,7 +9,7 @@
  * Exposes: `window.editor` — the live `createApp` result (for Playwright).
  */
 import { createApp } from "./markdown.js";
-import { stampSvgStyles, installMermaidStyles } from "./mermaid.js";
+import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels } from "./mermaid.js";
 import "./style.css";
 
 // Restore the persisted light/dark theme before first paint so the scrollbars,
@@ -77,6 +77,7 @@ window.editor = app;
 // Expose the mermaid style-stampers for the diagnostics hook + tests.
 window.editor.stampSvgStyles = stampSvgStyles;
 window.editor.installMermaidStyles = installMermaidStyles;
+window.editor.centerForeignObjectLabels = centerForeignObjectLabels;
 
 /* ---- Mermaid diagnostics hook (Ctrl+Shift+M) ---------------------------------
    The Windows WebView2 "black nodes" bug is invisible from Linux: we can only
@@ -142,17 +143,21 @@ document.addEventListener("keydown", async (ev) => {
         if (!shape || (!fo && !txt)) return;
         n++;
         const s = shape.getBoundingClientRect();
-        const el = fo || txt;
-        const t = el.getBoundingClientRect();
+        // NOTE: measure the INNER text element (p / text), NOT the foreignObject
+        // — the FO box is placed centered on the shape by construction, so FO
+        // centers are always 0; the paint-time inner text position is what the
+        // user sees.
+        const inner = fo ? (fo.querySelector("p") || fo.firstElementChild) : txt.querySelector("tspan") || txt;
+        const t = (inner || fo || txt).getBoundingClientRect();
         const cx = (e2) => +(e2.left + e2.width / 2).toFixed(1);
         const cy = (e2) => +(e2.top + e2.height / 2).toFixed(1);
         const labelEl = fo ? (fo.querySelector("p") || fo) : txt;
         const cs = getComputedStyle(labelEl);
         lines.push(
-          `#${hi}.${n} "${((el.textContent || "").trim() || "?").slice(0, 16)}" ` +
+          `#${hi}.${n} "${(((inner || fo || txt).textContent || "").trim() || "?").slice(0, 16)}" ` +
           `dCx=${+(cx(t) - cx(s)).toFixed(1)} dCy=${+(cy(t) - cy(s)).toFixed(1)} ` +
           `font=${cs.fontFamily.split(",")[0]}/${cs.fontSize}px ` +
-          `${fo ? `fo=[${fo.getAttribute("width")},${fo.getAttribute("height")}] pStyle=${(fo.querySelector("p")?.getAttribute("style") || "-").slice(0, 40)}` : `anchor=${txt.getAttribute("text-anchor")} x=${txt.getAttribute("x")} `}` +
+          `${fo ? `fo=[${fo.getAttribute("width")},${fo.getAttribute("height")}] innerRect=[${+t.width.toFixed(1)},${+t.height.toFixed(1)}] pStyle=${(fo.querySelector("p")?.getAttribute("style") || "-").slice(0, 40)}` : `anchor=${txt.getAttribute("text-anchor")} x=${txt.getAttribute("x")} w=${+t.width.toFixed(1)}`}` +
           `divStyle=${(fo && fo.firstElementChild?.getAttribute("style") || "-").slice(0, 90)}`
         );
       });
