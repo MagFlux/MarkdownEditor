@@ -159,8 +159,13 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                            # openAtTop), stamping the value-based echo guard so the restore
                             # reads as a programmatic write (7 cases: scrollability probe +
                             # Alpha@50% round trip, Beta@25% independence, no cross-tab clobber).
- npm run verify-themescroll # Theme-switch scroll preservation: changing light/dark preserves
-                            # the current editor and preview scroll ratios in both directions (4 cases).
+  npm run verify-themescroll # Theme-switch scroll preservation + themed scrollbars: changing
+                             # light/dark preserves the current editor and preview scroll ratios
+                             # in both directions, AND the scrollbar palette flips with the theme
+                             # (--sb / scrollbar-color / ::-webkit-scrollbar-thumb luminance is
+                             # light in light mode, dark in dark mode — the Windows regression
+                             # this guards, where the OS kept painting dark scrollbars in a light
+                             # app / light scrollbars in a dark app) (10 cases).
    npm run verify-mermaidflicker # Mermaid anti-flicker: a keystroke in prose OUTSIDE a fence
    # must not flash raw code — the already-rendered holder is present in the SAME
    # synchronous tick as the keystroke (restoreMermaid from _svgCache); a keystroke
@@ -265,7 +270,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `detectFormat`, `trimmedSpan`, `wrapFor`. |
 | `src/paste.js` | Rich-paste HTML→Markdown: `mdCellText`, `mdTableFromHtml`, `mdStyleOf`, `mdInlineMd`, `mdFromHtml`. |
 | `src/icons.js` | Inline-SVG toolbar icons (B I S code link table + save/open + new-tab + undo/redo + hamburger/file-doc + `theme` (light/dark moon) + the three view-mode glyphs `viewSplit` / `viewEdit` / `viewPreview` on the constant-width mode button — `setMode` swaps `.mode-icon`'s innerHTML per mode so the button width never changes and the centered group never jostles). Every toolbar button uses one of these 17px SVGs (a font glyph like `◑` sits on the text baseline and looks vertically off-center — always use an icon). |
-| `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. |
+| `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. Owns the per-theme scrollbar palette — `color-scheme`, and the `--sb` / `--sb-hi` thumb vars (light + dark) consumed by `scrollbar-color` and the `::-webkit-scrollbar*` rules, so scrollbars blend with the active theme (see invariant 9). |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
   | `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). |
@@ -368,8 +373,36 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
     `jspdf` and `html2canvas` are static top-level imports in `src/export.js`, and
-    `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
-     they're inert until called), never `await import(...)`.
+     `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
+      they're inert until called), never `await import(...)`.
+
+ 9. **Scrollbars must blend with the active theme (do not regress — Windows
+    scrollbar mismatch).** On Windows the app runs in WebView2, where the OS can
+    paint its *own* themed scrollbars over ours — leaving them DARK in a light
+    app or LIGHT in a dark app. The fix (in `src/style.css`): (a) `color-scheme`
+    is set **per theme** — `light` in `:root`, `dark` in `[data-theme="dark"]` —
+    so native platform chrome (including scrollbars on platforms that honor it)
+    follows the app, NOT the OS default; (b) `--sb` / `--sb-hi` thumb vars are
+    defined per theme (light: `#c7ccd4`/`#a8aeb8`, dark: `#4a5058`/`#5c636d`) and
+    consumed by the standard `scrollbar-color: var(--sb) transparent` (Firefox +
+    modern browsers) AND the `::-webkit-scrollbar` / `::-webkit-scrollbar-thumb`
+    rules (WebKitGTK, WebView2, Chrome). Do not remove the per-theme
+    `color-scheme` override or the `--sb` vars — both are load-bearing for the
+    "scrollbar matches the theme" guarantee. `test/verifyThemeScroll.mjs`
+    (10 cases) asserts the thumb luminance is >0.3 in light and <0.25 in dark,
+    reading `--sb`, `scrollbar-color`, and the `::-webkit-scrollbar-thumb`
+    background (the thresholds deliberately sit in the gap between the light
+    ~0.42–0.62 and dark ~0.08–0.12 sets, so Chromium's habit of resolving the
+    `:hover` variant never misclassifies).
+    - **Theme is persisted and bootstrapped.** `toggleTheme()` (in `src/markdown.js`)
+      writes `localStorage.setItem("me.theme","dark")` on dark and
+      `localStorage.removeItem("me.theme")` on light (light is the default; the
+      key is absent). `src/main.js` reads `localStorage.getItem("me.theme")==="dark"`
+      BEFORE `createApp()` and sets `documentElement.dataset.theme` accordingly, so
+      a returning user lands in their last theme. Do not "simplify" this away —
+      the theme must survive a restart (the WebKitGTK/WebView2 webview does not
+      apply `prefers-color-scheme` to the *app's* choice, only to the OS, so a
+      manual toggle is the only reliable signal).
 
 ## Conventions
 

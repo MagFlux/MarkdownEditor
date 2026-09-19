@@ -886,18 +886,26 @@ export function createApp(root) {
    *
    * Records each pane's scroll ratio before the theme CSS reflows the layout,
    * then restores those ratios after the repaint has settled. The value-based
-   * echo guards keep the restore from being treated as a user scroll.
+   * echo guards keep the restore from being treated as a user scroll. Also
+   * persists the choice to localStorage so the next launch starts in the same
+   * theme (including the themed scrollbars) instead of flashing light first.
    */
   function toggleTheme() {
-    const doc = activeTab;
-    const oldTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "";
-    const nextTheme = oldTheme === "dark" ? "" : "dark";
-    const ratio = (sc) => {
-      const max = sc.scrollHeight - sc.clientHeight;
-      return max > 0 ? sc.scrollTop / max : 0;
-    };
-    const keep = doc ? { editor: ratio(doc.editorScroll), preview: ratio(doc.previewScroll) } : null;
-    document.documentElement.dataset.theme = nextTheme;
+     const doc = activeTab;
+     const oldTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "";
+     const nextTheme = oldTheme === "dark" ? "" : "dark";
+     const ratio = (sc) => {
+       const max = sc.scrollHeight - sc.clientHeight;
+       return max > 0 ? sc.scrollTop / max : 0;
+     };
+     const keep = doc ? { editor: ratio(doc.editorScroll), preview: ratio(doc.previewScroll) } : null;
+     document.documentElement.dataset.theme = nextTheme;
+     try {
+       // Store only the non-default choice (dark) so a fresh profile or a
+       // cleared localStorage always lands on light, never a stale value.
+       if (nextTheme) localStorage.setItem("me.theme", "dark");
+       else localStorage.removeItem("me.theme");
+     } catch { /* no storage — theme just won't persist */ }
     if (!doc || !keep) return;
     const apply = () => {
       if (doc !== activeTab || document.documentElement.dataset.theme !== nextTheme) return;

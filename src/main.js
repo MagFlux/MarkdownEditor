@@ -11,6 +11,15 @@
 import { createApp } from "./markdown.js";
 import "./style.css";
 
+// Restore the persisted light/dark theme before first paint so the scrollbars,
+// panels, and text never flash the wrong palette on launch (the CSS is theme
+// driven, so this must run before the app renders anything).
+try {
+  if (localStorage.getItem("me.theme") === "dark") {
+    document.documentElement.dataset.theme = "dark";
+  }
+} catch { /* no storage — default light */ }
+
 const app = createApp(document.getElementById("app"));
 
 // Initial sample content (only on first run / an empty document)
