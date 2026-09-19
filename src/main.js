@@ -108,37 +108,18 @@ document.addEventListener("keydown", async (ev) => {
     );
   });
   // Count what CSSOM parsing yields right now (the same path stampSvgStyles uses).
+  // NOTE: the Windows diagnostics proved CSSOM is UNRELIABLE on WebView2
+  // (insertRule rejected every rule → "parsed 0 rules" while stamping did
+  // nothing), so this line only reports attribute counts now — the real
+  // signal for whether stampSvgStyles landed.
   try {
-    const probe = document.createElement("style");
-    document.head.appendChild(probe);
-    let parsed = 0;
-    const src = holders.map((h) => h.querySelector("svg > style")).filter(Boolean)[0];
-    if (src) {
-      const css = src.textContent;
-      let i = 0;
-      while (i < css.length) {
-        const open = css.indexOf("{", i);
-        if (open === -1) break;
-        const selector = css.slice(i, open).trim();
-        let depth = 1, j = open + 1, quote = null;
-        while (j < css.length && depth > 0) {
-          const ch = css[j];
-          if (quote) { if (ch === quote && css[j - 1] !== "\\") quote = null; }
-          else if (ch === '"' || ch === "'") quote = ch;
-          else if (ch === "{") depth++;
-          else if (ch === "}") depth--;
-          j++;
-        }
-        if (depth !== 0) break;
-        const body = css.slice(open + 1, j - 1);
-        i = j;
-        if (!selector || selector.startsWith("@")) continue;
-        try { probe.sheet.insertRule(`${selector}{${body}}`, probe.sheet.cssRules.length); parsed++; } catch { /* rejected */ }
-      }
-    }
-    document.head.removeChild(probe);
-    lines.push(`cssom: parsed ${parsed} rules from first sheet`);
-  } catch (e) { lines.push("cssom: ERROR " + e.message); }
+    const svg0 = holders[0] && holders[0].querySelector("svg");
+    lines.push(
+      `attrs#0: fill=${svg0 ? svg0.querySelectorAll("[fill]").length : "?"} ` +
+      `stroke=${svg0 ? svg0.querySelectorAll("[stroke]").length : "?"} ` +
+      `strokeDash=${svg0 ? svg0.querySelectorAll("[stroke-dasharray]").length : "?"}`
+    );
+  } catch (e) { lines.push("attrs: ERROR " + e.message); }
   const backdrop = document.createElement("div");
   backdrop.className = "savedlg-backdrop";
   const box = document.createElement("div");

@@ -610,10 +610,14 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    Mermaid's OWN generated CSS — no hardcoded theme values: (a) copies the SVG's
    `<style>` into a document-level `<style data-mermaid-style="SVG_ID">` element
    scoped by the SVG's unique id; (b) calls `stampSvgStyles(holder)`, which
-   parses the sheet through the browser's CSS engine (a brace-matched scan +
-   `insertRule`, which drops only rules the engine itself rejects — e.g. the
-   `#id :root{...}` custom-property rule) and stamps every parsed rule onto
-   matching shapes as presentation attributes. Presentation attributes lose to
+   parses the sheet in PURE JS (brace-depth scan with quote handling; NO CSSOM —
+   the Windows diagnostics proved WebView2's `insertRule` rejects EVERY rule of
+   a throwaway sheet, so the engine path stamped nothing there) and stamps every
+   `prop: value` declaration onto matching shapes as presentation attributes.
+   The sheet's `#id` prefix is stripped from each comma-separated compound;
+   `@`-rules and `:root`/pseudo rules are skipped (the
+   `#id :root{--mermaid-font-family…}` rule is meaningless outside the SVG).
+   Presentation attributes lose to
    author CSS, so where the stylesheet applies (Linux/WebKitGTK) rendering is
    pixel-identical; where NO `<style>` applies at all (the observed WebView2
    failure), the attributes carry the diagram. The inline `stroke="none"`
@@ -624,8 +628,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    Linux. `installMermaidStyles` is called in both `renderMermaidInNode` and
    `restoreMermaid` immediately after setting `holder.innerHTML`. A Ctrl+Shift+M
    diagnostics modal (`src/main.js`) reports per-diagram layer state (SVG style
-   length, head mirror present, stamped attrs, computed fill) so a Windows report
-   can pin down which layer failed. `test/verifyMermaidStyle.mjs` (8 cases)
+   length, head mirror present, stamped attrs, computed fill) plus stamped-
+   attribute counts, so a Windows report can pin down which layer failed.
+   `test/verifyMermaidStyle.mjs` (8 cases)
    asserts the stamped attrs exist and that computed styles survive removing
    EVERY `<style>` element from the document.
  - **Textarea selection is translucent (do not regress — Windows blanking).**

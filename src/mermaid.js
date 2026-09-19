@@ -61,7 +61,7 @@ function attrName(prop) {
 
 /**
  * stampSvgStyles — bake Mermaid's own generated CSS into presentation
- * attributes on the rendered SVG, via the browser's real CSS engine.
+ * attributes on the rendered SVG, parsed in pure JS.
  *
  * WHY: Mermaid v12 emits shape colors ONLY as `#id .selector{fill:...}` rules
  * inside the SVG's <style> block — the shapes carry no fill/stroke attributes.
@@ -71,16 +71,21 @@ function attrName(prop) {
  * the stylesheet works and a faithful re-application of THE SAME RULES where
  * it doesn't. Hand-written per-shape fallbacks change selector precedence and
  * broke valid diagrams on Linux — this does not guess: it parses Mermaid's own
- * stylesheet with CSSOM (`insertRule`, which silently drops only the rules the
- * engine itself rejects — e.g. the `#id :root{...}` custom-property rule,
- * which is meaningless outside the SVG anyway), reads back every parsed rule,
- * and stamps its declarations onto matching elements as presentation
- * attributes. Presentation attributes sit BELOW all author CSS in the cascade,
- * so wherever the stylesheet applies, behavior is pixel-identical; where it
- * doesn't, the attributes carry the diagram. Only class/element selectors are
- * stamped (the sheet's `#id` prefix is stripped from each compound); keyframes
- * and other non-style rules are skipped. Idempotent: skips holders already
- * stamped with the same source text.
+ * stylesheet directly in JS (NO CSSOM) and re-issues every declaration as a
+ * presentation attribute via setAttribute. Presentation attributes sit BELOW
+ * all author CSS in the cascade, so wherever the stylesheet applies, behavior
+ * is pixel-identical; where it doesn't, the attributes carry the diagram.
+ *
+ * NO CSSOM: the Windows diagnostics (Ctrl+Shift+M) proved that on WebView2
+ * `insertRule` rejected EVERY rule of the throwaway sheet (`cssom: parsed 0
+ * rules`), so the engine path stamped nothing. JS parsing is deterministic on
+ * every platform: brace-depth scan with quote handling (a naive `{` split
+ * corrupts on declaration values that contain braces), skip @-rules, strip the
+ * sheet's `#id` prefix from each comma-separated compound, skip `:root`/pseudo
+ * rules (e.g. the `#id :root{--mermaid-font-family…}` custom-property rule,
+ * meaningless outside the SVG), then split declarations on `;` and stamp each
+ * `prop: value`. Idempotent: skips holders already stamped with the same
+ * source text.
  *
  * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
  * @param {string} [src] — the mermaid source (cache key for idempotency).
@@ -93,61 +98,46 @@ function stampSvgStyles(holder, src) {
   const styleEl = svg && svg.querySelector("style");
   if (!svg || !styleEl || !styleEl.textContent) return 0;
   holder.__mmStamped = src || true;
-  // Parse Mermaid's sheet through the engine. A throwaway <style> + sheet is
-  // used because new CSSStyleSheet() + replaceSync is not available on older
-  // WebView2 builds. Scan for top-level `selector{decls}` pairs (a tiny state
-  // machine, NOT a `{` split — declaration values like `rgba(232,232,232,0.8)`
-  // contain braces that would corrupt naive splitting). insertRule drops bad
-  // rules per-rule (e.g. the `#id :root{...}` custom-property rule), which is
-  // exactly the filtering we want.
-  const probe = document.createElement("style");
-  document.head.appendChild(probe);
-  let rules = [];
-  try {
-    const sheet = probe.sheet;
-    const css = styleEl.textContent;
-    let i = 0;
-    while (i < css.length) {
-      const open = css.indexOf("{", i);
-      if (open === -1) break;
-      const selector = css.slice(i, open).trim();
-      // Find the matching close brace, skipping any inside quoted strings.
-      let depth = 1, j = open + 1, quote = null;
-      while (j < css.length && depth > 0) {
-        const ch = css[j];
-        if (quote) { if (ch === quote && css[j - 1] !== "\\") quote = null; }
-        else if (ch === '"' || ch === "'") quote = ch;
-        else if (ch === "{") depth++;
-        else if (ch === "}") depth--;
-        j++;
-      }
-      if (depth !== 0) break; // unbalanced tail — stop
-      const body = css.slice(open + 1, j - 1);
-      i = j;
-      if (!selector || selector.startsWith("@")) continue; // at-rules carry no shape styling
-      try { sheet.insertRule(`${selector}{${body}}`, sheet.cssRules.length); } catch { /* engine rejects this rule — skip it */ }
-    }
-    rules = Array.from(sheet.cssRules);
-  } catch { /* no CSSOM access — leave the SVG untouched */ }
-  finally { document.head.removeChild(probe); }
+  const css = styleEl.textContent;
   let stamped = 0;
-  for (const rule of rules) {
-    if (!rule.style || !rule.selectorText) continue; // @keyframes etc.
-    for (let sel of rule.selectorText.split(",")) {
-      sel = sel.trim();
-      if (!sel) continue;
+  let i = 0;
+  // Scan for top-level `selector{decls}` pairs. NOT a `{` split — values like
+  // `rgba(232,232,232,0.8)` and quoted strings must not break the scan.
+  while (i < css.length) {
+    const open = css.indexOf("{", i);
+    if (open === -1) break;
+    const selector = css.slice(i, open).trim();
+    // Find the matching close brace, skipping any inside quoted strings.
+    let depth = 1, j = open + 1, quote = null;
+    while (j < css.length && depth > 0) {
+      const ch = css[j];
+      if (quote) { if (ch === quote && css[j - 1] !== "\\") quote = null; }
+      else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      j++;
+    }
+    if (depth !== 0) break; // unbalanced tail — stop
+    const body = css.slice(open + 1, j - 1);
+    i = j;
+    if (!selector || selector.startsWith("@")) continue; // @keyframes etc. carry no shape styling
+    for (const rawSel of selector.split(",")) {
       // Strip the unique `#svg-id` prefix Mermaid scopes every rule with.
-      let local = sel.replace(/^#[A-Za-z_][\w-]*/, "").trim();
+      const local = rawSel.trim().replace(/^#[A-Za-z_][\w-]*/, "").trim();
       if (!local) continue; // the bare `#id{...}` root rule — skip
-      // Skip anything still carrying an id or pseudo-element we can't match.
+      // Skip anything still carrying a pseudo we can't match (incl. :root).
       if (/::|:root/.test(local)) continue;
       let targets;
       try { targets = svg.querySelectorAll(local); } catch { continue; } // invalid outside SVG scope
-      for (const el of targets) {
-        for (let i = 0; i < rule.style.length; i++) {
-          const prop = rule.style[i];
-          let val = rule.style.getPropertyValue(prop);
-          if (!val) continue;
+      if (!targets || !targets.length) continue;
+      for (const decl of body.split(";")) {
+        const colon = decl.indexOf(":");
+        if (colon === -1) continue;
+        const prop = decl.slice(0, colon).trim().toLowerCase();
+        const val = decl.slice(colon + 1).trim();
+        if (!prop || !val || prop.startsWith("--")) continue;
+        const attr = attrName(prop);
+        for (const el of targets) {
           // An inline `stroke="none"` / `fill="none"` is a Mermaid PLACEHOLDER
           // that its own stylesheet overrides (sequence messageLines ship
           // stroke="none" and the sheet restyles them). Presentation
@@ -158,9 +148,10 @@ function stampSvgStyles(holder, src) {
           // attribute (e.g. actor fill="#eaeaea") stays untouched: the sheet's
           // matching rule stamps the same computed color anyway, and leaving
           // mermaid's own markup alone keeps html2canvas/PDF parity exact.
-          const placeholder = /^(?:stroke|fill)$/i.test(prop) && /^none$/i.test(el.getAttribute(attrName(prop)) || "");
-          if (el.hasAttribute(attrName(prop)) && !placeholder) continue;
-          el.setAttribute(attrName(prop), val);
+          const existing = el.getAttribute(attr);
+          const placeholder = (prop === "fill" || prop === "stroke") && /^none$/i.test(existing || "");
+          if (existing != null && existing !== "" && !placeholder) continue;
+          el.setAttribute(attr, val);
           stamped++;
         }
       }
