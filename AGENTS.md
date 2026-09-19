@@ -256,7 +256,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. |
 | `src/session.js` | Versioned localStorage session persistence and debounced saves, using callbacks for the active tab and serializable tab records. |
 | `src/dialogs.js` | Centered in-app modal primitives, unsaved-changes prompts, and overwrite confirmation, with native filesystem checks supplied by callbacks. |
-| `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. |
+| `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. Detects the platform path separator from the initial cwd (`\` on Windows, `/` elsewhere) and uses it consistently for all path joining, crumb reconstruction, and go-up navigation — without this, Windows paths like `C:\Users\…` get joined with `/` producing `/C:\Users\…` which the OS rejects (os error 123). |
 | `src/editing.js` | Formatting mutation factory: inline and block toggles plus indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
 | `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, Tauri gate, and browser fallback. |
 | `src/history.js` | Undo/redo history factory, with injected active-doc, typing-flush, input-suppression, and refresh callbacks. |

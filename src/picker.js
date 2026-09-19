@@ -17,6 +17,11 @@
 export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
   /**
    * pickPath — show a centered Save/Open filesystem picker.
+   * Detects the platform path separator from the initial cwd (backslash on
+   * Windows, forward-slash elsewhere) and uses it consistently for all path
+   * joining, crumb reconstruction, and go-up navigation. Without this, Windows
+   * paths like "C:\Users\…" get joined with "/" producing "/C:\Users\…" which
+   * the OS rejects (os error 123).
    * @param {object} [opts] Mode, filename, directory, and extension filters.
    * @returns {Promise<{path:string|null,name?:string}>} Selected path or cancel.
    */
@@ -77,7 +82,13 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
       let cwd = opts.defaultDir || null;
       if (!cwd) { try { cwd = await homeDir(); } catch (_) { cwd = null; } }
       if (cwd) { try { cwd = decodeURIComponent(String(cwd)); } catch (_) {} }
-      cwd = String(cwd || "/").replace(/\/+$/, "") || "/";
+      // Detect the platform path separator from the initial cwd. Windows paths
+      // like "C:\Users\…" use "\"; everything else uses "/". All path joining
+      // below must use SEP or we produce mixed-slash paths ("/C:\Users\…") that
+      // Windows rejects with os error 123.
+      const SEP = String(cwd || "").includes("\\") ? "\\" : "/";
+      const ROOT = SEP === "\\" ? "" : "/";
+      cwd = String(cwd || SEP).replace(new RegExp("[" + SEP.replace("\\", "\\\\") + "]+$"), "") || SEP;
       const state = { cwd, picked: null };
       let token = 0;
       let settled = false;
@@ -133,39 +144,44 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
         try { home = await homeDir(); } catch (_) { return; }
         if (!home) return;
         try { home = decodeURIComponent(String(home)); } catch (_) {}
-        goToDir(String(home).replace(/\/+$/, "") || "/");
+        goToDir(String(home).replace(/[\\/]+$/, "") || SEP);
       };
       const goUp = () => {
-        if (state.cwd === "/") return;
-        goToDir(state.cwd.split("/").slice(0, -1).join("/") || "/");
+        if (state.cwd === ROOT || state.cwd === SEP) return;
+        const parent = state.cwd.split(SEP).slice(0, -1).join(SEP);
+        // On Windows "C:" alone is the drive root; on Unix "" means "/".
+        goToDir(parent || (SEP === "\\" ? state.cwd.split(SEP)[0] + SEP : "/"));
       };
       const renderCrumb = () => {
         pathbar.innerHTML = "";
         pathbar.append(control("home", "Home directory", goHome), control("up", "Go up", goUp));
-        const parts = state.cwd.split("/").filter(Boolean);
+        const parts = state.cwd.split(SEP).filter(Boolean);
         if (!parts.length) {
           const root = document.createElement("span");
           root.className = "crumb-cur";
-          root.textContent = "/";
+          root.textContent = SEP === "\\" ? state.cwd : "/";
           pathbar.append(root);
           return;
         }
         parts.forEach((part, index) => {
           const crumb = document.createElement("span");
           crumb.textContent = part;
-          crumb.dataset.crumb = "/" + parts.slice(0, index + 1).join("/");
+          // On Windows the first segment is the drive ("C:") — join from there
+          // without a leading slash. On Unix prepend "/" as before.
+          const prefix = SEP === "\\" ? "" : "/";
+          crumb.dataset.crumb = prefix + parts.slice(0, index + 1).join(SEP);
           if (index === parts.length - 1) crumb.className = "crumb-cur";
           crumb.addEventListener("click", () => goToDir(crumb.dataset.crumb));
           pathbar.append(crumb);
           if (index < parts.length - 1) {
             const separator = document.createElement("span");
             separator.className = "sep";
-            separator.textContent = "/";
+            separator.textContent = SEP;
             pathbar.append(separator);
           }
         });
       };
-      const confirmFile = (name) => done({ path: state.cwd + "/" + name, name });
+      const confirmFile = (name) => done({ path: state.cwd + SEP + name, name });
       const render = (entries) => {
         list.innerHTML = "";
         if (!Array.isArray(entries) || !entries.length) {
@@ -187,7 +203,7 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
           item.dataset.name = entry.name;
           item.innerHTML = '<span class="glyph">\u25B8</span><span class="dir"></span>';
           item.lastElementChild.textContent = entry.name;
-          item.addEventListener("click", () => goToDir(state.cwd + "/" + entry.name));
+          item.addEventListener("click", () => goToDir(state.cwd + SEP + entry.name));
           fragment.append(item);
         }
         for (const entry of entries.filter(isFile).sort(sorted)) {
@@ -213,8 +229,8 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
         if (mode === "save") {
           const value = (nameInput.value || "").trim();
           if (!value) { setStatus("Name is required", "warn"); nameInput.focus(); return; }
-          if (/\//.test(value)) { done({ path: value, name: value.split("/").filter(Boolean).pop() || value }); return; }
-          done({ path: state.cwd + "/" + value, name: value });
+          if (/[\\/]/.test(value)) { done({ path: value, name: value.split(/[\\/]/).filter(Boolean).pop() || value }); return; }
+          done({ path: state.cwd + SEP + value, name: value });
           return;
         }
         if (!state.picked) { setStatus("Select a file first", "warn"); return; }

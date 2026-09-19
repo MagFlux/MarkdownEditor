@@ -53,7 +53,7 @@ MarkdownEditor/
 │   ├── export.js               # static PDF/HTML export pipeline and native/browser save adapters
 │   ├── session.js              # versioned localStorage persistence and debounced saves
 │   ├── dialogs.js              # centered in-app modals and overwrite confirmation
-│   ├── picker.js               # in-app Save/Open filesystem picker and navigation
+│   ├── picker.js               # in-app Save/Open filesystem picker (platform-aware path separator)
 │   ├── editing.js              # formatting mutations and indentation factory
 │   ├── links.js                # link detection and Tauri/browser opening factory
 │   ├── history.js              # undo/redo history factory
