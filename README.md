@@ -292,7 +292,7 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
    npm run verify-mermaidflicker
    ```
 
-- **Mermaid stylesheet robustness** — diagrams must stay readable even if the platform never applies the SVG-internal `<style>` (Windows WebView2 black-node regression). After removing EVERY `<style>` element in the document, node fills and message strokes still match the theme via stamped presentation attributes. The generated sheet also carries the SAME fontFamily stack mermaid measures label text with (the Windows label-centering fix). A Ctrl+Shift+M diagnostics modal reports the live state of each layer (SVG style length, head mirror present, stamped attrs, computed fill) so a Windows report can pin down which layer failed.
+- **Mermaid stylesheet robustness** — diagrams must stay readable even if the platform never applies the SVG-internal `<style>` (Windows WebView2 black-node regression). After removing EVERY `<style>` element in the document, node fills and message strokes still match the theme via stamped presentation attributes. The generated sheet also carries the SAME fontFamily stack mermaid measures label text with (the Windows label-centering fix). A Ctrl+Shift+M diagnostics modal reports the live state of each layer (SVG style length, head mirror present, stamped attrs, computed fill) plus per-label geometry (label center vs shape center, computed painted font) so a Windows report can pin down which layer failed.
 
    ```bash
    npm run verify-mermaidstyle

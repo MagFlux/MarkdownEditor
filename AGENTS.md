@@ -644,7 +644,10 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `restoreMermaid` immediately after setting `holder.innerHTML`. A Ctrl+Shift+M
    diagnostics modal (`src/main.js`) reports per-diagram layer state (SVG style
    length, head mirror present, stamped attrs, computed fill) plus stamped-
-    attribute counts, so a Windows report can pin down which layer failed.
+    attribute counts, so a Windows report can pin down which layer failed;
+    it also dumps LABEL GEOMETRY (per node: the label's center vs its shape's
+    center, the COMPUTED painted font family/size, the foreignObject size and
+    inline styles) — the decisive reading for the Windows label mis-centering.
     `test/verifyMermaidStyle.mjs` (10 cases)
     asserts the stamped attrs exist, that computed styles survive removing
     EVERY `<style>` element from the document, and (font consistency, cases

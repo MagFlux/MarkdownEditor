@@ -120,6 +120,44 @@ document.addEventListener("keydown", async (ev) => {
       `strokeDash=${svg0 ? svg0.querySelectorAll("[stroke-dasharray]").length : "?"}`
     );
   } catch (e) { lines.push("attrs: ERROR " + e.message); }
+  // LABEL GEOMETRY layer: the Windows label mis-centering cannot be seen from
+  // Linux — this walks every node/actor and reports the actual paint-time
+  // geometry of each label against its shape, plus the COMPUTED font the
+  // labels paint with. If measure-font != paint-font the shape centers will
+  // disagree with the label centers by a few px each; the computed font line
+  // names the font that actually painted, which is the whole game.
+  try {
+    holders.forEach((h, hi) => {
+      const svg = h.querySelector("svg");
+      if (!svg) return;
+      // The stylesheet's root font stack (what labels SHOULD paint with).
+      const rootFont = (svg.querySelector("style")?.textContent || "").match(/^#[^{]+\{[^}]*\}/)?.[0]?.slice(0, 110) || "none";
+      lines.push(`#${hi} sheetFont: ${rootFont}`);
+      let n = 0;
+      svg.querySelectorAll("g.node, g.actor").forEach((g) => {
+        if (n >= 6) return; // first few labels are enough
+        const shape = g.querySelector("rect, polygon, path");
+        const fo = g.querySelector("foreignObject");
+        const txt = !fo && g.querySelector("text");
+        if (!shape || (!fo && !txt)) return;
+        n++;
+        const s = shape.getBoundingClientRect();
+        const el = fo || txt;
+        const t = el.getBoundingClientRect();
+        const cx = (e2) => +(e2.left + e2.width / 2).toFixed(1);
+        const cy = (e2) => +(e2.top + e2.height / 2).toFixed(1);
+        const labelEl = fo ? (fo.querySelector("p") || fo) : txt;
+        const cs = getComputedStyle(labelEl);
+        lines.push(
+          `#${hi}.${n} "${((el.textContent || "").trim() || "?").slice(0, 16)}" ` +
+          `dCx=${+(cx(t) - cx(s)).toFixed(1)} dCy=${+(cy(t) - cy(s)).toFixed(1)} ` +
+          `font=${cs.fontFamily.split(",")[0]}/${cs.fontSize}px ` +
+          `${fo ? `fo=[${fo.getAttribute("width")},${fo.getAttribute("height")}] pStyle=${(fo.querySelector("p")?.getAttribute("style") || "-").slice(0, 40)}` : `anchor=${txt.getAttribute("text-anchor")} x=${txt.getAttribute("x")} `}` +
+          `divStyle=${(fo && fo.firstElementChild?.getAttribute("style") || "-").slice(0, 90)}`
+        );
+      });
+    });
+  } catch (e) { lines.push("labels: ERROR " + e.message); }
   const backdrop = document.createElement("div");
   backdrop.className = "savedlg-backdrop";
   const box = document.createElement("div");
