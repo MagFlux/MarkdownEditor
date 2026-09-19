@@ -50,6 +50,76 @@ function _cacheSvg(text, entry) {
 }
 
 /**
+ * inlineMermaidFallback — stamp theme fill/stroke as inline presentation
+ * attributes on a rendered mermaid SVG string.
+ *
+ * WHY: mermaid emits shape colors ONLY as `#id .selector{fill:...}` rules in
+ * the SVG's <style> block — the shapes themselves carry no fill/stroke
+ * attributes. If that block ever fails to apply (observed on Windows WebView2:
+ * solid-black nodes, invisible edges, labels floating outside the shapes),
+ * the diagram is unreadable. Inline presentation attributes lose to real CSS
+ * rules (normal path: zero visual change) but carry the diagram when the
+ * stylesheet is missing. Only the structural shapes are covered (flowchart
+ * nodes/clusters, sequence actors/lifelines/messages, edge paths); text keeps
+ * coming from the stylesheet.
+ *
+ * @param {string} svg — the rendered SVG string from mermaid.
+ * @param {"dark"|"default"} theme — the mermaid theme used for the render.
+ * @returns {string} the SVG with fallback attributes added.
+ */
+function inlineMermaidFallback(svg, theme) {
+  const dark = theme === "dark";
+  // Theme fills sampled from mermaid v12 default/dark themeVariables output.
+  const nodeFill = dark ? "#1f2020" : "#ECECFF";
+  const nodeStroke = dark ? "#81B1DB" : "#9370DB";
+  const clusterFill = dark ? "#1f2020" : "#ffffde";
+  const actorFill = dark ? "#1f2020" : "#eaeaea";
+  const actorStroke = dark ? "#81B1DB" : "#666";
+  const lifelineStroke = dark ? "#81B1DB" : "#999";
+  const edgeStroke = dark ? "#ccc" : "#333333";
+  const labelBg = dark ? "rgba(30,30,30,0.85)" : "rgba(232,232,232,0.8)";
+  let out = svg;
+  // Flowchart node shapes: mermaid v12 emits them as BARE rect/circle/ellipse
+  // (no class, no fill) nested under <g class="node ...">, PLUS polygon shapes
+  // (diamonds) that carry class="label-container". Stamp the theme fill/stroke
+  // on both. Excludes: rect.label-container (transparent label backings) and
+  // shapes that already carry fill/class (sequence actors, edge paths,
+  // markers — handled by their own rules below).
+  out = out.replace(/<(rect|circle|ellipse)(?![^>]*(?:fill=|class=|stroke=))([^>]*)>/g,
+    (m, tag, rest) => `<${tag} fill="${nodeFill}" stroke="${nodeStroke}"${rest}>`);
+  out = out.replace(/<(polygon)(?![^>]*fill=)([^>]*class="[^"]*\blabel-container\b[^>]*)>/g,
+    (m, tag, rest) => `<${tag} fill="${nodeFill}" stroke="${nodeStroke}"${rest}>`);
+  // Bare edge paths (no class/stroke): flowchart-link shapes mermaid emits
+  // without a class get the edge stroke + fill none.
+  out = out.replace(/<(path)(?![^>]*(?:stroke=|fill=|class=|d="M0))([^>]*)>/g,
+    (m, tag, rest) => `<${tag} stroke="${edgeStroke}" fill="none"${rest}>`);
+  // Cluster (subgraph) rects.
+  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bcluster\b[^"]*"[^>]*)>/g,
+    (m, tag, rest) => `<${tag} fill="${clusterFill}" stroke="${nodeStroke}"${rest}>`);
+  // Sequence actor boxes (class="actor ...", rects carry fill already in v12
+  // but the stylesheet overrides it — belt-and-braces, only when missing).
+  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bactor\b[^"]*"[^>]*)>/g,
+    (m, tag, rest) => `<${tag} fill="${actorFill}" stroke="${actorStroke}"${rest}>`);
+  // Actor lifelines.
+  out = out.replace(/<(line)(?![^>]*stroke=)([^>]*class="[^"]*\bactor-line\b[^"]*"[^>]*)>/g,
+    (m, tag, rest) => `<${tag} stroke="${lifelineStroke}"${rest}>`);
+  // Sequence message lines: mermaid emits stroke="none" INLINE (the
+  // stylesheet's .messageLine0/1{stroke:#333} rule normally overrides it, but
+  // with no stylesheet the inline none wins and the line vanishes). Rewrite
+  // stroke="none" → the theme stroke. Scoped to messageLine classes only.
+  out = out.replace(/<(line)([^>]*class="[^"]*\bmessageLine[01]\b[^"]*"[^>]*)stroke="none"([^>]*)>/g,
+    (m, tag, before, after) => `<${tag}${before}stroke="${edgeStroke}"${after}>`);
+  // Edge paths: flowchart-link (only when missing a stroke; sequence messages
+  // are <line>, handled above).
+  out = out.replace(/<(path)(?![^>]*stroke=)([^>]*class="[^"]*\bflowchart-link\b[^"]*"[^>]*)>/g,
+    (m, tag, rest) => `<${tag} stroke="${edgeStroke}" fill="none"${rest}>`);
+  // Edge-label backings.
+  out = out.replace(/<(rect)(?![^>]*fill=)([^>]*class="[^"]*\bedgeLabel\b[^"]*"[^>]*)>/g,
+    (m, tag, rest) => `<${tag} fill="${labelBg}"${rest}>`);
+  return out;
+}
+
+/**
  * mermaidTheme — pick the mermaid theme matching the app's data-theme.
  *
  * Reads `document.documentElement.dataset.theme`; returns `"dark"` when it is
@@ -113,6 +183,15 @@ async function renderMermaidSvg(text) {
       // Make the inline SVG scale to its container width rather than a fixed
       // mermaid width, so narrow diagrams don't overflow the preview column.
       svg = svg.replace(/<svg/i, '<svg style="max-width:100%;height:auto;display:block;"');
+      // Stylesheet-failure fallback (Windows WebView2 black-node fix): every
+      // shape color mermaid emits lives ONLY in the SVG's <style> block as
+      // `#id .node rect{fill:...}` rules — no presentation attributes. If that
+      // block ever fails to apply (dropped <style>, CSP, stale cache), nodes
+      // render solid black and edges vanish. So stamp the theme's key
+      // fill/stroke values as inline presentation attributes too: CSS rules
+      // still win when the stylesheet applies (normal path, zero visual
+      // change), but the attributes carry the diagram when it doesn't.
+      try { svg = inlineMermaidFallback(svg, theme); } catch { /* keep svg as-is */ }
       const entry = { svg, bindFunctions: (typeof res !== "string" && res.bindFunctions) || null };
       _cacheSvg(text, entry);
       return entry;

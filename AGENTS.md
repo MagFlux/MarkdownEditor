@@ -564,6 +564,20 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    (hidden keeps layout for getBBox measurement; `display:none`/zero-size would
    mismeasure; `-100000px` risked a WebView2 composite ghost). Each render uses
    a unique id so concurrent renders never share marker/gradient ids.
+ - **Mermaid stylesheet-failure fallback (do not regress — Windows black nodes).**
+   Mermaid v12 emits shape colors ONLY as `#id .selector{fill:...}` rules in the
+   SVG's `<style>` block — the shapes carry no fill/stroke attributes. On Windows
+   WebView2 that block can fail to apply (solid-black flowchart nodes, invisible
+   edges, labels floating outside shapes; sequence lifelines/messages vanish).
+   `inlineMermaidFallback(svg, theme)` in `src/mermaid.js` stamps the theme's
+   fill/stroke as inline presentation attributes (bare node rect/circle/ellipse,
+   `polygon.label-container` diamonds, actor rects/lifelines, messageLine
+   `stroke="none"`→theme stroke, flowchart-link paths, edgeLabel backings).
+   CSS rules beat presentation attributes, so the normal path is pixel-identical;
+   the attributes only carry the diagram when the stylesheet is missing. Fills
+   are sampled from mermaid v12 default/dark themeVariables — re-sample if
+   mermaid is upgraded. Verified by emptying `.mermaid-diagram style` headlessly
+   and screenshotting (see `/tmp/mmfb4-*.png` method).
  - **Textarea selection is translucent (do not regress — Windows blanking).**
    The visible editor text lives in the overlay; the textarea glyphs are
    `color:transparent`. `.input::selection` must be a TRANSLUCENT wash
