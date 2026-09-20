@@ -161,6 +161,28 @@ document.addEventListener("keydown", async (ev) => {
           `divStyle=${(fo && fo.firstElementChild?.getAttribute("style") || "-").slice(0, 90)}`
         );
       });
+      // SEQUENCE-style plain <text> labels: the actor/message groups do not
+      // carry a class that `g.node/g.actor` matches in mermaid v12, so walk
+      // every bare <text> whose parent group also draws a shape.
+      let tn = 0;
+      svg.querySelectorAll("text").forEach((txt) => {
+        if (tn >= 4) return;
+        const g = txt.closest && txt.closest("g");
+        const shape = g && g.querySelector("rect, polygon, path, line, use");
+        if (!shape || g.querySelector("foreignObject")) return;
+        tn++;
+        const s = shape.getBoundingClientRect();
+        const inner = txt.querySelector("tspan") || txt;
+        const t = inner.getBoundingClientRect();
+        const cx = (e2) => +(e2.left + e2.width / 2).toFixed(1);
+        const cy = (e2) => +(e2.top + e2.height / 2).toFixed(1);
+        lines.push(
+          `#${hi}T.${tn} "${(((txt.textContent || "").trim() || "?").slice(0, 16))}" ` +
+          `dCx=${+(cx(t) - cx(s)).toFixed(1)} dCy=${+(cy(t) - cy(s)).toFixed(1)} ` +
+          `anchor=${txt.getAttribute("text-anchor") || getComputedStyle(txt).textAnchor} x=${txt.getAttribute("x")} ` +
+          `class=${g.getAttribute("class")} innerW=${+t.width.toFixed(1)}`
+        );
+      });
     });
   } catch (e) { lines.push("labels: ERROR " + e.message); }
   const backdrop = document.createElement("div");

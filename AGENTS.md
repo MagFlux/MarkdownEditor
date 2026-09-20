@@ -679,7 +679,12 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     fits the content: 24 / 48px). Mermaid centers the FO on the shape but the
     text sits at the TOP of the oversized FO → labels float high/off-center,
     varying per label. `centerForeignObjectLabels(holder)` (called from
-    `installMermaidStyles`, after `stampSvgStyles`) measures the INNER `<p>`
+    `installMermaidStyles`, after `stampSvgStyles`, and RE-RUN at the
+    renderMermaidInNode / restoreMermaid insertion sites AFTER `holder` is
+    attached — a detached holder's getBoundingClientRect are all 0, so the
+    layout-dependent pass inside installMermaidStyles is a silent no-op;
+    this was the "the fix did nothing on Windows" report) measures the
+    INNER `<p>`
     line-box height — NOT the div's rect, which Chromium/WebView2 can stretch
     to the FO's full height while the text stays top-anchored — and when the
     painted height is < 75% of the FO's, flips the div to a centered flex

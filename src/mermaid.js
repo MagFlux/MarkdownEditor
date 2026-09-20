@@ -411,6 +411,12 @@ async function renderMermaidInNode(node) {
     holder.innerHTML = out.svg;
     installMermaidStyles(holder, text);
     if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
+    // RE-CENTER HTML LABELS AFTER INSERTION: centerForeignObjectLabels (via
+    // installMermaidStyles) measures the holder's rects, and every
+    // getBoundingClientRect on a DETACHED holder returns 0. The
+    // layout-dependent pass therefore must run here, with the holder live in
+    // the document, or it is a silent no-op (the Windows off-center bug).
+    try { centerForeignObjectLabels(holder); } catch { /* keep what applied */ }
     // NOTE: no `else appendChild` fallback — appending here is exactly what
     // created the duplicate-diagram ghost. If `pre` is gone, do nothing.
     if (out.bindFunctions) { try { out.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
@@ -487,6 +493,11 @@ function restoreMermaid(node) {
     holder.innerHTML = entry.svg;
     installMermaidStyles(holder, text);
     if (pre && pre.parentNode) pre.parentNode.replaceChild(holder, pre);
+    // Layout-dependent label re-centering can only run with the holder
+    // attached (detached rects are all 0) — mirror renderMermaidInNode.
+    // Must stay synchronous (after replaceChild, before returning) so the
+    // anti-flicker contract holds: no async, no timers.
+    try { centerForeignObjectLabels(holder); } catch { /* keep what applied */ }
     if (entry.bindFunctions) { try { entry.bindFunctions(holder); } catch { /* ignore: interactive add-on failed */ } }
     n++;
   }
