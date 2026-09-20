@@ -282,19 +282,31 @@ function centerForeignObjectLabels(holder) {
   holder.querySelectorAll("text").forEach((txt) => {
     const g = txt.closest && txt.closest("g");
     if (!g || g.querySelector("foreignObject")) return;
-    // The sibling shape may be a rect (actor box) or just the lifeline/arrow
-    // <line>/<path> — the Windows dump showed actor labels hanging off a
-    // class=null group whose only shape is a line; its bbox center is the
-    // same x mermaid intended. Only x-coincidence (±4px) decides, so
-    // start-anchored labels at a shape's LEFT edge (notes) never match.
-    const shape = g.querySelector("rect, polygon, path, line, use");
-    if (!shape) return;
     if (getComputedStyle(txt).textAnchor === "middle") return;
-    const rs = shape.getBoundingClientRect();
-    const dx = parseFloat(txt.getAttribute("x"));
-    if (!isFinite(dx)) return;
-    const rcx = rs.left + rs.width / 2;
-    if (Math.abs(dx - rcx) > 4) return;
+    // FINGERPRINT: a start-anchored label that mermaid placed for a middle
+    // anchor paints with its center displaced by ≈ +halfTextWidth from the
+    // shape it belongs to (dCx = +innerW/2, seen in every Windows dump).
+    // Compare the label's PAINTED center against the NEAREST shape's bbox
+    // center — the group may hold several shapes (box + lifeline) and the
+    // first in document order is not the label's box (Linux probe: text
+    // x=275 with the first rect's bbox center at 1090), and the x attr is a
+    // LOCAL coordinate that transforms can move arbitrarily far from the
+    // painted position, so attr-vs-attr comparison is unreliable. Painting
+    // geometry is what the user sees, and |dCx - innerW/2| ≤ 4 identifies
+    // the broken start-anchor while leaving deliberate left-edge anchors
+    // (notes: dCx ≈ -boxW/2 + padding, nowhere near +innerW/2) untouched.
+    const inner = txt.querySelector("tspan") || txt;
+    const t = inner.getBoundingClientRect();
+    if (!(t.width > 0)) return;
+    let bestD = null;
+    g.querySelectorAll("rect, polygon, path, line, use").forEach((shape) => {
+      const rs = shape.getBoundingClientRect();
+      if (!(rs.width || rs.height)) return;
+      const d = Math.abs(rs.left + rs.width / 2 - (t.left + t.width / 2));
+      if (bestD === null || d < bestD) bestD = d;
+    });
+    if (bestD === null) return;
+    if (Math.abs(bestD - t.width / 2) > 4) return;
     // Pin middle at the innermost level: mermaid may rely on the sheet (a
     // rule that then fails), so re-assert as BOTH an inline style AND a
     // presentation attribute on the <text> AND every <tspan> — a tspan's own

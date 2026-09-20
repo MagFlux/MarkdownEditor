@@ -730,7 +730,14 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     the sibling rect's center, so deliberately start-anchored labels (notes,
     whose x sits at the box LEFT edge) are never touched. The sibling shape
     may be a rect OR the bare lifeline <line> (Windows v12: actor-text
-    groups have class=null and shape=line — 7d). The pin is applied at the
+    groups have class=null and shape=line — 7d). The guard reads the
+    PAINTED geometry, not attributes: the trigger is
+    |labelPaintedCenter − nearestShapeCenter| ≈ halfTextWidth (±4px) — the
+    start-anchor-from-center fingerprint — because the x attr is a LOCAL
+    coordinate that transforms can move arbitrarily far from the painted
+    position, and the group's first shape in document order need not be the
+    label's box (Linux probe: text x=275, first rect bbox center 1090).
+    The pin is applied at the
     innermost level — inline style + presentation attribute on the <text>
     AND every <tspan> — because a tspan's own declaration beats anything
     inherited from the <text>, and only the innermost declaration wins the

@@ -179,12 +179,24 @@ document.addEventListener("keydown", async (ev) => {
         // attr vs computed at BOTH text and tspan level — the anchor may be
         // present on one level and lost/mismatched on the other, and only
         // the innermost declaration wins the paint.
+        // Nearest-center shape info: the group may hold several shapes and
+        // the first in document order is not the label's box (Linux probe:
+        // text x=275 but first rect bbox center at 1090) — the re-anchor
+        // guard picks the nearest-center shape, so report it here.
+        let bestShape = null, bestCx = null, bestD = Infinity;
+        g && g.querySelectorAll("rect, polygon, path, line, use").forEach((sh) => {
+          const sr = sh.getBoundingClientRect();
+          if (!(sr.width || sr.height)) return;
+          const scx = sr.left + sr.width / 2;
+          const d = Math.abs(scx - cx(t));
+          if (!bestShape || d < bestD) { bestShape = sh; bestCx = +scx.toFixed(1); bestD = +d.toFixed(1); }
+        });
         lines.push(
           `#${hi}T.${tn} "${(((txt.textContent || "").trim() || "?").slice(0, 16))}" ` +
           `dCx=${+(cx(t) - cx(s)).toFixed(1)} dCy=${+(cy(t) - cy(s)).toFixed(1)} ` +
           `txtAttr=${txt.getAttribute("text-anchor") || "-"} txtCmp=${getComputedStyle(txt).textAnchor} ` +
           `${inner !== txt ? `tsAttr=${inner.getAttribute("text-anchor") || "-"} tsCmp=${getComputedStyle(inner).textAnchor} ` : ``}` +
-          `x=${txt.getAttribute("x")} class=${g.getAttribute("class")} innerW=${+t.width.toFixed(1)}`
+          `x=${txt.getAttribute("x")} nearestShape=${bestShape ? bestShape.tagName.toLowerCase() + "@" + bestCx + "(d=" + bestD + ")" : "none"} class=${g ? g.getAttribute("class") : null} innerW=${+t.width.toFixed(1)}`
         );
       });
     });
