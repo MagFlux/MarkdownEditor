@@ -106,7 +106,7 @@ npm test               # 21 round-trip renderer cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
-npm run verify-toolbar # toolbar active-states track the caret (36 cases) — bold/underline/
+npm run verify-toolbar # toolbar active-states track the caret (41 cases) — bold/underline/
                        # code/H2/link/italic/strike with and without trailing punctuation,
                        # toggle-OFF comma preservation, multi-word spans, + click, arrow-key,
                        # programmatic, and tab-switch paths, all with NO text change required.
@@ -477,10 +477,29 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `trimmedSpan` for the apply-new-format branch) so the adjacent punctuation
    is preserved when removing OR re-wrapping. The punctuation set is safe
    because no format marker (`* _ ~ ` < > / [ ] ( )`) is in it, and a URL
-   inside `[text](https://…)` is not at a token edge. `verifyToolbar.mjs`
-  (36 cases) covers: caret on `**bold**` / `*italic*` / `~~strike~~` /
-   `[…](https://…)` each with a trailing comma, plus a toggle-OFF case
-   asserting the comma survives.
+    inside `[text](https://…)` is not at a token edge. `verifyToolbar.mjs`
+   (41 cases) covers: caret on `**bold**` / `*italic*` / `~~strike~~` /
+    `[…](https://…)` each with a trailing comma, plus a toggle-OFF case
+    asserting the comma survives.
+  - **Collapsed-caret inline formatting INSERTS an empty marker pair (do not
+    regress).** With NOTHING selected, a formatting button must never wrap the
+    word nearest the caret: a caret on an empty line, in the whitespace
+    between words, or at a plain-token edge inserts an empty marker pair
+    (`****` bold / `**` italic / `~~~~` strike / `<u></u>` underline /
+    ``` `` ``` code / `[](https://)` link) at the caret with the cursor
+    between the markers, ready to type — padded with one space on a side
+    whose adjacent char is a word char, so a caret at either edge of the
+    single-space gap in `the test` yields exactly `the **** test`. It only
+    unwraps when the caret sits INSIDE an already-formatted span (so the lit
+    B button honestly toggles `**bold**` off at every intra-span caret,
+    including the span edges `wordAt` reports). A caret strictly inside a
+    PLAIN word still wraps that word (`bold me` caret mid-`me` →
+    `bold **me**`), and a single-line SELECTION is wrapped exactly
+    (`select me` sel `me` → `select **me** please`). This is `toggleFormat`
+    in `src/editing.js` (regime comments in the source); verified by the
+    empty-line / between-words / toggle-off / selection cases in
+    `test/verifyToolbar.mjs`. `verifyUndo.mjs` phase 2 keeps the caret
+    mid-word so the typed-burst separation still exercises the wrap path.
 - **Split-view scroll-sync is value-based echo suppression, not a time-only
   window** (do not regress). In split view the two panes follow each other via
   `followScroll`; each programmatic `scrollTop` write stamps

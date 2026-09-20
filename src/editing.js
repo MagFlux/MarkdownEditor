@@ -29,38 +29,110 @@ export function createEditingHandlers({
   isTableSep,
 }) {
   /**
-   * toggleFormat — apply or toggle off an inline format over the current word or selection.
+   * toggleFormat — apply, toggle off, or INSERT an inline format.
+   *
+   * Three regimes:
+   * 1. Collapsed caret: toggles OFF only when the caret sits INSIDE an already
+   *    formatted token (e.g. `**bo|ld**`). Otherwise it inserts an EMPTY marker
+   *    pair at the caret (`****` / `**` / `~~~~` / `<u></u>` / ``` `` ``` /
+   *    `[](https://)`) with the caret between the markers, ready to type — it
+   *    never bolds the nearest word (before OR after the caret) and never
+   *    reuses a neighbouring span that the caret is merely adjacent to.
+   * 2. Single-line selection: wraps exactly the selected span, or toggles OFF
+   *    when the selection IS (or lies inside) a format span.
+   * 3. Multi-line selection: falls back to the line-under-the-caret behaviour
+   *    (block formats are the right tool there; inline stays predictable).
    * @param {string} kind Inline format to apply.
    */
   function toggleFormat(kind) {
     const d = getActiveDoc(), input = d.input, text = d.input.value;
-    const a = input.selectionStart;
+    const a = input.selectionStart, b = input.selectionEnd;
     const [lineStart, lineEnd] = lineBounds(text, a);
     const line = text.slice(lineStart, lineEnd);
-    const [ws, we] = wordAt(line, a - lineStart);
-    const det = detectFormat(line, ws, we);
-    const span = det ? { fs: det.fs, fe: det.fe } : trimmedSpan(line, ws, we);
-    const { fs, fe } = span;
+    const la = a - lineStart;
+    const collapsed = a === b;
+    const multiLine = !collapsed && (b < lineStart || b > lineEnd);
+    const sel = (!collapsed && !multiLine) ? { s: la, e: b - lineStart } : null;
     let newLine, ns, ne;
-    const target = line.slice(fs, fe);
-    if (kind === "link") {
-      if (det && det.fmt === "link") {
-        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
-        ns = fs; ne = ns + det.inner.length;
-      } else {
-        const w = target || "link";
-        newLine = line.slice(0, fs) + `[${w}](https://)` + line.slice(fe);
-        ns = fs + 3 + w.length; ne = ns + 8;
-      }
-    } else {
-      if (det && det.fmt === kind) {
-        newLine = line.slice(0, fs) + det.inner + line.slice(fe);
-        ns = fs; ne = ns + det.inner.length;
-      } else {
-        const inner = det ? det.inner : target;
+
+    if (collapsed || multiLine) {
+      // Line-under-the-caret behaviour (regime 1 for a caret; regime 3 fallback
+      // for a multi-line selection). `wordAt` may RETREAT to the previous token
+      // when the caret sits in whitespace, so the toggle-off check additionally
+      // requires the caret offset to be inside the detected format span — a
+      // caret after a trailing space must NOT unwrap the span it merely
+      // neighbours; it inserts an empty pair instead.
+      const [ws, we] = wordAt(line, la);
+      const det = detectFormat(line, ws, we);
+      const inFmt = collapsed && det && la >= det.fs && la <= det.fe;
+      const { fs, fe } = (det && (!collapsed || inFmt)) ? { fs: det.fs, fe: det.fe } : trimmedSpan(line, ws, we);
+      const target = line.slice(fs, fe);
+      if (!collapsed) {
+        // Multi-line selection fallback: historical token-wrap behaviour.
+        if (det && det.fmt === kind) {
+          newLine = line.slice(0, fs) + det.inner + line.slice(fe);
+          ns = fs; ne = ns + det.inner.length;
+        } else {
+          const inner = det ? det.inner : target;
+          newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
+          ns = fs; ne = ns + inner.length;
+        }
+      } else if (inFmt && det.fmt === kind) {
+        // Caret inside a matching format: toggle it OFF.
+        newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
+        ns = det.fs; ne = ns + det.inner.length;
+      } else if (det) {
+        // Caret next to (not inside) a DIFFERENT format: wrap the resolved
+        // span with `kind` — historical behaviour for a plain caret whose
+        // wordAt resolution landed on an already-formatted neighbour.
+        const inner = det.inner;
+        newLine = line.slice(0, det.fs) + wrapFor(kind, det.inner) + line.slice(det.fe);
+        ns = det.fs; ne = ns + inner.length;
+      } else if (ws < la && la < we && /\S/.test(line.slice(ws, we))) {
+        // Caret strictly INSIDE a plain word: wrap that word (sentence
+        // punctuation at the token edges is preserved via trimmedSpan).
+        const { fs, fe } = trimmedSpan(line, ws, we);
+        const inner = line.slice(fs, fe);
         newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
         ns = fs; ne = ns + inner.length;
+      } else {
+        // Plain caret (empty line, whitespace, or a token edge): insert an
+        // EMPTY marker pair AT THE CARET with the caret in the middle — the
+        // nearest words are never wrapped. The insertion is padded with one
+        // space on a side whose adjacent char is a word char, so a caret at
+        // either edge of the gap in `the test` yields `the **** test`
+        // exactly, with the cursor between the markers ready for new text.
+        const ins = kind === "link" ? "[](https://)" : wrapFor(kind, "");
+        const padB = la > 0 && /\S/.test(line[la - 1]) ? 1 : 0;
+        const padA = /\S/.test(line[la] || "") ? 1 : 0;
+        const openLen = ({ bold: 2, italic: 1, strike: 2, underline: 3, code: 1, link: 1 })[kind] || 0;
+        newLine = line.slice(0, la) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(la);
+        ns = la + padB + openLen; ne = ns;
       }
+      commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
+      return;
+    }
+
+    // Single-line selection (regime 2): wrap the EXACT selected span, or toggle
+    // OFF when the selection is / is contained in a format span.
+    const { s, e } = sel;
+    let det = detectFormat(line, s, e);
+    if (!det) {
+      const [ws, we] = wordAt(line, s);
+      const d2 = detectFormat(line, ws, we);
+      if (d2 && s >= d2.fs && e <= d2.fe) det = d2;
+    }
+    if (det && det.fmt === kind) {
+      newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
+      ns = det.fs; ne = ns + det.inner.length;
+    } else if (det) {
+      const inner = det.inner;
+      newLine = line.slice(0, det.fs) + wrapFor(kind, inner) + line.slice(det.fe);
+      ns = det.fs; ne = ns + inner.length;
+    } else {
+      const inner = line.slice(s, e);
+      newLine = line.slice(0, s) + wrapFor(kind, inner) + line.slice(e);
+      ns = s; ne = s + inner.length;
     }
     commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
   }

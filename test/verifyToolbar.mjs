@@ -4,7 +4,11 @@
  * Asserts the B/I/U/S/link and H1-H3/quote/list/table buttons light correctly
  * on click, arrow-key, programmatic-caret, and tab-switch paths (even with NO
  * text change required), with and without trailing sentence punctuation, plus
- * toggle-OFF comma preservation. Run with `npm run verify-toolbar`.
+ * toggle-OFF comma preservation. Also guards the collapsed-caret format
+ * insertion semantics: a plain caret inserts an EMPTY marker pair with the
+ * caret between the markers (never wrapping a neighbouring word), while a
+ * caret INSIDE a format span still toggles it off. Run with `npm run
+ * verify-toolbar`.
  */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
@@ -196,6 +200,76 @@ await sleep(S * 2);
   const txt = await p.evaluate(() => window.editor.activeTab.input.value);
   ok("toggle OFF **bold** with trailing comma → comma preserved",
     txt === "- Live bold, *italic* here", "got " + JSON.stringify(txt));
+}
+
+// --- Empty-line format: clicking bold on an empty line inserts the empty
+// marker pair with the caret BETWEEN the markers, ready to type (regression:
+// the old code wrapped the wordAt fallback span and left the caret at the
+// line start). ---
+await setLine("", 0);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const t = await p.evaluate(() => {
+    const i = window.editor.activeTab.input;
+    return { v: i.value, s: i.selectionStart, e: i.selectionEnd };
+  });
+  ok("bold on empty line → inserts **** with caret in the middle",
+    t.v === "****" && t.s === 2 && t.e === 2, "got " + JSON.stringify(t));
+}
+
+// --- Caret BETWEEN words ("the | test"): bold must NOT wrap a neighbour; it
+// inserts an empty pair at the caret (regression: the old code bolded whichever
+// word the caret was closer to). ---
+await setLine("the test", 3);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const t = await p.evaluate(() => {
+    const i = window.editor.activeTab.input;
+    return { v: i.value, s: i.selectionStart, e: i.selectionEnd };
+  });
+  ok("caret between words → inserts **** at caret, neighbours untouched",
+    t.v === "the **** test" && t.s === 6 && t.e === 6, "got " + JSON.stringify(t));
+}
+
+// --- Caret INSIDE a formatted token still toggles OFF ---
+await setLine("plain **bold** here", 8);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("caret inside **bold** + bold → toggles OFF",
+    txt === "plain bold here", "got " + JSON.stringify(txt));
+}
+
+// --- Caret just past a format span's closing marker: the button LIT state
+// (asserted earlier on this caret) means a click must toggle the span OFF,
+// never leave it half-wrapped. ---
+await setLine("**bold** rest", 8);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("caret right after `**bold**` (button lit) → toggles OFF the span",
+    txt === "bold rest", "got " + JSON.stringify(txt));
+}
+
+// --- Selection still wraps the exact selected span ---
+await p.evaluate(() => {
+  const ed = window.editor;
+  ed.setDocumentText("select me please");
+  const t = ed.activeTab.input;
+  t.setSelectionRange(7, 9);
+  t.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+});
+await sleep(S);
+await p.locator('button[data-fmt="bold"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("selection `me` + bold → wraps exactly the selection",
+    txt === "select **me** please", "got " + JSON.stringify(txt));
 }
 
 console.log(`\nPASS ${pass} / FAIL ${fail}`);

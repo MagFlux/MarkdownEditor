@@ -61,8 +61,16 @@ await p.keyboard.press("Control+Shift+z"); await sleep(300);
 ok("1e type -> redo restores", (await val()) === "hello world ");
 
 // Phase 2: type then Bold -> two undos separate the steps
+// (collapsed caret now INSERTS an empty marker pair — it no longer wraps the
+// nearest word — so the caret is moved inside "me" first.)
 await newTab(2);
 await type("bold me ");
+await p.evaluate(() => {
+  const t = window.editor.activeTab.input;
+  t.setSelectionRange(6, 6); // inside "me"
+  t.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+});
+await sleep(S);
 await p.locator('button[data-fmt="bold"]:visible').first().click(); await sleep(300);
 ok("2a format applied", (await val()) === "bold **me** ");
 await p.keyboard.press("Control+z"); await sleep(300);

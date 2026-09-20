@@ -12,7 +12,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Multi-file tabs** — open, close and reorder documents independently (new blank tabs, including the replacement after closing the last tab, are named `Untitled 1`, `Untitled 2`, … per application run; Ctrl+T for a new tab, `×` to close, Ctrl+W to close the active tab)
 - **Custom undo / redo stack** — per-tab, with `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`
 - **Word-wise caret moves** — `Ctrl+Left` / `Ctrl+Right` jump the caret a whole word in the arrow's direction; add `Shift` (`Ctrl+Shift+Left` / `Ctrl+Shift+Right`) to extend/shrink the selection a whole word at a time (native textarea behavior)
-- **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — toggled on a selection or the current word (Ctrl+B / I / U / K)
+- **Inline formatting**: bold, italic, **underline** (`<u>`), strikethrough, `` code ``, and links — wrapping the exact selected text, the current word when the caret is inside it, or — with a plain caret (empty line, between words, at a token edge) — inserting an empty `**`+`**` pair with the caret between the markers, ready to type (Ctrl+B / I / U / K)
 - **Block formatting**: H1–H3, quotes, `ul` / `ol`, code fences, and GFM tables
 - **Mermaid diagrams** — a `` ```mermaid `` fence renders as a live SVG diagram in the preview (and is captured in HTML/PDF export). Rendered with [mermaid](https://mermaid.js.org) using the current app theme; a syntax error shows an inline red error box with the failing source.
 - **Live toolbar state** — the formatting buttons (B / I / U / S / code / link, and H1–H3 / quote / list / table) light up to match the formatting at the **caret** the instant it moves, whether you click, use the arrow keys, paste, undo, or switch tabs. Multi-word inline spans are detected throughout their contents, code spans take precedence over marker-like text inside them, and the buttons do not require you to select or change the text first.
@@ -77,7 +77,7 @@ MarkdownEditor/
     ├── verify.mjs              # UI smoke test (screenshots → test/verify/)
     ├── verifyUndo.mjs          # undo/redo UI test
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
-    ├── verifyToolbar.mjs       # toolbar active-states track the caret (36 cases)
+    ├── verifyToolbar.mjs       # toolbar active-states track the caret (41 cases)
     ├── verifyPaste.mjs         # rich-paste HTML→Markdown (18 cases)
     ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
@@ -352,7 +352,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify` | Headless UI smoke test (needs Playwright) |
 | `npm run verify-undo` | Headless undo/redo UI test (11 cases, needs Playwright) |
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
- | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens, multi-word spans, code-span precedence, and toggle-OFF comma preservation (36 cases, needs Playwright) |
+ | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens, multi-word spans, code-span precedence, and toggle-OFF comma preservation; also guards collapsed-caret formatting — a plain caret (empty line, between words, token edge) inserts an EMPTY marker pair with the caret between the markers (never wraps a neighbouring word), a caret inside a format span toggles off, a mid-word caret wraps that word, and a single-line selection wraps exactly (41 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
 | `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |
