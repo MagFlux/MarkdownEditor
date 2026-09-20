@@ -24,6 +24,7 @@
     "verify-mermaidflicker": "node test/verifyMermaidFlicker.mjs",
     "verify-mermaidstyle": "node test/verifyMermaidStyle.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
+    "verify-caret": "node test/verifyCaret.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
     "app:build": "tauri build"

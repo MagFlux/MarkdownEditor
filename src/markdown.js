@@ -1263,8 +1263,9 @@ export function createApp(root) {
   /**
    * onKeyDown — textarea-local editor keybindings. Enter on an empty
    * list/quote item removes the marker (exit the list); Enter on a non-empty
-   * list/quote/ol/ul item continues the next line with the same marker (and
-   * increments ordered-list numbers).
+   * list/quote/ol/ul item continues the next line with the same marker,
+   * PRESERVING the parent item's indentation (so a nested bullet's Enter
+   * keeps its indent level), and increments ordered-list numbers.
    *
    * Tab/Shift+Tab used to be bound here, but on WebKitGTK (the Tauri shell on
    * Linux; WebView2 behaves the same on Windows) Shift+Tab escaped the editor
@@ -1284,7 +1285,7 @@ export function createApp(root) {
         const before = text.slice(0, a);
         const lineStart = before.lastIndexOf("\n") + 1;
         const line = before.slice(lineStart);
-        const lm = line.match(/^\s*(#{1,4}\s|>\s?|[-*+]\s+|\d+\.\s+)/);
+        const lm = line.match(/^(\s*)(#{1,4}\s|>\s?|[-*+]\s+|\d+\.\s+)/);
         if (lm) {
           const rest = line.slice(lm[0].length);
           if (rest.trim() === "") {
@@ -1295,11 +1296,14 @@ export function createApp(root) {
             return;
           }
           ev.preventDefault();
-          const marker = lm[1];
+          // Preserve the parent item's indentation (the "Test3" nested-bullet
+          // case): the matched prefix indent must follow the marker onto the
+          // new line, not be dropped on the floor.
+          const marker = lm[2];
           let newMarker = marker;
           if (/^\d+\.\s+$/.test(marker)) newMarker = (parseInt(marker.match(/^(\d+)\./)[1], 10) + 1) + ". ";
           else if (/^[-*+]\s+$/.test(marker) && marker[0] === "*") newMarker = marker;
-          const insert = "\n" + newMarker;
+          const insert = "\n" + lm[1] + newMarker;
           const to = text.slice(0, a) + insert + text.slice(input.selectionEnd);
           const pos = a + insert.length;
           commit("continue list/quote", to, pos, pos);

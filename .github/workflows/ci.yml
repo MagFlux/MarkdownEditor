@@ -139,6 +139,8 @@ jobs:
         run: npm run verify-mermaidflicker
       - name: Mermaid stylesheet-failure robustness (8 cases)
         run: npm run verify-mermaidstyle
+      - name: Caret placement after editor actions (25 cases)
+        run: npm run verify-caret
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 

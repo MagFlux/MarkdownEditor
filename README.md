@@ -20,8 +20,8 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Export as PDF / HTML** — via the hamburger menu (top-right of the toolbar). Renders your live preview and saves it as a self-contained `.html` or a multi-page A4 `.pdf` (via `jsPDF` + `html2canvas`). Uses the same in-app save dialog as Save — pick a location and the file is written there; in a plain browser it falls back to a download.
 - **Drag-and-drop** `.md` files straight onto the window (opens them in a new tab)
 - **Ctrl+click a link** in the source to open it in the default browser
-- **Tab / Shift+Tab** to indent / outdent list & code lines
-- **Enter** auto-continues list items and numbered lists; press Enter on an empty list item to exit the list
+- **Tab / Shift+Tab** to indent / outdent list, code, and blank lines (blank lines indent too; the caret follows its line's column — no text is highlighted, and block-format/table/codeblock buttons commit with a collapsed caret at the end of the block, never a selection)
+- **Enter** auto-continues list items (preserving the parent item's indentation, so a nested bullet keeps its indent level) and numbered lists; press Enter on an empty list item to exit the list
 - **Session persistence** — tabs and their contents are saved to `localStorage` so a crash or close does not lose work
 - **Unsaved-changes guard** — confirms before closing a tab or window with uncommitted edits
 - **Light / Dark** theme; switching themes preserves the current vertical position in both editor and preview panes. Scrollbar colors follow the active theme (light thumb in light mode, dark thumb in dark mode) so they blend on any OS — including Windows WebView2, where the OS otherwise paints its own themed scrollbars (per-theme `color-scheme` + `--sb`/`--sb-hi` vars in `src/style.css`). The last theme is persisted (`localStorage: me.theme`) and restored on start.
@@ -88,6 +88,7 @@ MarkdownEditor/
     ├── verifyThemeScroll.mjs   # theme-switch scroll preservation + themed scrollbars (10 cases)
     ├── verifyMermaidFlicker.mjs # mermaid anti-flicker: keystroke outside fence does not flash raw code (7 cases)
     ├── verifyMermaidStyle.mjs  # mermaid stylesheet-failure robustness + label centering (16 cases)
+    ├── verifyCaret.mjs         # caret placement after editor actions (25 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
 
@@ -304,6 +305,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
   npm run verify-tauri
   ```
 
+- **Caret placement after editor actions** — 25 assertions that every edit committed this session lands its caret where a typist expects it, never as a highlighted selection. Coverage: Enter on a nested bullet/ordered item continues the marker **with the parent's indentation** (a skipped-tab regression) and the empty-item Enter still exits the list; Tab indents a whole line *and blank lines* with the caret's column preserved and always a **collapsed** selection (same for Shift+Tab, including the column-0 case); inline bold over a mid-word caret or a selection collapses the caret at the end of the inner text right **before the closing `**`** (`bold **test**` with caret after the final `t`), toggle-OFF lands after the unwrapped span, and the caret-in-a-gap case still inserts the empty marker pair while keeping the caret between the markers; code-fence wrap puts the caret **inside** the fence — on the blank middle line for an empty block (````` ```\n|\n``` ````), after the content before the `\n``` ` tail otherwise; table insert leaves the caret in the first body cell; and the h1 button leaves the caret at the end of the rewritten block.
+
+  ```bash
+  npm run verify-caret
+  ```
+
 All of these exit non-zero on any failure or console error, so they can be wired into CI.
 
 ---
@@ -363,6 +370,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
  | `npm run verify-mermaidflicker` | Headless mermaid anti-flicker test: a keystroke in prose outside a fence does NOT flash raw code — the holder is restored synchronously from cache in the same tick; a keystroke inside the fence still re-renders (7 cases, needs Playwright) |
 | `npm run verify-mermaidstyle` | Headless mermaid stylesheet-failure test: stamped attrs exist, `stroke="none"` placeholders overwritten, computed styles survive removal of EVERY `<style>` element, the sheet paints the same fontFamily mermaid measures with, oversized label boxes get flex-recentered, and centered-x plain-text labels re-anchored to text-anchor:middle (16 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, overwrite confirmation, picker Home button + hidden-folder navigation) |
+| `npm run verify-caret` | Headless caret-placement test (25 cases): Enter list-continuation keeps indentation with a collapsed caret; Tab/Shift+Tab (incl. blank lines) commit without highlighting and the caret column follows the text; inline formats collapse at the end of the inner span before the closing marker; code-fence wrap caret sits inside the fence; table insert caret in the first body cell |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |
 | `npx tauri build` | Deployable executable + bundle artifacts (alias: `npm run app:build`) |
 

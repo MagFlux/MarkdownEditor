@@ -42,6 +42,13 @@ export function createEditingHandlers({
    *    when the selection IS (or lies inside) a format span.
    * 3. Multi-line selection: falls back to the line-under-the-caret behaviour
    *    (block formats are the right tool there; inline stays predictable).
+   *
+   * Every commit is a COLLAPSED caret — never a highlighted selection. After
+   * wrapping (word or selection) the caret sits at the end of the inner text,
+   * immediately BEFORE the closing marker, so typing continues inside the
+   * format without disturbing anything; toggle-OFF puts the caret at the end
+   * of the unwrapped span; the empty-marker insertion keeps the caret between
+   * the markers.
    * @param {string} kind Inline format to apply.
    */
   function toggleFormat(kind) {
@@ -53,7 +60,12 @@ export function createEditingHandlers({
     const collapsed = a === b;
     const multiLine = !collapsed && (b < lineStart || b > lineEnd);
     const sel = (!collapsed && !multiLine) ? { s: la, e: b - lineStart } : null;
-    let newLine, ns, ne;
+    let newLine, care;
+    // Width of the opening marker for `kind` — used to place the caret at the
+    // end of the inner text (just BEFORE the closing marker) with NO
+    // highlighted selection. Toggle-OFF branches have no marker pair left, so
+    // their openLen is 0.
+    const openLen = ({ bold: 2, italic: 1, strike: 2, underline: 3, code: 1, link: 1 })[kind] || 0;
 
     if (collapsed || multiLine) {
       // Line-under-the-caret behaviour (regime 1 for a caret; regime 3 fallback
@@ -71,30 +83,30 @@ export function createEditingHandlers({
         // Multi-line selection fallback: historical token-wrap behaviour.
         if (det && det.fmt === kind) {
           newLine = line.slice(0, fs) + det.inner + line.slice(fe);
-          ns = fs; ne = ns + det.inner.length;
+          care = fs + det.inner.length;
         } else {
           const inner = det ? det.inner : target;
           newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
-          ns = fs; ne = ns + inner.length;
+          care = fs + openLen + inner.length;
         }
       } else if (inFmt && det.fmt === kind) {
         // Caret inside a matching format: toggle it OFF.
         newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
-        ns = det.fs; ne = ns + det.inner.length;
+        care = det.fs + det.inner.length;
       } else if (det) {
         // Caret next to (not inside) a DIFFERENT format: wrap the resolved
         // span with `kind` — historical behaviour for a plain caret whose
         // wordAt resolution landed on an already-formatted neighbour.
         const inner = det.inner;
         newLine = line.slice(0, det.fs) + wrapFor(kind, det.inner) + line.slice(det.fe);
-        ns = det.fs; ne = ns + inner.length;
+        care = det.fs + openLen + inner.length;
       } else if (ws < la && la < we && /\S/.test(line.slice(ws, we))) {
         // Caret strictly INSIDE a plain word: wrap that word (sentence
         // punctuation at the token edges is preserved via trimmedSpan).
         const { fs, fe } = trimmedSpan(line, ws, we);
         const inner = line.slice(fs, fe);
         newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
-        ns = fs; ne = ns + inner.length;
+        care = fs + openLen + inner.length;
       } else {
         // Plain caret (empty line, whitespace, or a token edge): insert an
         // EMPTY marker pair AT THE CARET with the caret in the middle — the
@@ -105,11 +117,14 @@ export function createEditingHandlers({
         const ins = kind === "link" ? "[](https://)" : wrapFor(kind, "");
         const padB = la > 0 && /\S/.test(line[la - 1]) ? 1 : 0;
         const padA = /\S/.test(line[la] || "") ? 1 : 0;
-        const openLen = ({ bold: 2, italic: 1, strike: 2, underline: 3, code: 1, link: 1 })[kind] || 0;
+        care = la + padB + openLen;
         newLine = line.slice(0, la) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(la);
-        ns = la + padB + openLen; ne = ns;
       }
-      commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
+      // care is line-LOCAL (like fs/la above); commit expects doc-absolute
+      // positions, so lineStart is added twice here to keep the caret collapsed
+      // at the right spot (commit takes both start and end).
+      const abs = lineStart + care;
+      commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), abs, abs);
       return;
     }
 
@@ -124,17 +139,19 @@ export function createEditingHandlers({
     }
     if (det && det.fmt === kind) {
       newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
-      ns = det.fs; ne = ns + det.inner.length;
+      care = det.fs + det.inner.length;
     } else if (det) {
       const inner = det.inner;
       newLine = line.slice(0, det.fs) + wrapFor(kind, inner) + line.slice(det.fe);
-      ns = det.fs; ne = ns + inner.length;
+      care = det.fs + openLen + inner.length;
     } else {
       const inner = line.slice(s, e);
       newLine = line.slice(0, s) + wrapFor(kind, inner) + line.slice(e);
-      ns = s; ne = s + inner.length;
+      care = s + openLen + inner.length;
     }
-    commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), lineStart + ns, lineStart + ne);
+    // care is line-LOCAL here too — convert to doc-absolute before committing.
+    const abs = lineStart + care;
+    commit(kind, text.slice(0, lineStart) + newLine + text.slice(lineEnd), abs, abs);
   }
 
   /**
@@ -192,7 +209,11 @@ export function createEditingHandlers({
       const tbl = `| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |`;
       const pre = (lines[cur] || "").trim() !== "" ? "\n" : "";
       const to = text.slice(0, startLine) + pre + tbl + "\n" + text.slice(endLine);
-      commit("insert table", to, startLine + pre.length, startLine + pre.length + tbl.length);
+      // Cursor in the first body cell so typing starts there immediately
+      // (no highlighted selection over the inserted table).
+      const row3 = tbl.split("\n")[2];
+      const caret = startLine + pre.length + (tbl.length - row3.length) + 2;
+      commit("insert table", to, caret, caret);
       return;
     }
 
@@ -204,23 +225,29 @@ export function createEditingHandlers({
         if (/^(```|~~~)/.test(arr[0].trim())) arr.shift();
         if (arr.length && /^(```|~~~)/.test(arr[arr.length - 1].trim())) arr.pop();
         const nb = arr.join("\n");
-        commit("unwrap code block", text.slice(0, startLine) + nb + text.slice(endLine), startLine, startLine + nb.length);
+        // Collapsed caret at the end of the (un)wrapped block — no highlight.
+        const care = startLine + nb.length;
+        commit("unwrap code block", text.slice(0, startLine) + nb + text.slice(endLine), care, care);
         return;
       }
       const nb = "```\n" + block + "\n```";
-      commit("wrap code block", text.slice(0, startLine) + nb + text.slice(endLine), startLine, startLine + nb.length);
+      // Caret INSIDE the fence: end of the content, right before the "\n```"
+      // tail (nb.length - 4, NOT - 3 — -3 lands on the closing-fence line
+      // itself). With an empty block the caret thus sits on the blank middle
+      // line: "```\n|\n```". Collapsed, no highlight.
+      const care = startLine + nb.length - 4;
+      commit("wrap code block", text.slice(0, startLine) + nb + text.slice(endLine), care, care);
       return;
     }
 
     const block = text.slice(startLine, endLine);
     const newBlock = block.split("\n").map((line) => blockLine(kind, line)).join("\n");
-    commit("block " + kind, text.slice(0, startLine) + newBlock + text.slice(endLine), startLine, startLine + newBlock.length);
+    // Collapsed caret at the end of the rewritten block so the user types at
+    // the end of the content (no highlighted selection).
+    const care = startLine + newBlock.length;
+    commit("block " + kind, text.slice(0, startLine) + newBlock + text.slice(endLine), care, care);
   }
 
-  /**
-   * indentLines — indent or outdent the selected range.
-   * @param {number} dir +1 to indent, -1 to outdent.
-   */
   /**
    * selLineRange — line range `[start, end)` covering the current selection,
    * with a WebKitGTK double-click guard. A double-click on the last word of a
@@ -241,16 +268,44 @@ export function createEditingHandlers({
     return [s, e];
   }
 
+  /**
+   * indentLines — indent or outdent the selected range, INCLUDING blank lines
+   * (a Tab on a blank line inserts the indent and Shift+Tab removes it, with
+   * the caret visibly moving past it).
+   *
+   * The result is committed with a COLLAPSED caret (never a highlighted
+   * selection): the caret follows its text, i.e. its column within its line
+   * is preserved across the added/removed indentation (a column-0 caret stays
+   * glued to the inserted prefix — for Tab it sits after the tab, and for
+   * Shift+Tab there is nothing before it, so it stays at column 0).
+   * @param {number} dir +1 to indent, -1 to outdent.
+   */
   function indentLines(dir) {
     const d = getActiveDoc(), input = d.input, text = d.input.value;
     const a = input.selectionStart, b = input.selectionEnd;
     const [s, e] = selLineRange(text, a, b);
     const lines = text.slice(s, e).split("\n");
     const newLines = dir > 0
-      ? lines.map((line) => (line === "" ? line : "\t" + line))
+      ? lines.map((line) => "\t" + line)
       : lines.map((line) => line.replace(/^(\t| {1,4})/, ""));
     const joined = newLines.join("\n");
-    commit(dir > 0 ? "indent" : "outdent", text.slice(0, s) + joined + text.slice(e), s, s + joined.length);
+    // Caret position: preserve its COLUMN within its line across the change.
+    const tail = Math.max(a, b);
+    const caretIdx = text.slice(s, tail).split("\n").length - 1;
+    const colBefore = tail - lineBounds(text, tail)[0];
+    let head = s, delta = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (i < caretIdx) {
+        if (newLines[i] !== lines[i]) delta += newLines[i].length - lines[i].length;
+      } else {
+        // Caret's own line: map the column through the added/removed prefix.
+        const add = newLines[i].length - lines[i].length;
+        const colAfter = Math.max(0, Math.min(colBefore + add, newLines[i].length));
+        head = s + lines.slice(0, i).join("\n").length + (i > 0 ? 1 : 0) + delta + colAfter;
+        break;
+      }
+    }
+    commit(dir > 0 ? "indent" : "outdent", text.slice(0, s) + joined + text.slice(e), head, head);
   }
 
   return { toggleFormat, toggleBlock, indentLines };
