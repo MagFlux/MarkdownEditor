@@ -15,3 +15,12 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Shift+Tab legacy-keysym normalization (src/keymap.rs): on Linux the X
+# keyboard map reports Shift+Tab as GDK_KEY_ISO_Left_Tab, which WebKitGTK
+# forwards to the DOM as key "Unidentified" — the editor's outdent never ran.
+# Versions follow tauri's lockfile (tao 0.35 → gtk 0.18 / webkit2gtk 2.0) so
+# no duplicate crates are compiled.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+webkit2gtk = "2"

@@ -2018,6 +2018,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "markdown-editor"
 version = "0.0.0"
 dependencies = [
+ "gtk",
  "serde",
  "serde_json",
  "tauri",
@@ -2025,6 +2026,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "webkit2gtk",
 ]
 
 [[package]]

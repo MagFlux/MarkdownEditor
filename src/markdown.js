@@ -333,6 +333,24 @@ export function createApp(root) {
     doc.input.addEventListener("keyup", () => { if (doc === activeTab) { updateStatus(doc); updateActiveStates(); } setUndoRedoState(); });
     doc.input.addEventListener("keydown", onKeyDown);
     doc.input.addEventListener("blur", () => { if (doc === activeTab) updateActiveStates(); });
+    // WebKitGTK escape hatch: if the engine runs Shift+Tab focus traversal
+    // DESPITE our capture-phase preventDefault (the keydown reaches JS but the
+    // GTK webview still moves focus), the blur lands within a couple hundred
+    // ms of the stamp the capture handler wrote (__sTabAt). Pull focus — and
+    // the caret — back into the textarea on the next macrotask; focusing it
+    // also severs the traversal target the engine selected. Stands down for a
+    // modal (its own focus trap owns Tab) so it can never yank out of a dialog.
+    doc.input.addEventListener("blur", () => {
+      doc.__sSel = [doc.input.selectionStart, doc.input.selectionEnd];
+      if (Date.now() - (doc.__sTabAt || 0) > 250) return;
+      setTimeout(() => {
+        if (doc !== activeTab) return;
+        if (document.querySelector(".savedlg-backdrop")) return;
+        if (document.activeElement === doc.input) return;
+        doc.input.focus();
+        if (doc.__sSel) doc.input.setSelectionRange(doc.__sSel[0], doc.__sSel[1]);
+      }, 0);
+    });
     doc.input.addEventListener("mousedown", () => { if (doc !== activeTab) { activate(doc); } });
     doc.input.addEventListener("click", (ev) => {
       if (ev.ctrlKey || ev.metaKey) openAtCaret();
@@ -1174,6 +1192,35 @@ export function createApp(root) {
   }
   window.addEventListener("keydown", onGlobalKeyDown);
 
+  // Tab / Shift+Tab → indent/outdent, captured at the TOP of the DOM pipeline.
+  // This is bound on `window` in CAPTURE phase with preventDefault() +
+  // stopPropagation() so the editor's own textarea handler does not double-fire,
+  // and the browser's default focus traversal (Shift+Tab escaping the editor to
+  // the toolbar/other controls on WebKitGTK) never gets a chance to run. When a
+  // centered modal (identify by its .savedlg-backdrop) is open we stand down so
+  // the modal's own focus trap keeps Tab/Shift+Tab inside the dialog.
+  window.addEventListener("keydown", (ev) => {
+    if (!isEditorTabKey(ev) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (document.querySelector(".savedlg-backdrop")) return;
+    const d = activeTab;
+    if (!d) return;
+    if (ev.target !== d.input && document.activeElement !== d.input) return;
+    // Stamp the timestamp BEFORE any early return path below: some WebKitGTK
+    // builds report Shift+Tab with the legacy X keysym name ISO_Left_Tab
+    // instead of "Tab", and some deliver the key but IGNORE preventDefault for
+    // focus traversal — the __sTabAt stamp feeds the blur-refocus fallback
+    // (bound per-textarea in makeTab) which is the engine-level escape hatch.
+    d.__sTabAt = Date.now();
+    ev.preventDefault();
+    ev.stopPropagation();
+    indentLines(ev.shiftKey ? -1 : 1);
+  }, true);
+
+  /** isEditorTabKey — true for Tab and the legacy GTK `ISO_Left_Tab` keysym. */
+  function isEditorTabKey(ev) {
+    return ev.key === "Tab" || ev.key === "ISO_Left_Tab";
+  }
+
   // Toolbar active-states must track the caret the INSTANT it moves — on a real
   // click, arrow/Home/End, paste, undo, etc. — and reflect the formatting at the
   // caret WITHOUT requiring the text to change. The per-textarea "select"/"keyup"/
@@ -1214,23 +1261,21 @@ export function createApp(root) {
 
   // Editor-local bindings (only meaningful inside the source textarea).
   /**
-   * onKeyDown — textarea-local editor keybindings.
-   *
-   * Tab/Shift+Tab → indent/outdent the selected range; Enter on an empty
+   * onKeyDown — textarea-local editor keybindings. Enter on an empty
    * list/quote item removes the marker (exit the list); Enter on a non-empty
    * list/quote/ol/ul item continues the next line with the same marker (and
    * increments ordered-list numbers).
+   *
+   * Tab/Shift+Tab used to be bound here, but on WebKitGTK (the Tauri shell on
+   * Linux; WebView2 behaves the same on Windows) Shift+Tab escaped the editor
+   * to browser focus traversal — it now lives in the CAPTURE-phase window
+   * listener directly below, which runs before everything else and is the
+   * earliest possible preventDefault point in the DOM pipeline.
    * @param {KeyboardEvent} ev The keydown event (from the source textarea).
    * @returns {Promise<void>}
    */
   async function onKeyDown(ev) {
     const mod = ev.ctrlKey || ev.metaKey;
-
-    if (ev.key === "Tab" && !mod) {
-      ev.preventDefault();
-      indentLines(ev.shiftKey ? -1 : 1);
-      return;
-    }
 
     if (ev.key === "Enter" && !mod) {
       const d = activeTab, input = d.input, text = d.input.value;

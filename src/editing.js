@@ -101,8 +101,7 @@ export function createEditingHandlers({
   function toggleBlock(kind) {
     const d = getActiveDoc(), input = d.input, text = d.input.value;
     const a = input.selectionStart, b = input.selectionEnd;
-    const startLine = lineBounds(text, a)[0];
-    const endLine = lineBounds(text, b)[1];
+    const [startLine, endLine] = selLineRange(text, a, b);
 
     if (kind === "table") {
       const lines = text.split("\n");
@@ -150,11 +149,30 @@ export function createEditingHandlers({
    * indentLines — indent or outdent the selected range.
    * @param {number} dir +1 to indent, -1 to outdent.
    */
+  /**
+   * selLineRange — line range `[start, end)` covering the current selection,
+   * with a WebKitGTK double-click guard. A double-click on the last word of a
+   * line in WebKitGTK selects `word\n`, so the selection END lands at column 0
+   * of the NEXT line; a selection that ends at column 0 never "owns" that
+   * following line (standard editor convention), so we fall back to the
+   * PREVIOUS line's end. Without this guard, Tab on a double-clicked list item
+   * also indented the next, unselected list item.
+   * @param {string} text — full document text.
+   * @param {number} a — selectionStart.
+   * @param {number} b — selectionEnd.
+   * @returns {[number, number]} `[start, end)` of the selected lines.
+   */
+  function selLineRange(text, a, b) {
+    const s = lineBounds(text, a)[0];
+    let e = lineBounds(text, b)[1];
+    if (b > s && b === lineBounds(text, b)[0]) e = lineBounds(text, b - 1)[1];
+    return [s, e];
+  }
+
   function indentLines(dir) {
     const d = getActiveDoc(), input = d.input, text = d.input.value;
     const a = input.selectionStart, b = input.selectionEnd;
-    const s = lineBounds(text, a)[0];
-    const e = lineBounds(text, b)[1];
+    const [s, e] = selLineRange(text, a, b);
     const lines = text.slice(s, e).split("\n");
     const newLines = dir > 0
       ? lines.map((line) => (line === "" ? line : "\t" + line))

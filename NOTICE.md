@@ -22,7 +22,10 @@ mermaid       — diagram renderer (js)           MIT   (Copyright 2014-2026 kns
 @tauri-apps/plugin-opener
                             — Tauri frontend    MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
 tauri         — Rust core (tauri crate)         MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
+tao           — Rust windowing layer (transitive of tauri)  MIT / Apache-2.0   (Copyright 2014+ tao contributors)
 wry           — Rust webview wrapper            MIT / Apache-2.0   (Copyright 2020+ Tauri Program)
+gtk           — GTK3 bindings (tauri Linux shell; direct dep)   MIT   (Copyright 2015+ The gtk-rs Project)
+webkit2gtk    — WebKitGTK bindings (tauri Linux shell; see the Runtime note below)  MIT   (Copyright 2020+ Tauri Program)
 
 For the MIT/Apache dual-licensed Tauri stack the project may use
 the MIT grant. If the Apache-2.0 grant is relied on, the Apache

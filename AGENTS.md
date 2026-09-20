@@ -286,7 +286,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
 | `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`. Also `plugins.fs.requireLiteralLeadingDot: false` — lets the fs scope `**` match hidden (dot) path segments on Unix so the picker can open `~/.config` etc. (see invariant 7). |
  | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-exists`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
-| `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder. |
+ | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder and wires `keymap::install()` (Linux). |
+ | `src-tauri/src/keymap.rs` | GTK-level Shift+Tab keysym fix: X reports Shift+Tab as `GDK_KEY_ISO_Left_Tab` (0xFE20) and WebKitGTK turns that into a DOM key of "Unidentified", so the JS outdent never ran and GTK moved focus away; this rewrites the keysym to `Tab` (+Shift) on the raw WebKit widget and swallows the original. See invariant "Tab / Shift+Tab are captured…". |
 | `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → installers + portable archives → draft release). See § CI/CD. |
 | `LICENSE` | **AGPL-3.0** — the license for *this* project's code. |
@@ -698,7 +699,46 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `src-tauri/src/main.rs` carries
    `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — without
    it the bundled exe spawns a console that must stay open (closing it kills the
-   app). Debug builds keep the console for logs.
+    app). Debug builds keep the console for logs.
+ - **Tab / Shift+Tab are captured at window level in CAPTURE phase (do not
+    regress).** On WebKitGTK/WebView2 Shift+Tab bound on the textarea alone
+    escaped the editor to browser focus traversal (another GUI control got
+    focus), so the indent/outdent handler now runs on `window` in
+    CAPTURE with `preventDefault()` + `stopPropagation()` (the textarea
+    `keydown` handler in `onKeyDown` no longer handles Tab — that would
+    double-indent). The capture handler stands down while a centered modal
+    (`.savedlg-backdrop`) is open so the modal's own focus trap owns Tab.
+    Two extra defenses the REAL GTK shell needs (Chromium does not reproduce
+    the quirk): (a) `isEditorTabKey()` also accepts the legacy X keysym
+    `ISO_Left_Tab` — some WebKitGTK builds report Shift+Tab under that name;
+    (b) a blur-refocus fallback in `makeTab` — the capture handler stamps
+    `doc.__sTabAt`, and if the engine performs the focus traversal DESPITE
+    preventDefault, a `blur` listener fires within 250 ms and pulls focus (and
+    the stored caret via `__sSel`) back into the textarea on the next
+    macrotask, also standing down for modals. Do not remove either layer.
+    (c) the REAL shell root cause, fixed on the RUST side: X maps Shift+Tab
+    to the legacy keysym `GDK_KEY_ISO_Left_Tab` (0xFE20), which WebKitGTK
+    forwards to the DOM as `KeyboardEvent.key = "Unidentified"` (NOT "Tab")
+    — so NO JS handler can ever preventDefault it, GTK's window move-focus
+    binding runs, and focus escapes to another GUI control (Chromium does
+    not reproduce this; `npx tauri dev` in this tree did, verified with a
+    GTK key-injection probe). `src-tauri/src/keymap.rs` connects a
+    key-press handler ON THE RAW WEBKIT widget that copies the event, sets
+    keyval `GDK_KEY_Tab` (state keeps SHIFT), delivers it directly to the
+    webview, and STOPS propagation of the original — the DOM then sees a
+    normal `Tab` keydown with shiftKey and everything above works. Keep
+    `keymap::install()` wired in `main.rs` setup; do not delete it without
+    re-testing shift+tab in the real GTK app. New direct Rust deps
+    `gtk` 0.18 + `webkit2gtk` 2 (MIT bindings; lockfile-pinned versions so
+    no duplicate crates compile — see src-tauri/Cargo.toml).
+ - **Selections ending at COLUMN 0 of a line do not include that line (do not
+    regress).** A WebKitGTK double-click on the last word of a line selects
+    `word\n`, leaving selectionEnd at column 0 of the NEXT line; without the
+    guard, Tab indented the next, unselected list item too. `selLineRange()`
+    in `src/editing.js` applies the standard editor convention (fall back to
+    the previous line's end) and is used by BOTH `indentLines` and
+    `toggleBlock` — keep it in both.
+
 
 ## Known limitations (browser fallback)
 
