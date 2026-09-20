@@ -730,7 +730,11 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     the sibling rect's center, so deliberately start-anchored labels (notes,
     whose x sits at the box LEFT edge) are never touched. The sibling shape
     may be a rect OR the bare lifeline <line> (Windows v12: actor-text
-    groups have class=null and shape=line — 7d).
+    groups have class=null and shape=line — 7d). The pin is applied at the
+    innermost level — inline style + presentation attribute on the <text>
+    AND every <tspan> — because a tspan's own declaration beats anything
+    inherited from the <text>, and only the innermost declaration wins the
+    paint where the cascade is unreliable.
     `test/verifyMermaidStyle.mjs` cases 6a/6b + 7a/7b/7c/7d (16 total) assert
     the real render is untouched, oversized synthetics get flexed, and
     centered-x texts get re-anchored while explicit-middle and left-edge

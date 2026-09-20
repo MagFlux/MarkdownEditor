@@ -295,8 +295,19 @@ function centerForeignObjectLabels(holder) {
     if (!isFinite(dx)) return;
     const rcx = rs.left + rs.width / 2;
     if (Math.abs(dx - rcx) > 4) return;
-    // Comment on which shape: anchor=middle at x=center — no repositioning.
+    // Pin middle at the innermost level: mermaid may rely on the sheet (a
+    // rule that then fails), so re-assert as BOTH an inline style AND a
+    // presentation attribute on the <text> AND every <tspan> — a tspan's own
+    // declaration beats anything inherited from the <text>, and only the
+    // innermost value wins the paint on engines where the cascade died.
     txt.style.textAnchor = "middle";
+    txt.setAttribute("text-anchor", "middle");
+    if (txt.querySelectorAll) {
+      Array.from(txt.querySelectorAll("tspan")).forEach((ts) => {
+        ts.style.textAnchor = "middle";
+        try { ts.setAttribute("text-anchor", "middle"); } catch { /* svg tspan attr safe */ }
+      });
+    }
     n++;
   });
   return n;

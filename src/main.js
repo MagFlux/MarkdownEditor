@@ -176,11 +176,15 @@ document.addEventListener("keydown", async (ev) => {
         const t = inner.getBoundingClientRect();
         const cx = (e2) => +(e2.left + e2.width / 2).toFixed(1);
         const cy = (e2) => +(e2.top + e2.height / 2).toFixed(1);
+        // attr vs computed at BOTH text and tspan level — the anchor may be
+        // present on one level and lost/mismatched on the other, and only
+        // the innermost declaration wins the paint.
         lines.push(
           `#${hi}T.${tn} "${(((txt.textContent || "").trim() || "?").slice(0, 16))}" ` +
           `dCx=${+(cx(t) - cx(s)).toFixed(1)} dCy=${+(cy(t) - cy(s)).toFixed(1)} ` +
-          `anchor=${txt.getAttribute("text-anchor") || getComputedStyle(txt).textAnchor} x=${txt.getAttribute("x")} ` +
-          `class=${g.getAttribute("class")} innerW=${+t.width.toFixed(1)}`
+          `txtAttr=${txt.getAttribute("text-anchor") || "-"} txtCmp=${getComputedStyle(txt).textAnchor} ` +
+          `${inner !== txt ? `tsAttr=${inner.getAttribute("text-anchor") || "-"} tsCmp=${getComputedStyle(inner).textAnchor} ` : ``}` +
+          `x=${txt.getAttribute("x")} class=${g.getAttribute("class")} innerW=${+t.width.toFixed(1)}`
         );
       });
     });
