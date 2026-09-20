@@ -269,6 +269,30 @@ function centerForeignObjectLabels(holder) {
     div.style.justifyContent = "center";
     n++;
   });
+  // PLAIN-TEXT actor/box labels (sequence diagrams): mermaid positions the
+  // <text> with x = box CENTER and relies on text-anchor:middle to center
+  // the glyphs (byTspan/byText inline-styles it or the sheet carries it).
+  // On Windows that anchor is lost (computed textAnchor falls back to
+  // "start"), so the text paints rightward FROM the center — the visible
+  // "+halfTextWidth" right-shift. When the x coordinate coincides with the
+  // sibling rect's center (within 4px) and the engine isn't already
+  // middle-anchoring, pin text-anchor: middle inline — a no-op wherever the
+  // anchor already works (start-anchored labels like notes put x at the box
+  // LEFT edge, which is never the rect center, so they stay untouched).
+  holder.querySelectorAll("text").forEach((txt) => {
+    const g = txt.closest && txt.closest("g");
+    if (!g || g.querySelector("foreignObject")) return;
+    const rect = g.querySelector("rect");
+    if (!rect) return;
+    if (getComputedStyle(txt).textAnchor === "middle") return;
+    const rs = rect.getBoundingClientRect();
+    const dx = parseFloat(txt.getAttribute("x"));
+    if (!isFinite(dx)) return;
+    const rcx = rs.left + rs.width / 2;
+    if (Math.abs(dx - rcx) > 4) return;
+    txt.style.textAnchor = "middle";
+    n++;
+  });
   return n;
 }
 

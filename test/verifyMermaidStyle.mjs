@@ -17,7 +17,18 @@
  *   3. after removing EVERY <style> element in the document (simulating the
  *      WebView2 failure), computed styles still match the theme — i.e. the
  *      diagram is NOT black/invisible;
- *   4. re-stamping the same holder is a no-op (idempotency).
+ *   4. re-stamping the same holder is a no-op (idempotency);
+ *   5. the generated sheet carries the fontFamily stack mermaid measures
+ *      with (font consistency — the Windows label mis-centering fix) and
+ *      the p{margin:0} rule vertical centering depends on;
+ *   6. label divs whose painted content is far shorter than their
+ *      foreignObject are flipped to centered flex (real Linux render is
+ *      untouched — the content fills its FOs there);
+ *   7. plain-text labels whose x coincides with the sibling rect's center
+ *      get text-anchor:middle pinned inline (sequence actors on Windows),
+ *      while explicit-middle and left-edge start anchors stay untouched.
+ *
+ * Run with `npm run verify-mermaidstyle` (15 cases).
  *
  * Run with `npm run verify-mermaidstyle`.
  */
@@ -176,6 +187,43 @@ const foCheck = await p.evaluate(() => {
 });
 ok("6a real Linux render untouched (content fills its FOs)", foCheck.realTouched === 0, JSON.stringify(foCheck));
 ok("6b oversized FOs flex-centered; tight FO untouched", foCheck.bigFlexed.every(Boolean) && foCheck.tightUntouched, JSON.stringify(foCheck));
+
+// ---------------------------------------------------------------------------
+// CASE 7 — plain-text actor labels centered by re-anchoring (sequence
+// diagrams): mermaid places the actor label <text> with x = box CENTER and
+// relies on text-anchor:middle; on Windows the anchor is lost (computed
+// "start"), painting the text rightward from the center by half its width.
+// centerForeignObjectLabels pins text-anchor:middle INLINE when a label's
+// x coincides with the sibling rect's center. Asserts: (a) a synthetic
+// centered-but-start text is re-anchored to middle; (b) an explicitly
+// middle-anchored text (the normal mermaid CSS case) is untouched;
+// (c) a start-anchored text whose x sits at the box LEFT edge (notes) is
+// untouched.
+// ---------------------------------------------------------------------------
+const anchorCheck = await p.evaluate(() => {
+  const host = document.createElement("div");
+  host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" style="width:600px;height:80px">' +
+    '<g><rect x="10" y="10" width="120" height="40" /><text x="70" y="35">BoxCenter</text></g>' +      // x == rect center → re-anchor
+    '<g><rect x="210" y="10" width="120" height="40" /><text x="270" y="35" style="text-anchor:middle">Explicit</text></g>' + // already middle → untouched
+    '<g><rect x="410" y="10" width="120" height="40" /><text x="415" y="35">Note start</text></g>' +   // x == left edge → untouched
+    '</svg>';
+  document.body.appendChild(host);
+  const midBefore = Array.from(host.querySelectorAll("text"))[1].style.cssText;
+  window.editor.centerForeignObjectLabels(host);
+  const [a, b, c] = Array.from(host.querySelectorAll("text"));
+  const r = {
+    re: a.style.textAnchor,
+    mid: b.style.cssText === midBefore,
+    midBefore,
+    note: c.style.textAnchor,
+    computedA: getComputedStyle(a).textAnchor,
+  };
+  host.remove();
+  return r;
+});
+ok("7a centered-x + start text re-anchored to middle", anchorCheck.re === "middle", JSON.stringify(anchorCheck));
+ok("7b already-middle text untouched (inline cssText unchanged)", anchorCheck.mid, JSON.stringify(anchorCheck));
+ok("7c left-edge start text (notes) untouched", !anchorCheck.note, JSON.stringify(anchorCheck));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);
