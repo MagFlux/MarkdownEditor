@@ -24,9 +24,12 @@
  *   6. label divs whose painted content is far shorter than their
  *      foreignObject are flipped to centered flex (real Linux render is
  *      untouched — the content fills its FOs there);
- *   7. plain-text labels whose x coincides with the sibling rect's center
- *      get text-anchor:middle pinned inline (sequence actors on Windows),
- *      while explicit-middle and left-edge start anchors stay untouched.
+ *   7. plain-text labels painting with the start-anchor-from-center
+ *      fingerprint get text-anchor:middle pinned at the innermost
+ *      text/tspan level (any shape type, transform-proof);
+ *   8. middle-anchored labels whose painted center sits off their nearest
+ *      shape are center-snapped with a rounded CSS translate (WebKitGTK
+ *      dominant-baseline quirk) — no-op where the paint already agrees.
  *
  * Run with `npm run verify-mermaidstyle` (15 cases).
  *
@@ -227,6 +230,50 @@ ok("7a centered-x + start text re-anchored to middle", anchorCheck.re === "middl
 ok("7b already-middle text untouched (inline cssText unchanged)", anchorCheck.mid, JSON.stringify(anchorCheck));
 ok("7c left-edge start text (notes) untouched", !anchorCheck.note, JSON.stringify(anchorCheck));
 ok("7d line-only group (Windows actor pattern) re-anchored", anchorCheck.life === "middle", JSON.stringify(anchorCheck));
+
+// ---------------------------------------------------------------------------
+// CASE 8 — CENTER SNAP (WebKitGTK sequence-actor off-center): WebKit resolves
+// mermaid's dominant-baseline:central ~8px differently from Chromium and adds
+// ~1px anchor subpixel error, so middle-anchored actor labels paint up-and-
+// left. centerForeignObjectLabels now snaps middle-anchored labels onto their
+// nearest shape's center with a ROUNDED CSS translate — no-op where the paint
+// already agrees (Chromium). Asserts: (a) a middle text painted ~8px above
+// its box gets snapped (painted center within 1.5px of box center);
+// (b) an already-centered middle text gets NO transform; (c) a start-anchored
+// note text is untouched; (d) the real Chromium render carries no transform
+// (its deltas are ≈ 0).
+// ---------------------------------------------------------------------------
+const snapCheck = await p.evaluate(() => {
+  const host = document.createElement("div");
+  host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" style="width:600px;height:120px">' +
+    '<g><rect x="10" y="10" width="120" height="40" /><text x="70" y="10" style="text-anchor:middle" dominant-baseline="central">High</text></g>' +
+    '<g><rect x="210" y="10" width="120" height="40" /><text x="270" y="30" style="text-anchor:middle" dominant-baseline="central">Centered</text></g>' +
+    '<g><rect x="410" y="10" width="120" height="40" /><text x="415" y="30" style="text-anchor:start">Note start</text></g>' +
+    '</svg>';
+  document.body.appendChild(host);
+  window.editor.centerForeignObjectLabels(host);
+  const [high, centered, note] = Array.from(host.querySelectorAll("text"));
+  const box1 = host.querySelectorAll("g rect")[0].getBoundingClientRect();
+  const tr = (high.querySelector("tspan") || high).getBoundingClientRect();
+  const snapDy = +((tr.top + tr.height / 2) - (box1.top + box1.height / 2)).toFixed(1);
+  const r = {
+    snapped: snapDy <= 1.5,
+    snapDy,
+    centeredTouched: !!centered.style.transform,
+    noteTouched: !!note.style.transform,
+    highTransform: high.style.transform,
+  };
+  host.remove();
+  // real Chromium render: deltas are ≈0 → no snap transforms applied
+  const real = Array.from(document.querySelectorAll(".mermaid-diagram text"))
+    .filter((tx) => { const g = tx.closest("g"); return g && !g.querySelector("foreignObject"); });
+  r.realTransforms = real.filter((tx) => tx.style.transform).length;
+  return r;
+});
+ok("8a displaced middle text snapped onto its shape center", snapCheck.snapped, JSON.stringify(snapCheck));
+ok("8b already-centered middle text untouched (no transform)", !snapCheck.centeredTouched, JSON.stringify(snapCheck));
+ok("8c start-anchored note text untouched", !snapCheck.noteTouched, JSON.stringify(snapCheck));
+ok("8d real Chromium render untouched (no snap transforms)", snapCheck.realTransforms === 0, JSON.stringify(snapCheck));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 

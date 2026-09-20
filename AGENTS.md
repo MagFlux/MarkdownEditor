@@ -292,7 +292,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
   | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence wrap caret inside the fence - `` ```\n|\n``` ``; table caret in first body cell; h1 caret at block end - 25 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately - 5 cases).
 |
-'''`; table caret in first body cell — 25 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring — 16 cases). |
+'''`; table caret in first body cell — 25 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — 20 cases). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -681,7 +681,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     it also dumps LABEL GEOMETRY (per node: the label's center vs its shape's
     center, the COMPUTED painted font family/size, the foreignObject size and
     inline styles) — the decisive reading for the Windows label mis-centering.
-    `test/verifyMermaidStyle.mjs` (16 cases)
+    `test/verifyMermaidStyle.mjs` (20 cases)
     asserts the stamped attrs exist, that computed styles survive removing
     EVERY `<style>` element from the document, and (font consistency, cases
     5a/5b) that the generated sheet carries the SAME fontFamily stack mermaid
@@ -742,7 +742,20 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     AND every <tspan> — because a tspan's own declaration beats anything
     inherited from the <text>, and only the innermost declaration wins the
     paint where the cascade is unreliable.
-    `test/verifyMermaidStyle.mjs` cases 6a/6b + 7a/7b/7c/7d (16 total) assert
+    The SAME pass CENTER-SNAPS middle-anchored plain-text labels (WebKitGTK
+    sequence-actor off-center): WebKit resolves mermaid's
+    dominant-baseline:central ≈ half the font's ascent-descent differently
+    from Chromium — the Playwright-WebKit probe painted every actor label
+    dCy=-8.2px high and dCx=-1.2px left while Chromium painted ≈ 0 — so the
+    pass measures the residual to the nearest shape (euclidean, so the tall
+    zero-width lifeline never wins) and snaps with a ROUNDED CSS translate
+    (integer px keeps glyphs crisp). Two bounds keep it a no-op where the
+    paint already agrees: |Δ| ≥ 0.75px to act (subpixel noise) and
+    |Δx| ≤ 8+w/2, |Δy| ≤ 8+h to skip deliberate far placements (cluster
+    titles); texts with a transform attribute are skipped (a CSS transform
+    would override it). Chromium is untouched (its deltas ≈ 0 — case 8d).
+    `test/verifyMermaidStyle.mjs` cases 6a/6b + 7a/7b/7c/7d + 8a/8b/8c/8d
+    (20 total) assert
     the real render is untouched, oversized synthetics get flexed, and
     centered-x texts get re-anchored while explicit-middle and left-edge
     start anchors are left alone.

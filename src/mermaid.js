@@ -282,44 +282,88 @@ function centerForeignObjectLabels(holder) {
   holder.querySelectorAll("text").forEach((txt) => {
     const g = txt.closest && txt.closest("g");
     if (!g || g.querySelector("foreignObject")) return;
-    if (getComputedStyle(txt).textAnchor === "middle") return;
-    // FINGERPRINT: a start-anchored label that mermaid placed for a middle
-    // anchor paints with its center displaced by ≈ +halfTextWidth from the
-    // shape it belongs to (dCx = +innerW/2, seen in every Windows dump).
-    // Compare the label's PAINTED center against the NEAREST shape's bbox
-    // center — the group may hold several shapes (box + lifeline) and the
-    // first in document order is not the label's box (Linux probe: text
-    // x=275 with the first rect's bbox center at 1090), and the x attr is a
-    // LOCAL coordinate that transforms can move arbitrarily far from the
-    // painted position, so attr-vs-attr comparison is unreliable. Painting
-    // geometry is what the user sees, and |dCx - innerW/2| ≤ 4 identifies
-    // the broken start-anchor while leaving deliberate left-edge anchors
-    // (notes: dCx ≈ -boxW/2 + padding, nowhere near +innerW/2) untouched.
-    const inner = txt.querySelector("tspan") || txt;
-    const t = inner.getBoundingClientRect();
-    if (!(t.width > 0)) return;
-    let bestD = null;
+    const alreadyMiddle = getComputedStyle(txt).textAnchor === "middle";
+    if (!alreadyMiddle) {
+      // FINGERPRINT: a start-anchored label that mermaid placed for a middle
+      // anchor paints with its center displaced by ≈ +halfTextWidth from the
+      // shape it belongs to (dCx = +innerW/2, seen in every Windows dump).
+      // Compare the label's PAINTED center against the NEAREST shape's bbox
+      // center — the group may hold several shapes (box + lifeline) and the
+      // first in document order is not the label's box (Linux probe: text
+      // x=275 with the first rect's bbox center at 1090), and the x attr is a
+      // LOCAL coordinate that transforms can move arbitrarily far from the
+      // painted position, so attr-vs-attr comparison is unreliable. Painting
+      // geometry is what the user sees, and |dCx - innerW/2| ≤ 4 identifies
+      // the broken start-anchor while leaving deliberate left-edge anchors
+      // (notes: dCx ≈ -boxW/2 + padding, nowhere near +innerW/2) untouched.
+      const inner = txt.querySelector("tspan") || txt;
+      const t = inner.getBoundingClientRect();
+      if (!(t.width > 0)) return;
+      let bestD = null;
+      g.querySelectorAll("rect, polygon, path, line, use").forEach((shape) => {
+        const rs = shape.getBoundingClientRect();
+        if (!(rs.width || rs.height)) return;
+        const d = Math.abs(rs.left + rs.width / 2 - (t.left + t.width / 2));
+        if (bestD === null || d < bestD) bestD = d;
+      });
+      if (bestD === null) return;
+      if (Math.abs(bestD - t.width / 2) > 4) return;
+      // Pin middle at the innermost level: mermaid may rely on the sheet (a
+      // rule that then fails), so re-assert as BOTH an inline style AND a
+      // presentation attribute on the <text> AND every <tspan> — a tspan's own
+      // declaration beats anything inherited from the <text>, and only the
+      // innermost value wins the paint on engines where the cascade died.
+      txt.style.textAnchor = "middle";
+      txt.setAttribute("text-anchor", "middle");
+      if (txt.querySelectorAll) {
+        Array.from(txt.querySelectorAll("tspan")).forEach((ts) => {
+          ts.style.textAnchor = "middle";
+          try { ts.setAttribute("text-anchor", "middle"); } catch { /* svg tspan attr safe */ }
+        });
+      }
+      n++;
+    }
+    // CENTER SNAP (WebKitGTK sequence-actor vertical/horizontal off-center):
+    // WebKit resolves mermaid's dominant-baseline:central differently from
+    // Chromium — the Playwright-WebKit probe painted every actor label
+    // dCy=-8.2px high (≈ half the font's ascent-descent) and dCx=-1.2px
+    // left, while Chromium paints dCx/dCy ≈ 0. For any middle-anchored
+    // label, measure the residual against its NEAREST shape (euclidean, so
+    // the tall zero-width lifeline line never wins) and snap it onto the
+    // shape center with a ROUNDED CSS translate: integer px keeps glyph
+    // rasterization crisp, and the 0.75px threshold keeps engines that
+    // already agree (Chromium dCx/dCy ≈ 0) pixel-identical. Skipped when
+    // the text carries a transform attribute (a CSS transform would
+    // override it and break the layout); stable across re-inserts because
+    // the snap measures its own result (second run measures δ≈0).
+    if (txt.getAttribute("transform")) return;
+    const inner2 = txt.querySelector("tspan") || txt;
+    const t2 = inner2.getBoundingClientRect();
+    let bestS = null, bd2 = Infinity;
     g.querySelectorAll("rect, polygon, path, line, use").forEach((shape) => {
       const rs = shape.getBoundingClientRect();
       if (!(rs.width || rs.height)) return;
-      const d = Math.abs(rs.left + rs.width / 2 - (t.left + t.width / 2));
-      if (bestD === null || d < bestD) bestD = d;
+      const ddx = rs.left + rs.width / 2 - (t2.left + t2.width / 2);
+      const ddy = rs.top + rs.height / 2 - (t2.top + t2.height / 2);
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 < bd2) { bd2 = d2; bestS = rs; }
     });
-    if (bestD === null) return;
-    if (Math.abs(bestD - t.width / 2) > 4) return;
-    // Pin middle at the innermost level: mermaid may rely on the sheet (a
-    // rule that then fails), so re-assert as BOTH an inline style AND a
-    // presentation attribute on the <text> AND every <tspan> — a tspan's own
-    // declaration beats anything inherited from the <text>, and only the
-    // innermost value wins the paint on engines where the cascade died.
-    txt.style.textAnchor = "middle";
-    txt.setAttribute("text-anchor", "middle");
-    if (txt.querySelectorAll) {
-      Array.from(txt.querySelectorAll("tspan")).forEach((ts) => {
-        ts.style.textAnchor = "middle";
-        try { ts.setAttribute("text-anchor", "middle"); } catch { /* svg tspan attr safe */ }
-      });
-    }
+    if (!bestS) return;
+    const ddx = bestS.left + bestS.width / 2 - (t2.left + t2.width / 2);
+    const ddy = bestS.top + bestS.height / 2 - (t2.top + t2.height / 2);
+    // The quirk is SMALL (≤ ~10px). A large residual means mermaid placed the
+    // label deliberately elsewhere (cluster titles sit far above their
+    // cluster's center) — snapping those would wreck the layout, so bail.
+    if (Math.abs(ddx) < 0.75 && Math.abs(ddy) < 0.75) return;
+    if (Math.abs(ddx) > 8 + t2.width / 2 || Math.abs(ddy) > 8 + t2.height) return;
+    let sx = 1, sy = 1;
+    try {
+      const m = txt.getScreenCTM && txt.getScreenCTM();
+      if (m) { sx = Math.hypot(m.a, m.b) || 1; sy = Math.hypot(m.c, m.d) || 1; }
+    } catch { /* keep 1 */ }
+    const tx = Math.abs(ddx) >= 0.75 ? Math.round(ddx / sx) : 0;
+    const ty = Math.abs(ddy) >= 0.75 ? Math.round(ddy / sy) : 0;
+    txt.style.transform = `translate(${tx}px, ${ty}px)`;
     n++;
   });
   return n;
