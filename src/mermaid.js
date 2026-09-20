@@ -282,14 +282,20 @@ function centerForeignObjectLabels(holder) {
   holder.querySelectorAll("text").forEach((txt) => {
     const g = txt.closest && txt.closest("g");
     if (!g || g.querySelector("foreignObject")) return;
-    const rect = g.querySelector("rect");
-    if (!rect) return;
+    // The sibling shape may be a rect (actor box) or just the lifeline/arrow
+    // <line>/<path> — the Windows dump showed actor labels hanging off a
+    // class=null group whose only shape is a line; its bbox center is the
+    // same x mermaid intended. Only x-coincidence (±4px) decides, so
+    // start-anchored labels at a shape's LEFT edge (notes) never match.
+    const shape = g.querySelector("rect, polygon, path, line, use");
+    if (!shape) return;
     if (getComputedStyle(txt).textAnchor === "middle") return;
-    const rs = rect.getBoundingClientRect();
+    const rs = shape.getBoundingClientRect();
     const dx = parseFloat(txt.getAttribute("x"));
     if (!isFinite(dx)) return;
     const rcx = rs.left + rs.width / 2;
     if (Math.abs(dx - rcx) > 4) return;
+    // Comment on which shape: anchor=middle at x=center — no repositioning.
     txt.style.textAnchor = "middle";
     n++;
   });

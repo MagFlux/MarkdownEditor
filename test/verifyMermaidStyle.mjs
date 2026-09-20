@@ -206,16 +206,18 @@ const anchorCheck = await p.evaluate(() => {
     '<g><rect x="10" y="10" width="120" height="40" /><text x="70" y="35">BoxCenter</text></g>' +      // x == rect center → re-anchor
     '<g><rect x="210" y="10" width="120" height="40" /><text x="270" y="35" style="text-anchor:middle">Explicit</text></g>' + // already middle → untouched
     '<g><rect x="410" y="10" width="120" height="40" /><text x="415" y="35">Note start</text></g>' +   // x == left edge → untouched
+    '<g><line x1="80" y1="60" x2="80" y2="120" /><text x="80" y="60">Lifeline</text></g>' +             // Windows shape=line pattern → re-anchor
     '</svg>';
   document.body.appendChild(host);
   const midBefore = Array.from(host.querySelectorAll("text"))[1].style.cssText;
   window.editor.centerForeignObjectLabels(host);
-  const [a, b, c] = Array.from(host.querySelectorAll("text"));
+  const [a, b, c, l] = Array.from(host.querySelectorAll("text"));
   const r = {
     re: a.style.textAnchor,
     mid: b.style.cssText === midBefore,
     midBefore,
     note: c.style.textAnchor,
+    life: l.style.textAnchor,
     computedA: getComputedStyle(a).textAnchor,
   };
   host.remove();
@@ -224,8 +226,10 @@ const anchorCheck = await p.evaluate(() => {
 ok("7a centered-x + start text re-anchored to middle", anchorCheck.re === "middle", JSON.stringify(anchorCheck));
 ok("7b already-middle text untouched (inline cssText unchanged)", anchorCheck.mid, JSON.stringify(anchorCheck));
 ok("7c left-edge start text (notes) untouched", !anchorCheck.note, JSON.stringify(anchorCheck));
+ok("7d line-only group (Windows actor pattern) re-anchored", anchorCheck.life === "middle", JSON.stringify(anchorCheck));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
+
 console.log(`\n${pass} ok / ${fail} fail`);
 await b.close();
 try { process.kill(-srv.pid); } catch { /* already dead */ }
