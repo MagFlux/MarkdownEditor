@@ -1298,25 +1298,58 @@ export function createApp(root) {
     // every move with a deterministic token model: a word is a
     // whitespace-delimited run (trailing punctuation rides along, a standalone
     // ` - ` is its own stop), a formatted span is ATOMIC, and line-crossing
-    // stops at the next line's first word (`step\n-| …`). Shift extends the
-    // selection word-wise; a bare move first collapses to the near edge, like
-    // the native behavior. Ctrl is used, NOT Cmd/Meta: on macOS Cmd+Left/Right
-    // is Home/End line navigation and must stay native. wordJump returns null
-    // only at the document edges, where the native move is a no-op anyway.
+    // stops at the next line's first word (`step\n-| …`). Ctrl is used, NOT
+    // Cmd/Meta: on macOS Cmd+Left/Right is Home/End line navigation and must
+    // stay native. wordJump returns null only at the document edges, where
+    // the native move is a no-op anyway.
+    //
+    // With Shift the move is a selection gesture that must act on the CARET —
+    // the edge the user last moved to — NOT the left/right-most edge: a
+    // forward selection (anchor left, caret right) SHRINKS from its right edge
+    // on Ctrl+Shift+Left and only grows past the anchor after the caret
+    // crosses it (direction flips), exactly like native shift+arrows. The
+    // caret/anchor pair comes from the textarea's selectionDirection
+    // ("forward"/"backward"); `d.__selAnchor` + `d.__selStamp` cover engines
+    // that drop the setSelectionRange direction argument (reporting "none"):
+    // the stored gesture anchor is honored only while the live selection is
+    // EXACTLY the one this gesture last wrote. A bare (no-Shift) move
+    // collapses to the caret edge and jumps — and ends the gesture.
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && (ev.key === "ArrowRight" || ev.key === "ArrowLeft")) {
       const d = activeTab;
       if (!d) return;
       const input = d.input;
       const dir = ev.key === "ArrowRight" ? 1 : -1;
-      // Extend: the edge in the movement direction moves, the other edge is the
-      // anchor. Bare move: collapse to the near edge first, then jump.
-      const pos = dir > 0 ? input.selectionEnd : input.selectionStart;
-      const anchor = ev.shiftKey ? (dir > 0 ? input.selectionStart : input.selectionEnd) : null;
-      const target = wordJump(input.value, pos, dir);
+      const selS = input.selectionStart, selE = input.selectionEnd;
+      const dirFlag = input.selectionDirection;
+      const gestureLive = !!d.__selStamp && d.__selStamp[0] === selS && d.__selStamp[1] === selE;
+      let anchor, caret;
+      if (selS === selE) {
+        anchor = caret = selS; // collapsed: the caret is the anchor
+      } else if (dirFlag === "backward") {
+        anchor = selE; caret = selS;
+      } else if (dirFlag === "forward") {
+        anchor = selS; caret = selE;
+      } else if (gestureLive && typeof d.__selAnchor === "number" && (d.__selAnchor === selS || d.__selAnchor === selE)) {
+        anchor = d.__selAnchor;
+        caret = anchor === selS ? selE : selS;
+      } else {
+        // Fresh selection of unknown direction (mouse drag / double-click):
+        // extend the far edge — the engines' own fallback for this case.
+        anchor = dir > 0 ? selS : selE;
+        caret = dir > 0 ? selE : selS;
+      }
+      const target = wordJump(input.value, caret, dir);
       if (target === null) return;
       ev.preventDefault();
-      if (ev.shiftKey) input.setSelectionRange(Math.min(anchor, target), Math.max(anchor, target));
-      else input.setSelectionRange(target, target);
+      if (ev.shiftKey) {
+        d.__selAnchor = anchor;
+        d.__selStamp = [Math.min(anchor, target), Math.max(anchor, target)];
+        input.setSelectionRange(d.__selStamp[0], d.__selStamp[1], target >= anchor ? "forward" : "backward");
+      } else {
+        d.__selAnchor = null;
+        d.__selStamp = null;
+        input.setSelectionRange(target, target, dir > 0 ? "forward" : "backward");
+      }
       updateActiveStates();
       updateStatus(d);
       return;

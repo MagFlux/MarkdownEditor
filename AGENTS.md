@@ -188,7 +188,7 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                         # a caret ENTERS a hidden (dot) folder (read_dir on the dot-path) —
                         # the UI-level guard for the fs requireLiteralLeadingDot:false fix.
                         # Needs the built dist.
-npm run verify-caret    # Caret placement after editor actions (61 cases): Enter
+npm run verify-caret    # Caret placement after editor actions (71 cases): Enter
                         # auto-continuation keeps the parent item's indentation with a
                         # collapsed caret after the marker (ordered/empty-exit too);
                         # Tab indent (incl. BLANK lines) / Shift+Tab outdent commit a
@@ -201,7 +201,9 @@ npm run verify-caret    # Caret placement after editor actions (61 cases): Enter
                         # Markdown-aware Ctrl+Arrow word moves: whitespace-run words
                         # (trailing punctuation rides along, standalone ` - ` is its
                         # own stop), formatted spans atomic, line-crossing stops at
-                        # the next line's first word, document edges stay native.
+                        # the next line's first word, document edges stay native;
+                        # Ctrl+Shift+Arrow selection gestures act on the CARET edge
+                        # (shrink/flip like native shift+arrows).
 
 # Native app (needs Rust + WebKitGTK; make sure `cargo` is on PATH,
 # e.g. `export PATH="$HOME/.cargo/bin:$PATH"` in your shell profile)
@@ -294,7 +296,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. Owns the per-theme scrollbar palette — `color-scheme`, and the `--sb` / `--sb-hi` thumb vars (light + dark) consumed by `scrollbar-color` and the `::-webkit-scrollbar*` rules, so scrollbars blend with the active theme (see invariant 9). |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence wrap caret inside the fence - `` ```\n|\n``` ``; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 61 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — 20 cases). |
+  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` | Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence wrap caret inside the fence - `` ```\n|\n``` ``; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 71 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — 20 cases). |
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -837,7 +839,21 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     moving right, at/before 0 moving left) — the native move is a no-op
     there. It binds Ctrl, NOT Cmd/Meta: on macOS
     Cmd+Left/Right is Home/End line navigation and must stay native.
-    `test/verifyCaret.mjs` cases 6-7 (61 total) pin all of this; the
+    **Ctrl+Shift+Arrow selection gestures act on the CARET edge, not the
+    left/right-most edge (do not regress).** The anchor/caret pair comes
+    from `selectionDirection` ("forward" → anchor=selectionStart,
+    "backward" → anchor=selectionEnd); `d.__selAnchor` + `d.__selStamp`
+    cover engines that drop the setSelectionRange direction argument
+    (reporting "none") — the stored gesture anchor is honored only while
+    the live selection is EXACTLY the one the gesture last wrote. A forward
+    selection SHRINKS from its right edge on Ctrl+Shift+Left, crossing the
+    anchor flips the direction and grows the other way, and moving back to
+    the anchor collapses to it (native shift+arrow semantics). A bare
+    (no-Shift) move collapses to the caret edge, jumps, and ends the
+    gesture. Chromium normalizes a "none" direction to forward — the
+    direction-less fallback branch only fires on engines that genuinely
+    report "none".
+    `test/verifyCaret.mjs` cases 6-8 (71 total) pin all of this; the
     plain-word stops 3/7 in `foo bar **baz**` coincide with Chromium's
     native word ends and are load-bearing.
 

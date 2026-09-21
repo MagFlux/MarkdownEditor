@@ -23,7 +23,10 @@
  *    stops after the `-`, from `live| formatting.` lands after the period;
  *    Ctrl+Left mirrors. Line-crossing stops at the next line's first word
  *    (`step|\n- **Diagrams**` → `step\n-| …`); only the document edges fall
- *    through to native (a no-op there).
+ *    through to native (a no-op there). Ctrl+Shift+Arrow selection gestures
+ *    act on the CARET edge (selectionDirection-driven): a forward selection
+ *    shrinks from its right edge, crossing the anchor flips the direction;
+ *    a fresh direction-less selection extends its far edge.
  *
  * Run with `npm run verify-caret`.
  */
@@ -555,6 +558,95 @@ await key("Control+ArrowLeft");
   const [a, bb] = await caret();
   ok("7j crossing back into a line that ends with a span stops at its '**'",
     a === 2 && bb === 2, [a, bb]);
+}
+
+// ---------------------------------------------------------------------------
+// CASE 8 — Ctrl+Shift+Arrow selection gestures act on the CARET edge, not the
+// left/right-most edge. A forward selection (anchor left, caret right) must
+// SHRINK from its right edge on Ctrl+Shift+Left, and only grow past the
+// anchor (direction flips) after the caret crosses it — like native
+// shift+arrows. Anchor/caret come from selectionDirection; a fresh
+// direction-less selection falls back to extending the far edge.
+// ---------------------------------------------------------------------------
+/** sel3 — park a selection with an EXPLICIT selectionDirection. */
+const sel3 = (a, bb, df) => p.evaluate(([x, y, d]) => {
+  const t = window.editor.activeTab.input;
+  t.focus();
+  t.setSelectionRange(x, y, d);
+}, [a, bb, df]).then(() => sleep(S));
+
+// Grow forward twice from a collapsed caret, then SHRINK back from the caret.
+await setDoc("alpha beta gamma delta", 10); // caret between "beta" and "gamma"
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("8a Shift+Ctrl+Right grows forward one word from the caret",
+    a === 10 && bb === 16, [a, bb]);
+}
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("8b growing again reaches the line end", a === 10 && bb === 22, [a, bb]);
+}
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("8c Shift+Ctrl+Left SHRINKS a forward selection from its caret edge",
+    a === 10 && bb === 17, [a, bb]);
+}
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("8d shrinking again keeps the anchor fixed", a === 10 && bb === 11, [a, bb]);
+}
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("8e crossing the anchor flips the direction and grows the other way",
+    a === 6 && bb === 10, [a, bb]);
+}
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("8f moving back toward the anchor shrinks to nothing at the anchor",
+    a === 10 && bb === 10, [a, bb]);
+}
+
+// A backward-made selection (anchor right, caret left) extends from its caret.
+await setDoc("alpha beta gamma delta", 0);
+await sel3(10, 16, "backward");
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("8g Shift+Ctrl+Left on a backward selection grows from its caret",
+    a === 6 && bb === 16, [a, bb]);
+}
+await sel3(10, 16, "backward");
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("8h moving toward the anchor of a backward selection collapses at it",
+    a === 16 && bb === 16, [a, bb]);
+}
+
+// A fresh selection with NO direction (programmatic/mouse-made): Chromium
+// normalizes "none" to forward — the caret is the right edge — so the gesture
+// shrinks from there. (The direction-less fallback branch — extend the far
+// edge — only fires on engines that genuinely report "none".)
+await setDoc("alpha beta gamma delta", 0);
+await sel3(6, 16, "none");
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("8i direction-less selection + Shift+Ctrl+Right grows from its caret",
+    a === 6 && bb === 22, [a, bb]);
+}
+await sel3(6, 16, "none");
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("8j direction-less selection (normalized forward) shrinks from its caret",
+    a === 6 && bb === 11, [a, bb]);
 }
 
 srv.kill("SIGKILL");
