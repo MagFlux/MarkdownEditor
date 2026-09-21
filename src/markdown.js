@@ -42,7 +42,7 @@ import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
   src/markdown.js keeps the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
 import { scheduleMermaidRender, restoreMermaid } from "./mermaid.js";
-import { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
+import { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
 import { createExportHandlers } from "./export.js";
 import { createSessionStore } from "./session.js";
@@ -56,7 +56,7 @@ import { createHistoryHandlers } from "./history.js";
    `highlightToHtml` from here; the app itself calls it from the closure). */
 export { highlightToHtml, computeBlocks, lineToHtml, isTableSep, esc } from "./render.js";
 export { renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels } from "./mermaid.js";
-export { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor } from "./format.js";
+export { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "./paste.js";
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -1163,8 +1163,10 @@ export function createApp(root) {
    * element holds focus — on WebKitGTK focus can slip off the overlay textarea.
    * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), bold, italic,
    * underline, save (Ctrl+S), link, open (Ctrl+O), close tab (Ctrl+W), new
-   * tab (Ctrl+T). Ctrl/Shift+Arrow word-wise caret moves and selections are
-   * intentionally left to the textarea's native behavior.
+    * tab (Ctrl+T). Ctrl/Shift+Arrow word-wise caret moves are NOT bound here —
+    * they live in the textarea-local onKeyDown, where wordJump can make them
+    * Markdown-aware (a whole formatted span counts as one word) and fall
+    * through to the native move when no span is involved.
    * @param {KeyboardEvent} ev The keydown event.
    * @returns {Promise<void>}
    */
@@ -1177,9 +1179,10 @@ export function createApp(root) {
     if (k === "y" && !ev.shiftKey) { ev.preventDefault(); redo(); return; }
     if (k === "z" && ev.shiftKey) { ev.preventDefault(); redo(); return; }
     // NOTE: Ctrl/Meta+ArrowLeft/Right are intentionally NOT bound here (they
-    // used to be undo/redo aliases). They are left to the textarea's native
-    // word-wise caret move (Ctrl+Left/Right) and word-wise selection extend
-    // (Ctrl+Shift+Left/Right), so direction follows the arrow key used.
+    // used to be undo/redo aliases). The Ctrl-only word-wise caret move and
+    // selection extend live in the textarea-local onKeyDown (wordJump makes
+    // them engine-independent and Markdown-aware); Cmd+Arrow stays native for
+    // macOS Home/End.
 
     if (k === "b" && !ev.shiftKey) { ev.preventDefault(); toggleFormat("bold"); return; }
     if (k === "i" && !ev.shiftKey) { ev.preventDefault(); toggleFormat("italic"); return; }
@@ -1267,6 +1270,13 @@ export function createApp(root) {
    * PRESERVING the parent item's indentation (so a nested bullet's Enter
    * keeps its indent level), and increments ordered-list numbers.
    *
+   * Also owns the Markdown-aware Ctrl+Arrow word-wise caret move (with Shift
+   * it extends the selection): wordJump treats a word as a whitespace-run —
+   * trailing punctuation included, standalone punctuation its own stop — with
+   * formatted spans atomic, and crosses line ends to the next line's first
+   * word (`step|\n- **Diagrams**` → `step\n-| …`). Only the document edges
+   * fall through to the native move (a no-op there).
+   *
    * Tab/Shift+Tab used to be bound here, but on WebKitGTK (the Tauri shell on
    * Linux; WebView2 behaves the same on Windows) Shift+Tab escaped the editor
    * to browser focus traversal — it now lives in the CAPTURE-phase window
@@ -1277,6 +1287,40 @@ export function createApp(root) {
    */
   async function onKeyDown(ev) {
     const mod = ev.ctrlKey || ev.metaKey;
+
+    // Markdown-aware Ctrl+Arrow word-wise caret move. The engines' native
+    // segmentation is inconsistent AND marker-blind: from `A| **lightweight**`
+    // both stop between "lightweight" and the closing `**`, Chromium stops
+    // before a trailing period (`live formatting|.`), WebKitGTK skips
+    // standalone punctuation runs (`editor| - write` → `editor - write|`), and
+    // at a line end native skips the next line's leading marker and lands
+    // mid-span (`step|\n- **Diagrams**` → `**Diagrams|**`). wordJump owns
+    // every move with a deterministic token model: a word is a
+    // whitespace-delimited run (trailing punctuation rides along, a standalone
+    // ` - ` is its own stop), a formatted span is ATOMIC, and line-crossing
+    // stops at the next line's first word (`step\n-| …`). Shift extends the
+    // selection word-wise; a bare move first collapses to the near edge, like
+    // the native behavior. Ctrl is used, NOT Cmd/Meta: on macOS Cmd+Left/Right
+    // is Home/End line navigation and must stay native. wordJump returns null
+    // only at the document edges, where the native move is a no-op anyway.
+    if (ev.ctrlKey && !ev.altKey && !ev.metaKey && (ev.key === "ArrowRight" || ev.key === "ArrowLeft")) {
+      const d = activeTab;
+      if (!d) return;
+      const input = d.input;
+      const dir = ev.key === "ArrowRight" ? 1 : -1;
+      // Extend: the edge in the movement direction moves, the other edge is the
+      // anchor. Bare move: collapse to the near edge first, then jump.
+      const pos = dir > 0 ? input.selectionEnd : input.selectionStart;
+      const anchor = ev.shiftKey ? (dir > 0 ? input.selectionStart : input.selectionEnd) : null;
+      const target = wordJump(input.value, pos, dir);
+      if (target === null) return;
+      ev.preventDefault();
+      if (ev.shiftKey) input.setSelectionRange(Math.min(anchor, target), Math.max(anchor, target));
+      else input.setSelectionRange(target, target);
+      updateActiveStates();
+      updateStatus(d);
+      return;
+    }
 
     if (ev.key === "Enter" && !mod) {
       const d = activeTab, input = d.input, text = d.input.value;

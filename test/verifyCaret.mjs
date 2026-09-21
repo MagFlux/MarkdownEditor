@@ -14,6 +14,16 @@
  *    otherwise.
  *  - Table insert puts the caret in the first body cell; block formats put the
  *    caret at the end of the rewritten block.
+ *  - Ctrl+Arrow word-wise moves are MARKDOWN-AWARE and engine-independent:
+ *    a word is a whitespace-delimited run (trailing punctuation like
+ *    `formatting.` rides along; a standalone ` - ` is its own stop) and a
+ *    whole formatted span (`**bold**`, `*it*`, `` `code` ``, `[l](u)`,
+ *    `**two words**`) is atomic — markers included. Ctrl+Right from
+ *    `A| **lightweight**` lands at `A **lightweight**|`, from `editor|`
+ *    stops after the `-`, from `live| formatting.` lands after the period;
+ *    Ctrl+Left mirrors. Line-crossing stops at the next line's first word
+ *    (`step|\n- **Diagrams**` → `step\n-| …`); only the document edges fall
+ *    through to native (a no-op there).
  *
  * Run with `npm run verify-caret`.
  */
@@ -239,6 +249,312 @@ await block("table");
       "| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n");
   ok("5d caret in the first body cell, collapsed",
     (a === good[0] && bb === good[1]), [a, good[0]]);
+}
+
+// ---------------------------------------------------------------------------
+// CASE 6 — Markdown-aware Ctrl+Arrow word-wise caret moves. The engines'
+// native segmentation is inconsistent AND marker-blind (both stop between
+// "lightweight" and the closing `**`; Chromium stops before a trailing period;
+// WebKitGTK skips standalone punctuation runs). wordJump owns every intra-line
+// move with a deterministic token model: a word is a whitespace-delimited run
+// (trailing punctuation rides along, a standalone ` - ` is its own stop) and a
+// formatted span is ATOMIC (markers included, multi-word spans survive their
+// internal space). Only line edges fall through to the native move (wraps).
+// ---------------------------------------------------------------------------
+// The exact reported bug: caret after "A", Ctrl+Right must clear the span.
+await setDoc("A **lightweight**", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6a Ctrl+Right from 'A| **lightweight**' lands AFTER the closing '**'",
+    a === 17 && bb === 17, [a, bb]);
+}
+
+// Caret at the span start / strictly inside the span: still one word.
+await setDoc("A **lightweight**", 2);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6b Ctrl+Right from the opening '**' clears the whole span", a === 17 && bb === 17, [a, bb]);
+}
+await setDoc("A **lightweight**", 5);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6c Ctrl+Right from mid-'lightweight' lands after the closing '**'", a === 17 && bb === 17, [a, bb]);
+}
+
+// Mirror: Ctrl+Left from the span end / mid-span lands BEFORE the opening '**'.
+await setDoc("A **lightweight**", 17);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6d Ctrl+Left from 'A **lightweight**|' lands at the opening '**'",
+    a === 2 && bb === 2, [a, bb]);
+}
+await setDoc("A **lightweight**", 5);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6e Ctrl+Left from mid-span lands at the opening '**'", a === 2 && bb === 2, [a, bb]);
+}
+
+// Plain words BEFORE a span are not swallowed: the stop is the plain word's
+// end (these values coincide with Chromium's native word-end stops).
+await setDoc("foo bar **baz**", 0);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6f Ctrl+Right from 'f|oo bar **baz**' stops at the plain word end",
+    a === 3 && bb === 3, [a, bb]);
+}
+await setDoc("foo bar **baz**", 4);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6g Ctrl+Right from 'b|ar **baz**' stops after 'bar' (not the span)",
+    a === 7 && bb === 7, [a, bb]);
+}
+
+// Whitespace directly before a span: the span IS the next word → cross it whole.
+await setDoc("foo bar **baz**", 7);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6h Ctrl+Right from 'foo bar |**baz**' lands after the closing '**'",
+    a === 15 && bb === 15, [a, bb]);
+}
+
+// Left mirror over a span, from its end and from mid-token.
+await setDoc("foo bar **baz**", 15);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6i Ctrl+Left from after '**baz**' lands at the opening '**'", a === 8 && bb === 8, [a, bb]);
+}
+await setDoc("foo bar **baz**", 12);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6j Ctrl+Left from mid-'baz' lands at the opening '**'", a === 8 && bb === 8, [a, bb]);
+}
+
+// Other span kinds: code span and link.
+await setDoc("x `code` y", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6k Ctrl+Right over a code span lands after the closing backtick",
+    a === 8 && bb === 8, [a, bb]);
+}
+await setDoc("[text](url)", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6l Ctrl+Right inside a link lands after the closing ')'", a === 11 && bb === 11, [a, bb]);
+}
+await setDoc("[text](url)", 11);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6m Ctrl+Left from after a link lands at the opening '['", a === 0 && bb === 0, [a, bb]);
+}
+
+// Trailing sentence punctuation RIDES ALONG with its word (the "live
+// formatting." report): the stop is after the comma, not before it.
+await setDoc("**bold**, tail", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6n Ctrl+Right over '**bold**,' stops after the comma", a === 9 && bb === 9, [a, bb]);
+}
+
+// Shift+Ctrl+Arrow extends the selection word-wise (span as one word).
+await setDoc("A **lightweight**", 1);
+await key("Shift+Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6o Shift+Ctrl+Right extends the selection across the whole span",
+    a === 1 && bb === 17, [a, bb]);
+}
+await setDoc("A **lightweight**", 17);
+await key("Shift+Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6p Shift+Ctrl+Left extends the selection back to the opening '**'",
+    a === 2 && bb === 17, [a, bb]);
+}
+
+// The "editor - write" report: a standalone punctuation run between spaces is
+// a word of its own (WebKitGTK's native move used to SKIP it and jump to the
+// end of the line).
+await setDoc("editor - write", 6);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6q Ctrl+Right from 'editor| - write' stops after the '-'",
+    a === 8 && bb === 8, [a, bb]);
+}
+await setDoc("editor - write", 8);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6r Ctrl+Right from 'editor -| write' stops after 'write'",
+    a === 14 && bb === 14, [a, bb]);
+}
+await setDoc("editor - write", 14);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6s Ctrl+Left from 'editor - write|' stops before 'write'",
+    a === 9 && bb === 9, [a, bb]);
+}
+await setDoc("editor - write", 9);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6t Ctrl+Left from 'editor - |write' stops before the '-'",
+    a === 7 && bb === 7, [a, bb]);
+}
+
+// The "live formatting." report: trailing sentence punctuation is consumed in
+// the same press (Chromium's native move stopped before the period).
+await setDoc("live formatting.", 4);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6u Ctrl+Right from 'live| formatting.' lands AFTER the period",
+    a === 16 && bb === 16, [a, bb]);
+}
+await setDoc("live formatting.", 16);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6v Ctrl+Left from 'live formatting.|' stops at the word start",
+    a === 5 && bb === 5, [a, bb]);
+}
+
+// Multi-word spans stay ATOMIC: the internal space must not split the word.
+await setDoc("A **two words** b", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6w Ctrl+Right clears the whole '**two words**' span in one press",
+    a === 15 && bb === 15, [a, bb]);
+}
+await setDoc("A **two words** b", 7);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("6x Ctrl+Right from the span's internal space still clears the span",
+    a === 15 && bb === 15, [a, bb]);
+}
+await setDoc("A **two words** b", 15);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6y Ctrl+Left from after '**two words**' lands at the opening '**'",
+    a === 2 && bb === 2, [a, bb]);
+}
+await setDoc("A **two words** b", 8);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("6z Ctrl+Left from mid-'words' lands at the opening '**'",
+    a === 2 && bb === 2, [a, bb]);
+}
+
+// ---------------------------------------------------------------------------
+// CASE 7 — Ctrl+Arrow LINE-CROSSING. Native crossing is marker-blind: from
+// `step|\n- **Diagrams**` it skips the next line's leading `- ` and lands
+// mid-span (`**Diagrams|**`). wordJump owns the crossing: right moves stop at
+// the end of the NEXT line's first word, left moves at the start of the
+// PREVIOUS line's last word; blank lines are skipped; the document edges are
+// left to native (a no-op there).
+// ---------------------------------------------------------------------------
+// The exact reported bug: end of "step", Ctrl+Right crosses and stops after
+// the "-" list marker, NOT inside the span.
+await setDoc("step\n- **Diagrams**", 4);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7a Ctrl+Right at a line end crosses and stops after the next line's '-'",
+    a === 6 && bb === 6, [a, bb]);
+}
+await setDoc("step\n- **Diagrams**", 6);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7b the next press clears the whole span", a === 19 && bb === 19, [a, bb]);
+}
+
+// Mirror: Ctrl+Left from the crossed position walks back through the marker,
+// then crosses the newline to the start of the previous line's last word.
+await setDoc("step\n- **Diagrams**", 6);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("7c Ctrl+Left from after the '-' stops at the '-' start",
+    a === 5 && bb === 5, [a, bb]);
+}
+await setDoc("step\n- **Diagrams**", 5);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("7d Ctrl+Left at a line start crosses back to the previous word start",
+    a === 0 && bb === 0, [a, bb]);
+}
+
+// The next line's first word can itself be a span: stop after its markers.
+await setDoc("a\n**bold** b", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7e crossing into a line that starts with a span stops after its '**'",
+    a === 10 && bb === 10, [a, bb]);
+}
+
+// Plain-text crossing (no markers involved) and the left mirror.
+await setDoc("one\ntwo", 3);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7f Ctrl+Right crosses a plain newline to the next word end",
+    a === 7 && bb === 7, [a, bb]);
+}
+await setDoc("one\ntwo", 4);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("7g Ctrl+Left crosses back to the previous line's word start",
+    a === 0 && bb === 0, [a, bb]);
+}
+
+// Blank lines are skipped while crossing.
+await setDoc("a\n\nb", 1);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7h Ctrl+Right skips blank lines while crossing", a === 4 && bb === 4, [a, bb]);
+}
+
+// Document edge: native handles it (a no-op — the caret stays put).
+await setDoc("abc", 3);
+await key("Control+ArrowRight");
+{
+  const [a, bb] = await caret();
+  ok("7i Ctrl+Right at the document end leaves the caret in place",
+    a === 3 && bb === 3, [a, bb]);
+}
+
+// Ctrl+Left from a line start whose previous line ENDS with a span: lands at
+// the span's opening markers.
+await setDoc("a **bold**\nnext", 11);
+await key("Control+ArrowLeft");
+{
+  const [a, bb] = await caret();
+  ok("7j crossing back into a line that ends with a span stops at its '**'",
+    a === 2 && bb === 2, [a, bb]);
 }
 
 srv.kill("SIGKILL");

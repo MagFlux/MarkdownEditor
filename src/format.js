@@ -9,14 +9,32 @@
  * Zero dependencies, zero DOM, zero Tauri: just string math. These fns power
  * the toolbar's bold / italic / strike / code / underline / link toggles: they
  * find the word/token under the caret, detect whether it already has a
- * markdown format, and compute the exact span to wrap or unwrap.
- *
- * Invariant: `detectFormat` returns the trimmed span bounds (`fs`/`fe`) that
+ * markdown format, and compute the exact span to wrap or unwrap. `wordJump`
+ * additionally powers the Markdown-aware Ctrl+Arrow word-wise caret move
+ * (a whole formatted span counts as one word, markers included).
+ * * Invariant: `detectFormat` returns the trimmed span bounds (`fs`/`fe`) that
  * `toggleFormat` splices on — byte-for-byte — so trailing sentence
  * punctuation survives a format toggle.
  */
 
 /* ================= Selection helpers ================= */
+
+/**
+ * FORMATTED_PATTERNS — the inline-format span regexes (bold, italic, strike,
+ * code, underline, link). Shared by `wordAt` (format detection) and `wordJump`
+ * (Markdown-aware Ctrl+Arrow movement) so both agree on what "one formatted
+ * word" is.
+ */
+const FORMATTED_PATTERNS = [
+  /`[^`]+`/,
+  /\*\*(?:[^*]|\*(?!\*))+\*\*/,
+  /__(?:[^_]|_(?!_))+__/,
+  /~~(?:[^~]|~(?!~))+~~/,
+  /<u>[\s\S]+?<\/u>/,
+  /\[[^\]]*\]\([^)]*\)/,
+  /(?<!\*)\*(?!\*)[^*\s](?:[^*]*?[^*\s])?\*(?!\*)/,
+  /(?<!_)_(?!_)[^_\s](?:[^_]*?[^_\s])?_(?!_)/,
+];
 
 /**
  * lineBounds — find the bounds of the line containing `pos`.
@@ -52,17 +70,7 @@ function W(ch) { return ch !== undefined && ch !== "" && !/\s/.test(ch); }
  */
 function wordAt(line, off) {
   const n = line.length; if (off < 0) off = 0; if (off > n) off = n;
-  const formatted = [
-    /`[^`]+`/,
-    /\*\*(?:[^*]|\*(?!\*))+\*\*/,
-    /__(?:[^_]|_(?!_))+__/,
-    /~~(?:[^~]|~(?!~))+~~/,
-    /<u>[\s\S]+?<\/u>/,
-    /\[[^\]]*\]\([^)]*\)/,
-    /(?<!\*)\*(?!\*)[^*\s](?:[^*]*?[^*\s])?\*(?!\*)/,
-    /(?<!_)_(?!_)[^_\s](?:[^_]*?[^_\s])?_(?!_)/,
-  ];
-  for (const pattern of formatted) {
+  for (const pattern of FORMATTED_PATTERNS) {
     for (const match of line.matchAll(new RegExp(pattern.source, "g"))) {
       const start = match.index, end = start + match[0].length;
       if (off >= start && off <= end) return [start, end];
@@ -79,6 +87,125 @@ function wordAt(line, off) {
   let s = anchor; while (s > 0 && W(line[s - 1])) s--;
   let e = anchor; while (e < n && W(line[e])) e++;
   return [s, e];
+}
+
+/* ================= Markdown-aware Ctrl+Arrow word movement ================= */
+
+/**
+ * wordJump — compute the Markdown-aware Ctrl+Arrow caret target.
+ *
+ * The engines' native word moves are inconsistent AND marker-blind: from
+ * `A| **lightweight**` both stop between "lightweight" and the closing `**`,
+ * Chromium stops before a trailing sentence period (`live formatting|.`),
+ * WebKitGTK skips standalone punctuation runs entirely (`editor| - write` →
+ * `editor - write|`), and at a line end native skips the next line's leading
+ * marker and lands mid-span (`step|\n- **Diagrams**` → `**Diagrams|**`). So
+ * this owns EVERY move with a simple, engine-independent token model:
+ *
+ *  - A word is a whitespace-delimited run of characters — trailing sentence
+ *    punctuation (`formatting.`) rides along with its word, while a
+ *    punctuation run between spaces (` - `) is a word of its own.
+ *  - A formatted span (`` `code` ``, `**bold**`, `*it*`, `~~s~~`, `<u>u</u>`,
+ *    `[link](url)`, `__b__`, `_i_`) is ATOMIC: its markers never split it and
+ *    a multi-word span (`**two words**`) survives its internal space. The run
+ *    grows across any span that straddles its edge, to a closure.
+ *  - Moving RIGHT from inside a word lands at its END (past closing markers
+ *    and trailing punctuation); from whitespace it jumps to the end of the
+ *    NEXT word. Moving LEFT mirrors to the word's START.
+ *  - At a line end the move crosses the newline and stops at the end of the
+ *    NEXT line's first word (`step|\n- **Diagrams**` → `step\n-| …`); blank
+ *    lines are skipped. Moving LEFT from a line start mirrors to the START of
+ *    the previous line's last word.
+ *  - Returns null only at the DOCUMENT edges (pos at/after the end moving
+ *    right, at/before 0 moving left) — the native move is a no-op there.
+ *
+ * @param {string} text — the full document text.
+ * @param {number} pos — the caret offset in the text.
+ * @param {number} dir — +1 (ArrowRight) or -1 (ArrowLeft).
+ * @returns {number|null} the new absolute caret offset, or null when the
+ *   native move should be used (document edge).
+ */
+function wordJump(text, pos, dir) {
+  const n = text.length;
+  /**
+   * spansOf — the formatted spans on one line, as [start, end) pairs.
+   * @param {string} line — the single line.
+   * @returns {Array<[number, number]>} the span list.
+   */
+  const spansOf = (line) => {
+    const out = [];
+    for (const pattern of FORMATTED_PATTERNS) {
+      for (const match of line.matchAll(new RegExp(pattern.source, "g"))) {
+        out.push([match.index, match.index + match[0].length]);
+      }
+    }
+    return out;
+  };
+  if (dir > 0) {
+    if (pos >= n) return null;
+    let p = pos;
+    for (;;) {
+      const [ls, le] = lineBounds(text, p);
+      const line = text.slice(ls, le);
+      const off = p - ls;
+      let q = off;
+      if (!W(line[q])) {
+        // On whitespace (or at the line end): the word is the one AFTER the
+        // gap — on this line if one follows, else cross the newline (blank
+        // lines are skipped by the loop).
+        while (q < line.length && !W(line[q])) q++;
+        if (q >= line.length) {
+          if (le >= n) return null; // no further line → document edge
+          p = le + 1;
+          continue;
+        }
+      }
+      // Grow the word to a closure: the non-whitespace run plus every
+      // formatted span straddling its edge (a multi-word span's internal
+      // space would otherwise split it; a span butted against the run —
+      // e.g. trailing punctuation — extends it).
+      let end = q;
+      const spans = spansOf(line);
+      for (;;) {
+        while (end < line.length && W(line[end])) end++;
+        let grew = false;
+        for (const [s, e] of spans) {
+          if (s < end && e > end) { end = e; grew = true; }
+        }
+        if (!grew) break;
+      }
+      return ls + end;
+    }
+  }
+  if (pos <= 0) return null;
+  let p = pos;
+  for (;;) {
+    const [ls, le] = lineBounds(text, p);
+    const line = text.slice(ls, le);
+    const off = p - ls;
+    let q = off;
+    if (!W(line[q - 1])) {
+      // On whitespace (or at the line start): the word is the one BEFORE the
+      // gap — on this line if one precedes, else cross the newline backward.
+      while (q > 0 && !W(line[q - 1])) q--;
+      if (q <= 0) {
+        if (ls <= 0) return null; // no earlier line → document edge
+        p = ls - 1;
+        continue;
+      }
+    }
+    let start = q;
+    const spans = spansOf(line);
+    for (;;) {
+      while (start > 0 && W(line[start - 1])) start--;
+      let grew = false;
+      for (const [s, e] of spans) {
+        if (s < start && e > start) { start = s; grew = true; }
+      }
+      if (!grew) break;
+    }
+    return ls + start;
+  }
 }
 
 /* ================= Format detection / wrapping ================= */
@@ -182,4 +309,4 @@ function wrapFor(kind, inner) {
   return inner;
 }
 
-export { lineBounds, wordAt, detectFormat, trimmedSpan, wrapFor };
+export { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor };
