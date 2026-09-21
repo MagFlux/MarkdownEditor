@@ -102,7 +102,7 @@ npm install
 npm run dev            # http://127.0.0.1:5173
 
 # Verification suite (browser Chromium, Playwright). Order is cheap→expensive.
-npm test               # 21 round-trip renderer cases (no server, instant)
+npm test               # 26 round-trip + overlay-styling cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
 npm run verify-save    # save / close-guard UI test (24 cases)
@@ -309,7 +309,10 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 1. **Round-trip invariant** — stripping every `<span>` out of the overlay HTML must
    reproduce the exact source, character-for-character. This is what keeps the
-   invisible caret aligned under the overlay. `test/test.mjs` enforces this (21 cases).
+   invisible caret aligned under the overlay. `test/test.mjs` enforces this (26 cases:
+   round-trip + a `.u`-span styling assertion for `<u>…</u>`, because a
+   plain-escaped-text fallback also round-trips and would otherwise hide a broken
+   token match — the anchored `/^<\/u>/` close-tag regression).
    Any renderer change must pass it.
   Inline overlay styles must not add horizontal padding or margins: code spans
   may change color/background, but their rendered width must remain identical

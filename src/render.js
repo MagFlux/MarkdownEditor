@@ -86,11 +86,14 @@ function matchTok(t, i) {
     const open = /^<u>/i.exec(t.slice(i));
     if (open) {
       const body = t.slice(i + open[0].length);
-      const close = /^<\/u>/i.exec(body);
-      if (close) {
-        const inner = body.slice(0, close.index);
+      // The closing tag must be SEARCHED for, not anchored to the body start:
+      // an anchored /^<\/u>/ only matches `<u></u>` (empty inner) and silently
+      // fell through to plain text for every real `<u>text</u>` token.
+      const closeIdx = body.search(/<\/u>/i);
+      if (closeIdx > -1) {
+        const inner = body.slice(0, closeIdx);
         return {
-          len: open[0].length + inner.length + close[0].length,
+          len: open[0].length + inner.length + 4,
           html: `<span class="mark">&lt;u&gt;</span><span class="u">${esc(inner)}</span><span class="mark">&lt;/u&gt;</span>`,
         };
       }

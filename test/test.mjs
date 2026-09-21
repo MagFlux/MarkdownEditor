@@ -4,7 +4,10 @@
  * Strips every `<span>` out of the highlight overlay HTML and asserts the
  * result reproduces the exact source character-for-character. This is the
  * caret-alignment guarantee that keeps the invisible textarea caret under the
- * visible overlay. Run with `npm test`.
+ * visible overlay. Also asserts the OVERLAY STYLING for the inline tokens:
+ * `<u>text</u>` must produce a `.u` span (the underline actually paints) —
+ * an escaped-plain-text fallback would still round-trip, so the span check
+ * is what catches a broken token match. Run with `npm test`.
  */
 globalThis.document = {
   createElement: () => ({
@@ -44,6 +47,11 @@ const cases = [
   "~~s~~",
   "`c`",
   "<u>u</u>",
+  "<u>multi word</u>",
+  "with live <u>formatting</u>.",
+  "x <u>y</u> z **b** <u>w</u>",
+  "<u></u>",
+  "<u>unclosed",
   "[a](b)",
   "mix **b** *i* <u>u</u> `c` [l](u) ~~s~~",
   "# H",
@@ -64,10 +72,22 @@ const cases = [
 
 let fails = 0;
 for (const src of cases) {
-  const back = strip(m.highlightToHtml(src));
+  const html = m.highlightToHtml(src);
+  const back = strip(html);
   if (back !== src) {
     fails++;
     console.error("MISMATCH", JSON.stringify(src), "->", JSON.stringify(back));
+  }
+  // Styling regression (the `<u>` close-tag search): a `<u>…</u>` token with
+  // non-empty inner text must render its inner text in a `.u` span — the
+  // underline the editor paints. Plain `&lt;u&gt;` output round-trips fine, so
+  // only this span assertion catches the token match breaking.
+  if (/^<u>.+<\/u>$/i.test(src)) {
+    const inner = src.replace(/^<u>/i, "").replace(/<\/u>$/i, "");
+    if (!html.includes(`<span class="u">${inner}</span>`)) {
+      fails++;
+      console.error("NO .u SPAN for", JSON.stringify(src), "->", JSON.stringify(html));
+    }
   }
 }
 if (fails === 0) {
