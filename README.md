@@ -88,6 +88,7 @@ MarkdownEditor/
     ├── verifyThemeScroll.mjs   # theme-switch scroll preservation + themed scrollbars (10 cases)
     ├── verifyMermaidFlicker.mjs # mermaid anti-flicker: keystroke outside fence does not flash raw code (7 cases)
     ├── verifyMermaidStyle.mjs  # mermaid stylesheet-failure robustness + label centering (20 cases)
+    ├── verifyMermaidFade.mjs   # mermaid dark-theme gradient-outline fade off (12 cases)
     ├── verifyCaret.mjs         # caret placement after editor actions (71 cases)
     └── verifyTauriClose.mjs    # native Tauri path (stubs __TAURI_INTERNALS__, no Rust)
 ```
@@ -300,6 +301,12 @@ Everything about the native shell (title, size, icons, identifier) is in `src-ta
    npm run verify-mermaidstyle
    ```
 
+- **Mermaid dark-theme gradient outlines are disabled** — Mermaid v12's default `neo` look paints flowchart node strokes as a left-to-right `linearGradient` when the theme sets `useGradient: true` (which the dark theme does; the light "default" theme does not). The dark gradient runs `#ccc` → a much darker grey, so the right half of every box outline faded into the background and became unreadable (sequence diagrams never used that gradient, which is why only flowcharts were affected). `renderMermaidSvg`'s `mermaid.initialize` now passes `themeVariables: { useGradient: false }` — the supported knob Mermaid itself honors — so the generated sheet emits the solid `nodeBorder` stroke (`#ccc` in dark) and both the stylesheet AND the stamped presentation attributes (the WebView2 stylesheet-failure fallback) carry it. Coverage (`npm run verify-mermaidfade`, 12 cases): in BOTH themes there is no `linearGradient` in the SVG defs, the sheet's neo node-stroke rule is not `url(...)`, the computed node stroke is a solid color, the stamped attribute matches it, and the dark-theme stroke luminance stays high (> 0.5).
+
+   ```bash
+   npm run verify-mermaidfade
+   ```
+
 - **Native (Tauri) path test** — instead of a browser fallback, this injects the exact `window.__TAURI_INTERNALS__` the real app gets and drives the **genuinely imported** `@tauri-apps` api. It fires a `close-requested` event and asserts, across 43 cases: the save-then-close walk (Save → in-app Save-As picker → a real `fs/write_text_file` to the chosen path with the document's exact contents **and** the window actually closes, no `preventDefault`); picker-cancel keeps the window open with nothing written; a tab that already has a path → direct write (no picker); `open()` → in-app open picker → `fs/read_text_file` into a fresh tab (vs. picker-cancel creating no tab); navigating the picker into an out-of-scope/forbidden directory → the crumb **stays on the last readable directory** with a "Cannot read …" error (it never adopts the failed path); the **Home button** — always present in the picker's pathbar — jumps the picker back to the user's home dir even after navigating several levels deep; and the picker **enters a hidden (dot) folder** (drives `read_dir` into `~/.config`), the UI-side guard for the `requireLiteralLeadingDot: false` fs-scope fix. Needs the built `dist/`; no Rust toolchain required.
 
   ```bash
@@ -370,6 +377,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-tabscroll` | Headless cross-tab scroll-persistence test: a tab's editor + preview scroll survive leaving and returning (no cross-tab clobber) (7 cases, needs Playwright) |
  | `npm run verify-mermaidflicker` | Headless mermaid anti-flicker test: a keystroke in prose outside a fence does NOT flash raw code — the holder is restored synchronously from cache in the same tick; a keystroke inside the fence still re-renders (7 cases, needs Playwright) |
 | `npm run verify-mermaidstyle` | Headless mermaid stylesheet-failure test: stamped attrs exist, `stroke="none"` placeholders overwritten, computed styles survive removal of EVERY `<style>` element, the sheet paints the same fontFamily mermaid measures with, oversized label boxes get flex-recentered, and plain-text labels painting with the start-anchor-from-center fingerprint (center displaced by half their width from the nearest shape) re-anchored to text-anchor:middle via the painted start-anchor fingerprint, middle-anchored labels center-snapped with a rounded translate (WebKitGTK dominant-baseline quirk) (20 cases, needs Playwright) |
+| `npm run verify-mermaidfade` | Headless mermaid dark-theme gradient-outline test: no `linearGradient` in the defs, the sheet's neo node-stroke rule is not `url(...)`, computed + stamped node strokes are SOLID colors in both themes, and the dark-theme stroke luminance stays high (12 cases, needs Playwright) |
 | `npm run verify-tauri` | Native Tauri path test (stubs `__TAURI_INTERNALS__`, real api/IPC, overwrite confirmation, picker Home button + hidden-folder navigation) |
 | `npm run verify-caret` | Headless caret-placement test (71 cases): Enter list-continuation keeps indentation with a collapsed caret; Tab/Shift+Tab (incl. blank lines) commit without highlighting and the caret column follows the text; inline formats collapse at the end of the inner span before the closing marker; code-fence wrap caret sits inside the fence; table insert caret in the first body cell; Markdown-aware Ctrl+Arrow word moves — whitespace-run words (trailing punctuation rides along, standalone ` - ` its own stop) with formatted spans atomic, line-crossing stops at the next line's first word, only document edges fall through native; Ctrl+Shift+Arrow gestures act on the caret edge (shrink/flip like native shift+arrows) |
 | `npx tauri dev` | Native dev window (alias: `npm run app`) |

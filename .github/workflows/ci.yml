@@ -139,6 +139,8 @@ jobs:
         run: npm run verify-mermaidflicker
       - name: Mermaid stylesheet-failure robustness (8 cases)
         run: npm run verify-mermaidstyle
+      - name: Mermaid dark-theme gradient-outline fade (12 cases)
+        run: npm run verify-mermaidfade
       - name: Caret placement after editor actions (71 cases)
         run: npm run verify-caret
       - name: Native Tauri IPC path (43 cases)

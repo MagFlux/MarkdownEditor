@@ -428,7 +428,23 @@ async function renderMermaidSvg(text) {
     // lists is missing, so fontconfig resolves BOTH to one substitute and
     // the bug is invisible. Pinning fontFamily to the SAME stack both sides
     // use removes the mismatch (measure == paint on every platform).
-    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme, fontFamily: '"trebuchet ms", verdana, arial, sans-serif' }); } catch { }
+    //
+    // NO GRADIENT OUTLINES (dark-theme "fading box edges" fix): Mermaid's
+    // default `neo` look paints flowchart node strokes as a LEFT-TO-RIGHT
+    // linearGradient (`[data-look="neo"].node rect { stroke: url(#id-gradient) }`,
+    // stops = theme gradientStart → gradientStop). The DARK theme sets
+    // useGradient=true with start=#ccc (light) and stop=mkBorder(secondary)
+    // (a much darker grey), so the right ~half of every outline fades into
+    // the dark background and becomes unreadable (user screenshot: the ".md"
+    // / "PDF / HTML" boxes lose their right edge). The LIGHT "default" theme
+    // already has useGradient=false, so this override is a no-op there; in
+    // dark it makes the outline the solid #ccc nodeBorder. Sequence diagrams
+    // never used the gradient, which is why only flowcharts were affected.
+    // Mermaid itself honors an explicit useGradient override (theme-helpers:
+    // an explicit `useGradient` in themeVariables wins over the theme's
+    // default), so this is the supported knob — not a CSS patch on the
+    // output, which stampSvgStyles would faithfully re-apply anyway.
+    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme, themeVariables: { useGradient: false }, fontFamily: '"trebuchet ms", verdana, arial, sans-serif' }); } catch { }
     const id = "md-mermaid-" + (++_mmSeq) + "-" + Math.floor(Math.random() * 1e6).toString(36);
     // Mermaid needs a laid-out node to measure text (getBBox), so mount a
     // host in the doc, render into it, then fully clean up. Never left behind.
