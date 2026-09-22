@@ -13,14 +13,17 @@
  * were affected. The light "default" theme already sets useGradient=false.
  *
  * The fix (src/mermaid.js): `mermaid.initialize({ themeVariables:
- * { useGradient: false } })` — an explicit override Mermaid itself honors,
- * so the generated sheet emits the solid nodeBorder stroke. This test
- * asserts, in BOTH themes: the sheet carries no gradient-stroke rule and
- * the defs hold no linearGradient, a node rect's computed stroke is a
- * SOLID color (never url(#…)), and the stamped presentation attribute
- * matches it (the stylesheet-failure fallback carries the same fix).
+ * { useGradient: false, dropShadow: "none" } })` — explicit overrides
+ * Mermaid itself honors, so the generated sheet emits the solid nodeBorder
+ * stroke AND no drop-shadow filter. This test asserts, in BOTH themes: the
+ * sheet carries no gradient-stroke rule and the defs hold no linearGradient,
+ * a node rect's computed stroke is a SOLID color (never url(#…)), the
+ * stamped presentation attribute matches it (the stylesheet-failure
+ * fallback carries the same fix), the sheet's neo node rule carries
+ * `filter: none` (no drop-shadow — the Windows "fuzzy borders" report),
+ * and the dark-theme stroke luminance stays high (>0.5).
  *
- * Run with `npm run verify-mermaidfade`.
+ * Run with `npm run verify-mermaidfade` (16 cases).
  */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
@@ -58,7 +61,7 @@ await p.evaluate(() => {
 });
 await sleep(S * 3); // debounce + render
 
-/** readFadeState — collect gradient evidence from the FIRST mermaid holder. */
+/** readFadeState — collect gradient + drop-shadow evidence from the FIRST holder. */
 const readFadeState = () => p.evaluate(() => {
   const fc = document.querySelectorAll(".mermaid-diagram")[0];
   const svg = fc && fc.querySelector("svg");
@@ -66,15 +69,18 @@ const readFadeState = () => p.evaluate(() => {
   const rect = svg.querySelector(".node rect");
   const cs = rect ? getComputedStyle(rect) : null;
   const styleText = (svg.querySelector("style") || {}).textContent || "";
-  // The sheet's neo node-stroke rule — gradient url or a solid color?
+  // The sheet's neo node-stroke rule — gradient url or a solid color? And is
+  // the theme dropShadow still baked into its filter (the "fuzzy borders" call)?
   const m = styleText.match(/\[data-look="neo"\]\.node rect[^{]*\{[^}]*\}/);
   const rule = m ? m[0] : "";
   return {
     svg: true,
     gradientsInDefs: svg.querySelectorAll("linearGradient").length,
     computedStroke: cs ? cs.stroke : "",
+    computedFilter: cs ? cs.filter : "",
     stampedAttr: rect ? (rect.getAttribute("stroke") || "") : "",
     ruleHasGradientUrl: /stroke:\s*url\(/.test(rule),
+    ruleHasDropShadow: /drop-shadow/.test(rule),
     ruleSnippet: rule.slice(0, 200),
   };
 });
@@ -86,6 +92,8 @@ const assertNoFade = (tag, s) => {
   ok(`${tag}: sheet node-stroke rule is not url(#gradient)`, s.svg === true && s.ruleHasGradientUrl === false, s.ruleSnippet);
   ok(`${tag}: computed node stroke is a SOLID color (never url)`, s.svg === true && /rgba?\(|#\w|none/.test(s.computedStroke) && !/url\(/.test(s.computedStroke), `computedStroke=${s.computedStroke}`);
   ok(`${tag}: stamped attribute matches the solid stroke`, s.svg === true && s.stampedAttr.length > 0 && !/^url\(/.test(s.stampedAttr) && !/^-/.test(s.stampedAttr), `stamped=${s.stampedAttr}`);
+  ok(`${tag}: sheet carries NO drop-shadow filter (fuzzy borders off)`, s.svg === true && s.ruleHasDropShadow === false && /filter:\s*none/.test(s.ruleSnippet), s.ruleSnippet);
+  ok(`${tag}: computed node filter is none (no fuzzy halo)`, s.svg === true && (s.computedFilter === "none" || s.computedFilter === ""), `computedFilter=${s.computedFilter}`);
 };
 
 // ---------------------------------------------------------------------------

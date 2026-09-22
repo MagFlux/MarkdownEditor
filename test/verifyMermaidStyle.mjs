@@ -32,11 +32,13 @@
  *      dominant-baseline quirk) — no-op where the paint already agrees;
  *   9. an oversized EDGE-label foreignObject (the Windows "grey box around
  *      Ctrl+S / Export" report — the labelBkg div paints its bg over the
- *      whole oversized FO) is shrunk back to the painted content with
- *      half-delta x/y offsets, tight FOs untouched, idempotent, and
- *      non-edge (node) labels never shrunk.
+ *      whole oversized FO, and the oversize VARYS per label, so the old 25%
+ *      gate fixed "Ctrl+S" but missed a mildly-oversized "Export") is
+ *      normalized to the painted content on ANY >2px deviation (grow or
+ *      shrink) with half-delta x/y offsets — tight FOs untouched,
+ *      idempotent, and non-edge (node) labels never touched.
  *
- * Run with `npm run verify-mermaidstyle` (26 cases).
+ * Run with `npm run verify-mermaidstyle` (28 cases).
  *
  * Run with `npm run verify-mermaidstyle`.
  */
@@ -281,20 +283,26 @@ ok("8c start-anchored note text untouched", !snapCheck.noteTouched, JSON.stringi
 ok("8d real Chromium render untouched (no snap transforms)", snapCheck.realTransforms === 0, JSON.stringify(snapCheck));
 
 // ---------------------------------------------------------------------------
-// CASE 9 — EDGE-LABEL BG SHRINK (Windows "big grey box around edge labels"
-// report, e.g. Ctrl+S / Export): an edge label's div.labelBkg PAINTS a
-// background and FILLS its foreignObject (table-cell width resolves to the
-// FO width), so an oversized Windows measurement (same quirk as node labels'
-// 120x56 FOs) paints a grey box that occludes the edge line, while a tight
-// (Linux) FO hugs the text. centerForeignObjectLabels shrinks such an FO's
-// width/height ATTRIBUTES back to the painted content and offsets x/y by
-// half the removed slack so the FO stays centered on its edge point.
+// CASE 9 — EDGE-LABEL BG NORMALIZATION (Windows "big grey box around edge
+// labels" report, e.g. Ctrl+S / Export): an edge label's div.labelBkg PAINTS
+// a background and FILLS its foreignObject (table-cell width resolves to the
+// FO width), so ANY oversized Windows measurement paints a grey box that
+// occludes the edge line, while a tight (Linux) FO hugs the text. Crucially
+// the oversize VARYS PER LABEL — the first fix gated on the 25% height rule,
+// which caught the hugely-measured "Ctrl+S" but missed the mildly-oversized
+// "Export" ("you fixed the top one but not the bottom one").
+// centerForeignObjectLabels now (a) flex-centers on ≥4px painted slack and
+// (b) normalizes the FO width/height ATTRIBUTES to the painted content on
+// ANY deviation > 2 attr px on either axis (growing as well as shrinking),
+// with half-delta x/y offsets so the FO stays centered on its edge point.
 // Asserts: (a) the real Chromium render (tight FOs) is untouched by a re-run;
 // (b) a synthetic oversized EDGE label (FO 120x56, label-g transform centered
 // like mermaid's) is shrunk to ≈ the painted content with the half-delta
 // x/y offsets and the text stays painted at the label's center; (c) a second
 // run is a no-op (idempotent); (d) an oversized NON-edge (node) label is NOT
-// shrunk (scope guard — it paints no background).
+// shrunk (scope guard — it paints no background); (e) a MILD height oversize
+// (30 vs 24 — 20% slack, skipped by the old gate) is normalized too; (f) a
+// WIDTH-only oversize is normalized while the tight height is left alone.
 // ---------------------------------------------------------------------------
 // The doc above has no labelled edge — load one for the real-render case.
 await p.evaluate(() => {
@@ -348,7 +356,19 @@ const edgeShrink = await p.evaluate(() => {
   window.editor.centerForeignObjectLabels(host);
   const e2 = rd(foE);
   host.remove();
-  return { realBefore, realAfter, e1, n1, e2, cdx: +cdx.toFixed(1), cdy: +cdy.toFixed(1) };
+  // MILD oversize (the "Export" miss): FO only 6px taller than the content
+  // (30 vs 24 — 20% slack) and width-oversized; the old 25% height gate
+  // skipped it entirely, leaving the grey box. The catch-all normalize must
+  // fix BOTH axes. Plus a WIDTH-only oversize (tight height).
+  const host2 = document.createElement("div");
+  host2.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" style="width:600px;height:200px">' +
+    mkEdge(120, 30, "Export") + mkEdge(200, 24, "Wide only") + '</svg>';
+  document.body.appendChild(host2);
+  const [foM, foW] = host2.querySelectorAll("foreignObject");
+  window.editor.centerForeignObjectLabels(host2);
+  const m1 = rd(foM), w1 = rd(foW);
+  host2.remove();
+  return { realBefore, realAfter, e1, n1, e2, cdx: +cdx.toFixed(1), cdy: +cdy.toFixed(1), m1, w1 };
 });
 ok("9a real render (tight FOs) untouched by a re-run", JSON.stringify(edgeShrink.realBefore) === JSON.stringify(edgeShrink.realAfter), JSON.stringify(edgeShrink.realAfter));
 ok("9b synthetic oversized edge label FO shrunk to painted content", +edgeShrink.e1.h >= 20 && +edgeShrink.e1.h <= 30 && +edgeShrink.e1.w <= 70 && +edgeShrink.e1.w > 0, JSON.stringify(edgeShrink.e1));
@@ -356,6 +376,8 @@ ok("9c shrunk edge FO re-centered (x/y = half the removed slack)", edgeShrink.e1
 ok("9d label text stays painted at the FO/label center", edgeShrink.cdx <= 2 && edgeShrink.cdy <= 2, JSON.stringify(edgeShrink));
 ok("9e second run is a no-op (idempotent)", edgeShrink.e1.w === edgeShrink.e2.w && edgeShrink.e1.h === edgeShrink.e2.h, JSON.stringify({ before: edgeShrink.e1, after: edgeShrink.e2 }));
 ok("9f oversized NON-edge label NOT shrunk (paints no bg)", +edgeShrink.n1.w === 120 && +edgeShrink.n1.h === 56 && edgeShrink.n1.x === null, JSON.stringify(edgeShrink.n1));
+ok("9g MILD height oversize (20% slack) is normalized too — the 'Export' miss", +edgeShrink.m1.h >= 20 && +edgeShrink.m1.h <= 30 && +edgeShrink.m1.w <= 70, JSON.stringify(edgeShrink.m1));
+ok("9h width-only oversize normalized (height left alone)", +edgeShrink.w1.w < 200 && +edgeShrink.w1.w > 20 && edgeShrink.w1.h === "24" && +edgeShrink.w1.x === Math.round((200 - +edgeShrink.w1.w) / 2) && edgeShrink.w1.y === null, JSON.stringify(edgeShrink.w1));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 

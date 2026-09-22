@@ -237,31 +237,39 @@ function installMermaidStyles(holder, src) {
  * the same diagram renders FO height 24/48 matching the content exactly).
  * Mermaid centers the FO on the shape, but the text sits at the TOP of the
  * oversized FO → the user sees the label floating high/off-center inside
- * its box, varying per label. The deterministic fix is engine-independent:
- * when the label's inner line-box height is less than 75% of the FO height,
- * switch the label div to a centered flex column — the text
- * then centers itself inside WHATEVER box mermaid allocated. On Linux the
- * content always fills the FO (single line 21-24px in a 24px FO, wrapped
- * 42px in 48px), so the 25% threshold never triggers there — a pure no-op.
+ * its box, varying per label. The original deterministic fix is
+ * engine-independent: when the label's inner line-box height is less than
+ * 75% of the FO height, switch the label div to a centered flex column —
+ * the text then centers itself inside WHATEVER box mermaid allocated. On
+ * Linux the content always fills the FO (single line 21-24px in a 24px FO,
+ * wrapped 42px in 48px), so the threshold never triggers there — a no-op.
  * Applied as inline styles, so it works even when every stylesheet fails.
  *
- * WHY the EDGE-LABEL bg shrink (Windows "big grey box around edge labels,
- * e.g. Ctrl+S / Export" report): an edge label's div carries the class
- * `labelBkg` and PAINTS a background (the sheet's `.labelBkg` /
+ * WHY the EDGE-LABEL bg normalization (Windows "big grey box around edge
+ * labels, e.g. Ctrl+S / Export" report): an edge label's div carries the
+ * class `labelBkg` and PAINTS a background (the sheet's `.labelBkg` /
  * `.edgeLabel p` fill = edgeLabelBackground, also stamped inline by
  * stampSvgStyles) — and the div FILLS its foreignObject (table-cell width
  * resolves to the FO width). On Windows the edge-label FO is measured
- * oversized (same quirk as node labels), so after the flex-centering above
- * the bg paints a BIG grey box around the centered text, occluding the edge
- * line — while a correctly-measured FO (Linux) paints a box that hugs the
- * text. The fix shrinks the FO's width/height ATTRIBUTES back to the
- * painted content size and offsets x/y by half the removed slack, so the
- * (now-tight) FO stays centered on the edge point and its bg hugs the text
- * exactly like the Linux render. Scale-aware: the painted rects are scaled
- * by the SVG viewBox (preview column narrower than the natural width), so
- * the attr targets are computed as painted * (attrF / paintedF). Pure
- * geometry, engine-independent, and a no-op wherever the measurement was
- * already tight (the same 25% trigger above guards it).
+ * oversized (same quirk as node labels), so the bg paints a grey box
+ * around the text, occluding the edge line — while a correctly-measured
+ * FO (Linux) paints a box that hugs the text. Crucially the oversize VARYS
+ * PER LABEL: the same diagram measured "Ctrl+S" hugely (the 25% gate
+ * caught it) and "Export" only mildly (the gate missed it — "you fixed the
+ * top one but not the bottom one"). So for edge labels the pass
+ * (a) flex-centers the text whenever there is ≥4px of painted slack, and
+ * (b) normalizes the FO's width/height ATTRIBUTES to the painted content
+ * on ANY deviation > 2 attr px on either axis — growing as well as
+ * shrinking (a too-small FO clips) — and offsets x/y by half the delta
+ * (additive to any x/y mermaid set), so the FO stays centered on the edge
+ * point and its bg hugs the text exactly like the Linux render.
+ * Scale-aware: the painted rects are scaled by the SVG viewBox (preview
+ * column narrower than the natural width), so the attr targets are
+ * computed as painted * (attrF / paintedF). The 2px epsilon absorbs ceil()
+ * rounding (≤1px) and subpixel noise, keeping already-tight renders
+ * (Linux) untouched; the pass is idempotent (the second run measures
+ * δ≈0). Node labels keep the original flex-only path (their div paints
+ * no background; the oversized-node look is accepted).
  *
  * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
  * @returns {number} the number of labels re-centered (0 → nothing to do).
@@ -280,43 +288,65 @@ function centerForeignObjectLabels(holder) {
     const p = div.querySelector("p") || div.firstElementChild;
     const pH = (p || div).getBoundingClientRect().height;
     const fH = fo.getBoundingClientRect().height;
-    if (!(fH > 0) || pH < 4 || (fH - pH) < fH * 0.25) return; // content fills the box → nothing to do
-    div.style.height = "100%";
-    div.style.display = "flex";
-    div.style.flexDirection = "column";
-    div.style.alignItems = "center";
-    div.style.justifyContent = "center";
-    n++;
-    // EDGE-LABEL BG SHRINK (Windows "grey box around Ctrl+S / Export"): the
-    // div.labelBkg PAINTS a background and FILLS its FO (table-cell width
-    // resolves to the FO width), so on an oversized Windows measurement the
-    // flex-stretch above makes the bg paint the WHOLE oversized box — a grey
-    // rectangle occluding the edge line — while a tight (Linux) FO paints a
-    // bg that hugs the text. Shrink the FO's width/height ATTRIBUTES back to
-    // the painted content and offset x/y by half the removed slack, keeping
-    // the FO centered on its edge point (mermaid centered the whole FO via
-    // the label group's transform, so re-centering = halving each delta).
-    // Scale-aware: painted rects are scaled by the SVG viewBox, so attr
-    // targets = painted * (attrF / paintedF). The 25% trigger above already
-    // proved the FO is oversized; a node label's div paints nothing, so this
-    // is scoped to edge labels (labelBkg / span.edgeLabel) only.
+    if (!(fH > 0)) return;
     const isEdgeLabel = div.classList.contains("labelBkg") || !!div.querySelector("span.edgeLabel");
-    if (!isEdgeLabel) return;
+    if (!isEdgeLabel) {
+      // NODE and other non-painting labels: the original flex-only fix for
+      // the BIG oversize (the 25% gate). Windows node boxes are sized around
+      // the oversized FO with the text flex-centered — an accepted look, and
+      // a node label's div paints no background, so geometry tweaks would be
+      // pointless risk. Do not widen this path.
+      if (pH < 4 || (fH - pH) < fH * 0.25) return; // content fills the box → nothing to do
+      div.style.height = "100%";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.alignItems = "center";
+      div.style.justifyContent = "center";
+      n++;
+      return;
+    }
+    // EDGE label (div.labelBkg paints a background): the div FILLS its FO
+    // (table-cell width resolves to the FO width), so ANY box the FO
+    // allocates beyond the painted content shows as a grey rectangle over
+    // the edge line. Windows oversizes VARY PER LABEL — the same diagram
+    // rendered "Ctrl+S" hugely (the 25% gate caught it) and "Export" only
+    // mildly (the gate missed it, leaving the box). So for edge labels
+    // (1) flex-center the text whenever there is ≥4px of painted slack, and
+    // (2) normalize the FO's width/height ATTRIBUTES to the painted content
+    // on EVERY visible deviation (>2 attr px, on either axis, growing as
+    // well as shrinking), re-centering x/y by half the delta so the FO stays
+    // on its edge point (mermaid centered the whole FO via the label group's
+    // transform, so re-centering = halving each delta — additive to any x/y
+    // mermaid itself set). Scale-aware: painted rects are scaled by the SVG
+    // viewBox, so attr targets = painted * (attrF / paintedF). The 2px
+    // epsilon absorbs ceil() rounding (≤1px) and subpixel noise, keeping
+    // already-tight renders (Linux) untouched; idempotent (the second run
+    // measures δ≈0).
+    if (pH >= 4 && fH - pH >= 4) {
+      div.style.height = "100%";
+      div.style.display = "flex";
+      div.style.flexDirection = "column";
+      div.style.alignItems = "center";
+      div.style.justifyContent = "center";
+      n++;
+    }
     const fWa = parseFloat(fo.getAttribute("width"));
     const fHa = parseFloat(fo.getAttribute("height"));
     const fW = fo.getBoundingClientRect().width;
     const pW = (p || div).getBoundingClientRect().width;
-    if (!(fWa > 0) || !(fHa > 0) || !(fW > 0) || !(pW > 0)) return;
+    if (!(fWa > 0) || !(fHa > 0) || !(fW > 0) || pH < 4 || !(pW > 0)) return;
     const s = fH / fHa; // painted px per attr px (uniform viewBox scale)
     const newWa = Math.ceil(pW / s);
     const newHa = Math.ceil(pH / s);
-    if (newHa >= fHa || newWa > fWa) return; // content already fills / would grow — nothing to do
-    const dx = Math.max(0, fWa - newWa);
-    const dy = Math.max(0, fHa - newHa);
+    const dx = fWa - newWa;
+    const dy = fHa - newHa;
+    if (Math.abs(dx) <= 2 && Math.abs(dy) <= 2) return; // already tight (Linux) — no-op
     fo.setAttribute("width", String(newWa));
     fo.setAttribute("height", String(newHa));
-    if (dx > 0.01) fo.setAttribute("x", String(Math.round(dx / 2)));
-    if (dy > 0.01) fo.setAttribute("y", String(Math.round(dy / 2)));
+    const x0 = parseFloat(fo.getAttribute("x")) || 0;
+    const y0 = parseFloat(fo.getAttribute("y")) || 0;
+    if (Math.abs(dx) > 0.01) fo.setAttribute("x", String(Math.round(x0 + dx / 2)));
+    if (Math.abs(dy) > 0.01) fo.setAttribute("y", String(Math.round(y0 + dy / 2)));
     n++;
   });
   // PLAIN-TEXT actor/box labels (sequence diagrams): mermaid positions the
@@ -494,7 +524,20 @@ async function renderMermaidSvg(text) {
     // an explicit `useGradient` in themeVariables wins over the theme's
     // default), so this is the supported knob — not a CSS patch on the
     // output, which stampSvgStyles would faithfully re-apply anyway.
-    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme, themeVariables: { useGradient: false }, fontFamily: '"trebuchet ms", verdana, arial, sans-serif' }); } catch { }
+    //
+    // NO DROP SHADOW (Windows "fuzzy borders" report): every theme bakes
+    // `dropShadow = drop-shadow(1px 2px 2px rgba(185,185,185,1))` into the
+    // `[data-look="neo"]` node rules, so each box gets a light-grey halo.
+    // On the app's dark background that halo reads as a fuzzy, blurred
+    // border around every box (and WebView2 rasterizes the filter blur
+    // noticeably); on a light background it is all but invisible, which is
+    // why Linux users never flagged it. Disabling it in BOTH themes keeps
+    // the outline crisp and the platforms identical (flat design — the
+    // app's own chrome carries no shadows either). "none" is a truthy
+    // string, and the sheet template emits `filter: none` for it; the
+    // stamped presentation attributes carry the same, so the
+    // stylesheet-failure fallback stays in sync.
+    try { mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme, themeVariables: { useGradient: false, dropShadow: "none" }, fontFamily: '"trebuchet ms", verdana, arial, sans-serif' }); } catch { }
     const id = "md-mermaid-" + (++_mmSeq) + "-" + Math.floor(Math.random() * 1e6).toString(36);
     // Mermaid needs a laid-out node to measure text (getBBox), so mount a
     // host in the doc, render into it, then fully clean up. Never left behind.
