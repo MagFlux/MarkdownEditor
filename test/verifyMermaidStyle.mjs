@@ -29,9 +29,14 @@
  *      text/tspan level (any shape type, transform-proof);
  *   8. middle-anchored labels whose painted center sits off their nearest
  *      shape are center-snapped with a rounded CSS translate (WebKitGTK
- *      dominant-baseline quirk) — no-op where the paint already agrees.
+ *      dominant-baseline quirk) — no-op where the paint already agrees;
+ *   9. an oversized EDGE-label foreignObject (the Windows "grey box around
+ *      Ctrl+S / Export" report — the labelBkg div paints its bg over the
+ *      whole oversized FO) is shrunk back to the painted content with
+ *      half-delta x/y offsets, tight FOs untouched, idempotent, and
+ *      non-edge (node) labels never shrunk.
  *
- * Run with `npm run verify-mermaidstyle` (15 cases).
+ * Run with `npm run verify-mermaidstyle` (26 cases).
  *
  * Run with `npm run verify-mermaidstyle`.
  */
@@ -274,6 +279,83 @@ ok("8a displaced middle text snapped onto its shape center", snapCheck.snapped, 
 ok("8b already-centered middle text untouched (no transform)", !snapCheck.centeredTouched, JSON.stringify(snapCheck));
 ok("8c start-anchored note text untouched", !snapCheck.noteTouched, JSON.stringify(snapCheck));
 ok("8d real Chromium render untouched (no snap transforms)", snapCheck.realTransforms === 0, JSON.stringify(snapCheck));
+
+// ---------------------------------------------------------------------------
+// CASE 9 — EDGE-LABEL BG SHRINK (Windows "big grey box around edge labels"
+// report, e.g. Ctrl+S / Export): an edge label's div.labelBkg PAINTS a
+// background and FILLS its foreignObject (table-cell width resolves to the
+// FO width), so an oversized Windows measurement (same quirk as node labels'
+// 120x56 FOs) paints a grey box that occludes the edge line, while a tight
+// (Linux) FO hugs the text. centerForeignObjectLabels shrinks such an FO's
+// width/height ATTRIBUTES back to the painted content and offsets x/y by
+// half the removed slack so the FO stays centered on its edge point.
+// Asserts: (a) the real Chromium render (tight FOs) is untouched by a re-run;
+// (b) a synthetic oversized EDGE label (FO 120x56, label-g transform centered
+// like mermaid's) is shrunk to ≈ the painted content with the half-delta
+// x/y offsets and the text stays painted at the label's center; (c) a second
+// run is a no-op (idempotent); (d) an oversized NON-edge (node) label is NOT
+// shrunk (scope guard — it paints no background).
+// ---------------------------------------------------------------------------
+// The doc above has no labelled edge — load one for the real-render case.
+await p.evaluate(() => {
+  window.editor.setDocumentText(
+    "# Edge labels\n\n" +
+    "```mermaid\n" +
+    "flowchart LR\n" +
+    "    A[Write Markdown] --> B{Live preview}\n" +
+    "    B -->|Ctrl+S| C[.md]\n" +
+    "```\n"
+  );
+});
+await sleep(S * 3); // debounce + render
+const edgeShrink = await p.evaluate(() => {
+  // Real render FIRST: edge-label FOs there are tight (content fills) → a
+  // re-run of the pass must not touch their geometry at all.
+  const realFo = document.querySelector(".mermaid-diagram g.edgeLabel foreignObject");
+  const rdReal = (fo) => ({ w: fo.getAttribute("width"), h: fo.getAttribute("height"), x: fo.getAttribute("x"), y: fo.getAttribute("y") });
+  const realBefore = rdReal(realFo);
+  window.editor.centerForeignObjectLabels(realFo.closest(".mermaid-diagram"));
+  const realAfter = rdReal(realFo);
+  const mkEdge = (w, h, text) =>
+    `<g class="label" transform="translate(${-w / 2},${-h / 2})">` +
+    `<foreignObject width="${w}" height="${h}">` +
+    `<div xmlns="http://www.w3.org/1999/xhtml" class="labelBkg" style="display:table-cell;white-space:nowrap;line-height:1.5;text-align:center;background-color:rgba(232,232,232,0.5);">` +
+    `<span class="edgeLabel"><p style="margin:0">${text}</p></span></div></foreignObject></g>`;
+  const mkNode = (w, h, text) =>
+    `<foreignObject width="${w}" height="${h}">` +
+    `<div xmlns="http://www.w3.org/1999/xhtml" style="display:table;white-space:nowrap;line-height:1.5;text-align:center;">` +
+    `<span><p style="margin:0">${text}</p></span></div></foreignObject>`;
+  const host = document.createElement("div");
+  host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" style="width:600px;height:200px">' +
+    mkEdge(120, 56, "Ctrl+S") + mkNode(120, 56, "Node label") + '</svg>';
+  document.body.appendChild(host);
+  const foE = host.querySelector("g.label foreignObject");
+  const foN = host.querySelectorAll("foreignObject")[1];
+  window.editor.centerForeignObjectLabels(host);
+  const rd = (fo) => ({
+    w: fo.getAttribute("width"), h: fo.getAttribute("height"),
+    x: fo.getAttribute("x"), y: fo.getAttribute("y"),
+  });
+  const e1 = rd(foE), n1 = rd(foN);
+  // Painted centering: the p must sit at the label-g origin (= the edge point
+  // mermaid centers on) — compare against the p rect vs the label g's rect.
+  const g = host.querySelector("g.label");
+  const gr = g.getBoundingClientRect();
+  const pr = foE.querySelector("p").getBoundingClientRect();
+  const cdx = Math.abs((pr.left + pr.width / 2) - (gr.left + gr.width / 2));
+  const cdy = Math.abs((pr.top + pr.height / 2) - (gr.top + gr.height / 2));
+  // Idempotency: a second run must not move the shrunk FO again.
+  window.editor.centerForeignObjectLabels(host);
+  const e2 = rd(foE);
+  host.remove();
+  return { realBefore, realAfter, e1, n1, e2, cdx: +cdx.toFixed(1), cdy: +cdy.toFixed(1) };
+});
+ok("9a real render (tight FOs) untouched by a re-run", JSON.stringify(edgeShrink.realBefore) === JSON.stringify(edgeShrink.realAfter), JSON.stringify(edgeShrink.realAfter));
+ok("9b synthetic oversized edge label FO shrunk to painted content", +edgeShrink.e1.h >= 20 && +edgeShrink.e1.h <= 30 && +edgeShrink.e1.w <= 70 && +edgeShrink.e1.w > 0, JSON.stringify(edgeShrink.e1));
+ok("9c shrunk edge FO re-centered (x/y = half the removed slack)", edgeShrink.e1.x !== null && edgeShrink.e1.y !== null && +edgeShrink.e1.x > 0 && +edgeShrink.e1.y > 0, JSON.stringify(edgeShrink.e1));
+ok("9d label text stays painted at the FO/label center", edgeShrink.cdx <= 2 && edgeShrink.cdy <= 2, JSON.stringify(edgeShrink));
+ok("9e second run is a no-op (idempotent)", edgeShrink.e1.w === edgeShrink.e2.w && edgeShrink.e1.h === edgeShrink.e2.h, JSON.stringify({ before: edgeShrink.e1, after: edgeShrink.e2 }));
+ok("9f oversized NON-edge label NOT shrunk (paints no bg)", +edgeShrink.n1.w === 120 && +edgeShrink.n1.h === 56 && edgeShrink.n1.x === null, JSON.stringify(edgeShrink.n1));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 

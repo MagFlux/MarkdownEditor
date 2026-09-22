@@ -226,7 +226,8 @@ function installMermaidStyles(holder, src) {
 
 /**
  * centerForeignObjectLabels — vertically center each HTML label inside its
- * foreignObject when the content DOESN'T fill the allocated box.
+ * foreignObject when the content DOESN'T fill the allocated box, and shrink
+ * EDGE-label foreignObjects back to their painted content.
  *
  * WHY (Windows label mis-centering, second layer): mermaid sizes every HTML
  * label box from getBBox MEASUREMENTS taken in the off-screen measure host;
@@ -243,6 +244,24 @@ function installMermaidStyles(holder, src) {
  * content always fills the FO (single line 21-24px in a 24px FO, wrapped
  * 42px in 48px), so the 25% threshold never triggers there — a pure no-op.
  * Applied as inline styles, so it works even when every stylesheet fails.
+ *
+ * WHY the EDGE-LABEL bg shrink (Windows "big grey box around edge labels,
+ * e.g. Ctrl+S / Export" report): an edge label's div carries the class
+ * `labelBkg` and PAINTS a background (the sheet's `.labelBkg` /
+ * `.edgeLabel p` fill = edgeLabelBackground, also stamped inline by
+ * stampSvgStyles) — and the div FILLS its foreignObject (table-cell width
+ * resolves to the FO width). On Windows the edge-label FO is measured
+ * oversized (same quirk as node labels), so after the flex-centering above
+ * the bg paints a BIG grey box around the centered text, occluding the edge
+ * line — while a correctly-measured FO (Linux) paints a box that hugs the
+ * text. The fix shrinks the FO's width/height ATTRIBUTES back to the
+ * painted content size and offsets x/y by half the removed slack, so the
+ * (now-tight) FO stays centered on the edge point and its bg hugs the text
+ * exactly like the Linux render. Scale-aware: the painted rects are scaled
+ * by the SVG viewBox (preview column narrower than the natural width), so
+ * the attr targets are computed as painted * (attrF / paintedF). Pure
+ * geometry, engine-independent, and a no-op wherever the measurement was
+ * already tight (the same 25% trigger above guards it).
  *
  * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
  * @returns {number} the number of labels re-centered (0 → nothing to do).
@@ -261,12 +280,43 @@ function centerForeignObjectLabels(holder) {
     const p = div.querySelector("p") || div.firstElementChild;
     const pH = (p || div).getBoundingClientRect().height;
     const fH = fo.getBoundingClientRect().height;
-    if (!(fH > 0) || (fH - pH) < fH * 0.25) return; // content fills the box → nothing to do
+    if (!(fH > 0) || pH < 4 || (fH - pH) < fH * 0.25) return; // content fills the box → nothing to do
     div.style.height = "100%";
     div.style.display = "flex";
     div.style.flexDirection = "column";
     div.style.alignItems = "center";
     div.style.justifyContent = "center";
+    n++;
+    // EDGE-LABEL BG SHRINK (Windows "grey box around Ctrl+S / Export"): the
+    // div.labelBkg PAINTS a background and FILLS its FO (table-cell width
+    // resolves to the FO width), so on an oversized Windows measurement the
+    // flex-stretch above makes the bg paint the WHOLE oversized box — a grey
+    // rectangle occluding the edge line — while a tight (Linux) FO paints a
+    // bg that hugs the text. Shrink the FO's width/height ATTRIBUTES back to
+    // the painted content and offset x/y by half the removed slack, keeping
+    // the FO centered on its edge point (mermaid centered the whole FO via
+    // the label group's transform, so re-centering = halving each delta).
+    // Scale-aware: painted rects are scaled by the SVG viewBox, so attr
+    // targets = painted * (attrF / paintedF). The 25% trigger above already
+    // proved the FO is oversized; a node label's div paints nothing, so this
+    // is scoped to edge labels (labelBkg / span.edgeLabel) only.
+    const isEdgeLabel = div.classList.contains("labelBkg") || !!div.querySelector("span.edgeLabel");
+    if (!isEdgeLabel) return;
+    const fWa = parseFloat(fo.getAttribute("width"));
+    const fHa = parseFloat(fo.getAttribute("height"));
+    const fW = fo.getBoundingClientRect().width;
+    const pW = (p || div).getBoundingClientRect().width;
+    if (!(fWa > 0) || !(fHa > 0) || !(fW > 0) || !(pW > 0)) return;
+    const s = fH / fHa; // painted px per attr px (uniform viewBox scale)
+    const newWa = Math.ceil(pW / s);
+    const newHa = Math.ceil(pH / s);
+    if (newHa >= fHa || newWa > fWa) return; // content already fills / would grow — nothing to do
+    const dx = Math.max(0, fWa - newWa);
+    const dy = Math.max(0, fHa - newHa);
+    fo.setAttribute("width", String(newWa));
+    fo.setAttribute("height", String(newHa));
+    if (dx > 0.01) fo.setAttribute("x", String(Math.round(dx / 2)));
+    if (dy > 0.01) fo.setAttribute("y", String(Math.round(dy / 2)));
     n++;
   });
   // PLAIN-TEXT actor/box labels (sequence diagrams): mermaid positions the

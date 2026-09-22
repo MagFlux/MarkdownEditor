@@ -173,10 +173,12 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
     npm run verify-mermaidstyle # Mermaid stylesheet-failure robustness: node rects carry stamped
     # fill/stroke, messageLine stroke="none" placeholders are overwritten, and after
     # removing EVERY <style> element in the document the computed styles STILL match
-    # the theme (the Windows WebView2 black-node regression, simulated) (12 cases,
+    # the theme (the Windows WebView2 black-node regression, simulated) (26 cases,
     # incl. the font-consistency check: the sheet paints the SAME fontFamily stack
     # mermaid measures with — the Windows label-centering fix; oversized-FO
-    # labels get flex-recentered).
+    # labels get flex-recentered; oversized EDGE-label FOs (labelBkg, the
+    # Windows "grey box around Ctrl+S / Export" report) are shrunk back to the
+    # painted content with half-delta x/y re-centering).
     npm run verify-mermaidfade # Mermaid dark-theme gradient-outline fade: flowchart node
     # outlines must be a SOLID color, never the left-to-right url(#id-gradient)
     # stroke Mermaid's neo look paints when the dark theme sets useGradient=true
@@ -302,7 +304,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. Owns the per-theme scrollbar palette — `color-scheme`, and the `--sb` / `--sb-hi` thumb vars (light + dark) consumed by `scrollbar-color` and the `::-webkit-scrollbar*` rules, so scrollbars blend with the active theme (see invariant 9). |
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` `test/verifyMermaidFade.mjs`| Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence wrap caret inside the fence - `` ```\n|\n``` ``; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 71 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — 20 cases). `verifyMermaidFade.mjs` is the mermaid dark-theme gradient-outline regression (no linearGradient in the defs, sheet + computed + stamped node stroke all SOLID in both themes — 12 cases).|
+  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` `test/verifyMermaidFade.mjs`| Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence wrap caret inside the fence - `` ```\n|\n``` ``; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 71 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap + oversized-edge-label FO shrink — 26 cases). `verifyMermaidFade.mjs` is the mermaid dark-theme gradient-outline regression (no linearGradient in the defs, sheet + computed + stamped node stroke all SOLID in both themes — 12 cases).|
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -694,11 +696,11 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     it also dumps LABEL GEOMETRY (per node: the label's center vs its shape's
     center, the COMPUTED painted font family/size, the foreignObject size and
     inline styles) — the decisive reading for the Windows label mis-centering.
-    `test/verifyMermaidStyle.mjs` (20 cases)
-    asserts the stamped attrs exist, that computed styles survive removing
-    EVERY `<style>` element from the document, and (font consistency, cases
-    5a/5b) that the generated sheet carries the SAME fontFamily stack mermaid
-    measures with plus the `p{margin:0}` rule label centering depends on.
+     `test/verifyMermaidStyle.mjs` (26 cases)
+     asserts the stamped attrs exist, that computed styles survive removing
+     EVERY `<style>` element from the document, and (font consistency, cases
+     5a/5b) that the generated sheet carries the SAME fontFamily stack mermaid
+     measures with plus the `p{margin:0}` rule label centering depends on.
   - **Mermaid dark-theme gradient outlines are disabled (do not regress —
     the "box outlines fade left-to-right" report).** Mermaid v12's default
     `neo` look paints flowchart node strokes as a left-to-right
@@ -787,13 +789,35 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     (integer px keeps glyphs crisp). Two bounds keep it a no-op where the
     paint already agrees: |Δ| ≥ 0.75px to act (subpixel noise) and
     |Δx| ≤ 8+w/2, |Δy| ≤ 8+h to skip deliberate far placements (cluster
-    titles); texts with a transform attribute are skipped (a CSS transform
-    would override it). Chromium is untouched (its deltas ≈ 0 — case 8d).
-    `test/verifyMermaidStyle.mjs` cases 6a/6b + 7a/7b/7c/7d + 8a/8b/8c/8d
-    (20 total) assert
-    the real render is untouched, oversized synthetics get flexed, and
-    centered-x texts get re-anchored while explicit-middle and left-edge
-    start anchors are left alone.
+     titles); texts with a transform attribute are skipped (a CSS transform
+     would override it). Chromium is untouched (its deltas ≈ 0 — case 8d).
+     The SAME pass SHRINKS an oversized EDGE-label foreignObject back to its
+     painted content (the Windows "big grey box around edge labels, e.g.
+     Ctrl+S / Export" report): an edge label's `div.labelBkg` PAINTS a
+     background (sheet `.labelBkg`/`.edgeLabel p` fill = edgeLabelBackground,
+     also stamped inline) and the div FILLS its foreignObject (table-cell
+     width resolves to the FO width), so on the oversized Windows
+     measurement the flex-stretch above made the bg paint the WHOLE box — a
+     grey rectangle occluding the edge line — while a tight (Linux) FO
+     hugs the text. The shrink sets the FO's width/height ATTRIBUTES back
+     to the painted content size and offsets x/y by HALF the removed slack,
+     keeping the FO centered on its edge point (mermaid centered the whole
+     FO via the label group's transform). Scale-aware (painted rects are
+     scaled by the SVG viewBox): attr targets = painted * (attrF/paintedF);
+     guarded to never grow/clip (`newWa > fWa` → skip) and to sane line
+     heights (`pH < 4` → skip). Scoped to edge labels only
+     (`labelBkg` / `span.edgeLabel`) — a node label's div paints nothing, so
+     shrinking those would be a pointless risk to the accepted Windows node
+     look. No-op wherever the measurement was already tight (the same 25%
+     trigger guards it), and idempotent (the second run measures δ≈0).
+     `test/verifyMermaidStyle.mjs` cases 6a/6b + 7a/7b/7c/7d + 8a/8b/8c/8d +
+     9a/9b/9c/9d/9e/9f (26 total) assert
+     the real render is untouched, oversized synthetics get flexed, and
+     centered-x texts get re-anchored while explicit-middle and left-edge
+     start anchors are left alone; case 9 pins the edge-label FO shrink
+     (real tight render untouched, shrunk-to-content + half-delta offsets,
+     text stays painted at the label center, idempotent, non-edge labels
+     never shrunk).
  - **Textarea selection is translucent (do not regress — Windows blanking).**
    The visible editor text lives in the overlay; the textarea glyphs are
    `color:transparent`. `.input::selection` must be a TRANSLUCENT wash
