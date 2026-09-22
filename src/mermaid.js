@@ -187,6 +187,42 @@ function stampSvgStyles(holder, src) {
 }
 
 /**
+ * stripSequenceShadows — remove the sequence-diagram MARKUP shadows that the
+ * `dropShadow` themeVariable override cannot reach.
+ *
+ * WHY (dark-theme "hard shadow under every sequence shape" report, seen on
+ * BOTH platforms): the sequence `neo` look paints its shadow as an inline
+ * `filter="url(#id-drop-shadow)"` ATTRIBUTE (a feDropShadow of dx=4, dy=4,
+ * stdDeviation=0, flood-color #FFFFFF at 6%) stamped directly on every actor
+ * rect, activation, cylinder and loop box — the visible hard offset slab in
+ * the user's screenshot. `themeVariables:{dropShadow:"none"}` only reaches
+ * the SHEET rules (which now emit `filter: none`); an inline attribute
+ * overrides the sheet, so the shadow survives on every platform. This pass
+ * strips every filter attribute whose value references `…-drop-shadow`
+ * (EXACT suffix — the state diagram's `-drop-shadow-small` circle shadow is
+ * a different mechanism and is left alone), so sequence diagrams match the
+ * flat, crisp look of the other diagrams. Scoped by CONTENT: it only acts
+ * when the SVG contains a `rect.actor` (sequence only — flowcharts and the
+ * rest never carry one). The now-unreferenced `<filter><feDropShadow>` def
+ * is inert and left alone. Pure DOM surgery: geometry-independent (also
+ * runs on the detached holder inside installMermaidStyles) and idempotent.
+ *
+ * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
+ * @returns {number} the number of filter attributes removed (0 → nothing to do).
+ */
+function stripSequenceShadows(holder) {
+  if (!holder || !holder.querySelectorAll) return 0;
+  const svg = holder.querySelector && holder.querySelector("svg");
+  if (!svg || !svg.querySelector("rect.actor")) return 0; // sequence only
+  let n = 0;
+  holder.querySelectorAll("[filter]").forEach((el) => {
+    const f = (el.getAttribute("filter") || "").trim();
+    if (/-drop-shadow\)\s*$/i.test(f)) { el.removeAttribute("filter"); n++; }
+  });
+  return n;
+}
+
+/**
  * installMermaidStyles — make a freshly inserted diagram holder robust against
  * a platform that fails to apply the SVG-internal stylesheet.
  *
@@ -221,6 +257,7 @@ function installMermaidStyles(holder, src) {
     if (style.textContent !== source.textContent) style.textContent = source.textContent;
   }
   try { stampSvgStyles(holder, src); } catch { /* keep whatever applied so far */ }
+  try { stripSequenceShadows(holder); } catch { /* keep whatever applied so far */ }
   try { centerForeignObjectLabels(holder); } catch { /* keep whatever applied so far */ }
 }
 
@@ -763,4 +800,4 @@ function scheduleMermaidRender(d) {
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
 }
 
-export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels };
+export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels, stripSequenceShadows };

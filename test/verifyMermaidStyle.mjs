@@ -36,9 +36,15 @@
  *      gate fixed "Ctrl+S" but missed a mildly-oversized "Export") is
  *      normalized to the painted content on ANY >2px deviation (grow or
  *      shrink) with half-delta x/y offsets — tight FOs untouched,
- *      idempotent, and non-edge (node) labels never touched.
+ *      idempotent, and non-edge (node) labels never touched;
+ *  10. the sequence diagram's MARKUP shadow (inline
+ *      `filter="url(#id-drop-shadow)"` attrs — feDropShadow — on every
+ *      actor rect/activation/loop, invisible to the dropShadow
+ *      themeVariable) is stripped so sequences match the flat crisp look,
+ *      keeping the state diagram's `-drop-shadow-small` and non-sequence
+ *      SVGs untouched (idempotent).
  *
- * Run with `npm run verify-mermaidstyle` (28 cases).
+ * Run with `npm run verify-mermaidstyle` (33 cases).
  *
  * Run with `npm run verify-mermaidstyle`.
  */
@@ -378,6 +384,68 @@ ok("9e second run is a no-op (idempotent)", edgeShrink.e1.w === edgeShrink.e2.w 
 ok("9f oversized NON-edge label NOT shrunk (paints no bg)", +edgeShrink.n1.w === 120 && +edgeShrink.n1.h === 56 && edgeShrink.n1.x === null, JSON.stringify(edgeShrink.n1));
 ok("9g MILD height oversize (20% slack) is normalized too — the 'Export' miss", +edgeShrink.m1.h >= 20 && +edgeShrink.m1.h <= 30 && +edgeShrink.m1.w <= 70, JSON.stringify(edgeShrink.m1));
 ok("9h width-only oversize normalized (height left alone)", +edgeShrink.w1.w < 200 && +edgeShrink.w1.w > 20 && edgeShrink.w1.h === "24" && +edgeShrink.w1.x === Math.round((200 - +edgeShrink.w1.w) / 2) && edgeShrink.w1.y === null, JSON.stringify(edgeShrink.w1));
+
+// ---------------------------------------------------------------------------
+// CASE 10 — SEQUENCE MARKUP SHADOW STRIP (dark-theme "hard shadow under every
+// sequence shape" report, seen on BOTH platforms): the sequence `neo` look
+// paints its shadow as an inline `filter="url(#id-drop-shadow)"` ATTRIBUTE
+// (feDropShadow dx=4 dy=4 stdDeviation=0, white @ 6%) on every actor rect,
+// activation, cylinder and loop box. themeVariables:{dropShadow:"none"} only
+// reaches the SHEET; the inline attribute overrides it, so the shadow
+// survives on every platform. stripSequenceShadows() strips every filter
+// attribute referencing `…-drop-shadow` (EXACT suffix — the state diagram's
+// `-drop-shadow-small` filter stays) in SVGs that contain a `rect.actor`
+// (sequence only). Asserts: the real sequence render has NO filter attrs
+// left, a synthetic mixed holder keeps the small-shadow filter and a
+// non-sequence holder is untouched, and the pass is idempotent.
+// ---------------------------------------------------------------------------
+await p.evaluate(() => {
+  window.editor.setDocumentText(
+    "# Sequence shadows\n\n" +
+    "```mermaid\n" +
+    "sequenceDiagram\n" +
+    "    You->>Editor : press Ctrl+B\n" +
+    "    Editor-->>You : that word is bolded\n" +
+    "```\n"
+  );
+});
+await sleep(S * 3); // debounce + render
+const seqShadow = await p.evaluate(() => {
+  const holder = document.querySelector(".mermaid-diagram");
+  const svg = holder.querySelector("svg");
+  // The strip runs synchronously inside installMermaidStyles at insertion
+  // time, so the real render already carries the fix: mermaid's feDropShadow
+  // DEF is still emitted (now unreferenced — inert) but NO element keeps a
+  // filter attribute. Assert both.
+  const defPresent = !!svg.querySelector("filter feDropShadow");
+  const before = svg.querySelectorAll("[filter]").length;
+  const stripped = window.editor.stripSequenceShadows(holder);
+  const after = svg.querySelectorAll("[filter]").length;
+  const again = window.editor.stripSequenceShadows(holder);
+  // Synthetic: sequence holder with TWO exact-suffix refs + one small one.
+  const mixed = document.createElement("div");
+  mixed.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg">' +
+    '<rect class="actor" filter="url(#x-drop-shadow)"/>' +
+    '<rect class="note" filter="url(#x-drop-shadow-small)"/>' +
+    '<g filter="url(#x-drop-shadow)"></g></svg>';
+  document.body.appendChild(mixed);
+  const nMixed = window.editor.stripSequenceShadows(mixed);
+  const mixedAfter = Array.from(mixed.querySelectorAll("[filter]")).map((e) => e.getAttribute("filter"));
+  mixed.remove();
+  const other = document.createElement("div");
+  other.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg">' +
+    '<rect class="node" filter="url(#y-drop-shadow)"/></svg>';
+  document.body.appendChild(other);
+  const nOther = window.editor.stripSequenceShadows(other);
+  const otherFilters = other.querySelectorAll("[filter]").length;
+  other.remove();
+  return { defPresent, before, stripped, after, again, nMixed, nOther, otherFilters };
+});
+ok("10a mermaid still emits the feDropShadow def (now unreferenced/inert)", seqShadow.defPresent === true, `defPresent=${seqShadow.defPresent}`);
+ok("10b real sequence render has NO filter attributes (stripped at insertion)", seqShadow.before === 0 && seqShadow.after === 0 && seqShadow.stripped === 0, JSON.stringify({ before: seqShadow.before, after: seqShadow.after, stripped: seqShadow.stripped }));
+ok("10c second strip run is a no-op (idempotent)", seqShadow.again === 0, `again=${seqShadow.again}`);
+ok("10d synthetic: BOTH exact -drop-shadow refs stripped, -drop-shadow-small kept", seqShadow.nMixed === 2, JSON.stringify({ nMixed: seqShadow.nMixed }));
+ok("10e non-sequence holder untouched (no rect.actor)", seqShadow.nOther === 0 && seqShadow.otherFilters === 1, JSON.stringify({ nOther: seqShadow.nOther, otherFilters: seqShadow.otherFilters }));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 

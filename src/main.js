@@ -9,7 +9,7 @@
  * Exposes: `window.editor` — the live `createApp` result (for Playwright).
  */
 import { createApp } from "./markdown.js";
-import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels } from "./mermaid.js";
+import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
 import "./style.css";
 
 // Restore the persisted light/dark theme before first paint so the scrollbars,
@@ -78,6 +78,7 @@ window.editor = app;
 window.editor.stampSvgStyles = stampSvgStyles;
 window.editor.installMermaidStyles = installMermaidStyles;
 window.editor.centerForeignObjectLabels = centerForeignObjectLabels;
+window.editor.stripSequenceShadows = stripSequenceShadows;
 
 /* ---- Mermaid diagnostics hook (Ctrl+Shift+M) ---------------------------------
    The Windows WebView2 "black nodes" bug is invisible from Linux: we can only
