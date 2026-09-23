@@ -42,9 +42,17 @@
  *      actor rect/activation/loop, invisible to the dropShadow
  *      themeVariable) is stripped so sequences match the flat crisp look,
  *      keeping the state diagram's `-drop-shadow-small` and non-sequence
- *      SVGs untouched (idempotent).
+ *      SVGs untouched (idempotent);
+ *  11. multi-line `<br/>` labels are NEVER center-snapped (the "note text
+ *      jumbled" report): mermaid splits a `<br/>` label into sibling
+ *      <text> lines sharing one shape, each deliberately dy=1em apart —
+ *      the old snap measured each line against the shared shape and
+ *      overprinted up to N−1 of them onto the shape center. The real
+ *      `<br/>` note renders 4 distinct evenly-spaced lines with no
+ *      transform, a synthetic multi-line block is untouched, and a
+ *      single-line label in the same SVG still snaps (case 8 intact).
  *
- * Run with `npm run verify-mermaidstyle` (33 cases).
+ * Run with `npm run verify-mermaidstyle` (38 cases).
  *
  * Run with `npm run verify-mermaidstyle`.
  */
@@ -446,6 +454,83 @@ ok("10b real sequence render has NO filter attributes (stripped at insertion)", 
 ok("10c second strip run is a no-op (idempotent)", seqShadow.again === 0, `again=${seqShadow.again}`);
 ok("10d synthetic: BOTH exact -drop-shadow refs stripped, -drop-shadow-small kept", seqShadow.nMixed === 2, JSON.stringify({ nMixed: seqShadow.nMixed }));
 ok("10e non-sequence holder untouched (no rect.actor)", seqShadow.nOther === 0 && seqShadow.otherFilters === 1, JSON.stringify({ nOther: seqShadow.nOther, otherFilters: seqShadow.otherFilters }));
+
+// ---------------------------------------------------------------------------
+// CASE 11 — MULTI-LINE (<br/>) LABEL GUARD (the "note text jumbled" report):
+// mermaid RENDERS `<br/>` fine — it splits the label into SEVERAL sibling
+// <text> lines in the SAME group, all anchored to the SAME shape (one
+// rect.note), each deliberately offset by dy=1em. The center snap measured
+// each line INDEPENDENTLY against that shared shape, and most lines sit
+// within its |Δy| ≤ 8+h window, so up to N−1 lines were translated ONTO the
+// shape center and overprinted (user screenshot: every note line jumbled at
+// the same spot). The fix: when a sibling text in the same group shares the
+// text's nearest shape, the line is part of a deliberate multi-line block
+// and is NEVER snapped. Asserts: (a) the real `<br/>`-note render carries 4
+// distinct, evenly spaced lines with NO snap transform; (b) a synthetic
+// mermaid-shaped note block (4 sibling texts + one shared rect) is left
+// exactly where mermaid put it; (c) a TRUE single-line label in the same
+// SVG still snaps (case 8's WebKitGTK actor fix survives the guard).
+// ---------------------------------------------------------------------------
+await p.evaluate(() => {
+  window.editor.setDocumentText(
+    "# br note\n\n" +
+    "```mermaid\n" +
+    "sequenceDiagram\n" +
+    "Note right of John: Bob thinks a long<br/>long time, so long<br/>that the text does<br/>not fit on a row.\n" +
+    "```\n"
+  );
+});
+await sleep(S * 3); // debounce + render
+const brNote = await p.evaluate(() => {
+  const holder = document.querySelector(".mermaid-diagram");
+  const lines = Array.from(holder.querySelectorAll("text.noteText"));
+  const centers = lines.map((t) => {
+    const r = (t.querySelector("tspan") || t).getBoundingClientRect();
+    return +(r.top + r.height / 2).toFixed(1);
+  });
+  let minGap = Infinity;
+  for (let i = 1; i < centers.length; i++) minGap = Math.min(minGap, centers[i] - centers[i - 1]);
+  return {
+    count: lines.length,
+    transforms: lines.filter((t) => t.style.transform).length,
+    minGap: minGap === Infinity ? null : +minGap.toFixed(1),
+  };
+});
+ok("11a real <br/> note renders 4 sibling lines", brNote.count === 4, JSON.stringify(brNote));
+ok("11b no note line carries a snap transform", brNote.transforms === 0, JSON.stringify(brNote));
+ok("11c note lines keep distinct mermaid spacing (no overprint)", brNote.minGap !== null && brNote.minGap > 10, `minGap=${brNote.minGap}`);
+
+const brSynth = await p.evaluate(() => {
+  // Mermaid-shaped multi-line note: ONE rect + FOUR sibling middle-anchored
+  // texts spaced dy=17 inside the same group (the real v12 note structure),
+  // plus a TRUE single-line label in its own group (an actor).
+  const host = document.createElement("div");
+  const line = (y, txt) => `<text x="485" y="${y}" style="text-anchor:middle" dominant-baseline="middle">${txt}</text>`;
+  host.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" style="width:600px;height:200px">' +
+    '<g><rect x="410" y="10" width="150" height="88"/>' + line(40, "Bob thinks a long") + line(57, "long time, so long") + line(74, "that the text does") + line(91, "not fit on a row.") + '</g>' +
+    '<g><rect x="10" y="10" width="120" height="40"/><text x="70" y="10" style="text-anchor:middle" dominant-baseline="central">High</text></g>' +
+    '</svg>';
+  document.body.appendChild(host);
+  window.editor.centerForeignObjectLabels(host);
+  const notes = Array.from(host.querySelectorAll("g:first-child text"));
+  const ys = notes.map((t) => { const r = (t.querySelector("tspan") || t).getBoundingClientRect(); return +(r.top + r.height / 2).toFixed(1); });
+  const gaps = [];
+  for (let i = 1; i < ys.length; i++) gaps.push(+(ys[i] - ys[i - 1]).toFixed(1));
+  const single = Array.from(host.querySelectorAll("g"))[1].querySelector("text");
+  const sr = (single.querySelector("tspan") || single).getBoundingClientRect();
+  const box1 = host.querySelectorAll("g rect")[1].getBoundingClientRect();
+  const snapDy = +((sr.top + sr.height / 2) - (box1.top + box1.height / 2)).toFixed(1);
+  host.remove();
+  return {
+    noteTransforms: notes.filter((t) => t.style.transform).length,
+    gaps,
+    gapsOk: gaps.every((g) => Math.abs(g - 17) <= 2),
+    singleSnapped: Math.abs(snapDy) <= 1.5,
+    snapDy,
+  };
+});
+ok("11d synthetic multi-line block untouched by the snap", brSynth.noteTransforms === 0 && brSynth.gapsOk, JSON.stringify(brSynth));
+ok("11e single-line label in the same svg STILL snaps (case 8 fix intact)", brSynth.singleSnapped, JSON.stringify(brSynth));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 

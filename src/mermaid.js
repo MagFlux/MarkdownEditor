@@ -308,6 +308,13 @@ function installMermaidStyles(holder, src) {
  * δ≈0). Node labels keep the original flex-only path (their div paints
  * no background; the oversized-node look is accepted).
  *
+ * The plain-text pass also CENTER-SNAPS middle-anchored SINGLE-LINE labels
+ * (WebKitGTK sequence-actor off-center) — but NEVER a multi-line label (the
+ * "<br/> jumble" regression, see the MULTI-LINE GUARD inline): mermaid
+ * renders a `<br/>`-broken label as several sibling <text> lines sharing one
+ * shape, each deliberately offset by dy=1em, and snapping any of them onto
+ * the shape center would overprint the whole block.
+ *
  * @param {Element|null} holder — a `.mermaid-diagram` element containing one SVG.
  * @returns {number} the number of labels re-centered (0 → nothing to do).
  */
@@ -396,6 +403,29 @@ function centerForeignObjectLabels(holder) {
   // middle-anchoring, pin text-anchor: middle inline — a no-op wherever the
   // anchor already works (start-anchored labels like notes put x at the box
   // LEFT edge, which is never the rect center, so they stay untouched).
+  // nearestShapeOf — euclidean-nearest shape for one <text> within its group,
+  // cached per element (each text is measured once; the MULTI-LINE GUARD
+  // re-reads siblings, which must not re-force layout for every line).
+  const nearestCache = new Map();
+  const nearestShapeOf = (tx, grp) => {
+    if (nearestCache.has(tx)) return nearestCache.get(tx);
+    const inner = tx.querySelector("tspan") || tx;
+    const r = inner.getBoundingClientRect();
+    let best = null;
+    if (r.width || r.height) {
+      let bd = Infinity;
+      grp.querySelectorAll("rect, polygon, path, line, use").forEach((shape) => {
+        const rs = shape.getBoundingClientRect();
+        if (!(rs.width || rs.height)) return;
+        const dx = rs.left + rs.width / 2 - (r.left + r.width / 2);
+        const dy = rs.top + rs.height / 2 - (r.top + r.height / 2);
+        const d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = shape; }
+      });
+    }
+    nearestCache.set(tx, best);
+    return best;
+  };
   holder.querySelectorAll("text").forEach((txt) => {
     const g = txt.closest && txt.closest("g");
     if (!g || g.querySelector("foreignObject")) return;
@@ -456,16 +486,35 @@ function centerForeignObjectLabels(holder) {
     if (txt.getAttribute("transform")) return;
     const inner2 = txt.querySelector("tspan") || txt;
     const t2 = inner2.getBoundingClientRect();
-    let bestS = null, bd2 = Infinity;
+    let bestS = null, bd2 = Infinity, bestEl = null;
     g.querySelectorAll("rect, polygon, path, line, use").forEach((shape) => {
       const rs = shape.getBoundingClientRect();
       if (!(rs.width || rs.height)) return;
       const ddx = rs.left + rs.width / 2 - (t2.left + t2.width / 2);
       const ddy = rs.top + rs.height / 2 - (t2.top + t2.height / 2);
       const d2 = ddx * ddx + ddy * ddy;
-      if (d2 < bd2) { bd2 = d2; bestS = rs; }
+      if (d2 < bd2) { bd2 = d2; bestS = rs; bestEl = shape; }
     });
     if (!bestS) return;
+    // MULTI-LINE GUARD (the "<br/> jumble" regression): mermaid splits a
+    // label containing `<br/>` (sequence notes, multi-line messages) into
+    // SEVERAL sibling <text> lines in the SAME group, all anchored to the
+    // SAME shape, each deliberately offset by dy=1em. Measured per line,
+    // most lines fall inside this snap's |Δy| ≤ 8+h window of the shape
+    // center, so snapping each would translate up to N−1 lines ONTO the
+    // center and overprint the block (user screenshot: every note line
+    // jumbled at the same spot). When any SIBLING text in g shares this
+    // text's nearest shape (bestEl — the ELEMENT; bestS is its rect, and
+    // nearestShapeOf returns elements), the line is part of a deliberate
+    // multi-line block: leave it exactly where mermaid placed it. True
+    // single-line labels (one text per shape — actor names) still snap
+    // below, so the WebKitGTK actor-label fix (case 8) is untouched.
+    let shared = false;
+    for (const other of g.querySelectorAll("text")) {
+      if (other === txt) continue;
+      if (nearestShapeOf(other, g) === bestEl) { shared = true; break; }
+    }
+    if (shared) return;
     const ddx = bestS.left + bestS.width / 2 - (t2.left + t2.width / 2);
     const ddy = bestS.top + bestS.height / 2 - (t2.top + t2.height / 2);
     // The quirk is SMALL (≤ ~10px). A large residual means mermaid placed the
