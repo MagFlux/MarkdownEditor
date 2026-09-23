@@ -96,3 +96,55 @@ if (fails === 0) {
   console.error(`${fails} case(s) FAILED`);
   process.exit(1);
 }
+
+/* ---------------------------------------------------------------------------
+ * Math pipeline (src/math.js) — the PROTECT → PARSE → RESTORE contract.
+ * These run in Node (katex.renderToString is pure), so the delimiter rules
+ * are pinned here cheaply; the live-preview/export behavior is pinned by
+ * test/verifyMath.mjs (Playwright). Run with `npm test`.
+ * ------------------------------------------------------------------------- */
+const math = await import("../src/math.js");
+const { renderMarkdown, containsMath } = math;
+let mathFails = 0;
+/** mok — record a math-pipeline assertion. */
+const mok = (label, cond, extra) => {
+  if (cond) console.log("ok  ", label);
+  else { mathFails++; console.error("MATH FAIL", label, extra !== undefined ? "→ " + JSON.stringify(extra) : ""); }
+};
+/** katexed — true when the html actually contains KaTeX output. */
+const katexed = (h) => h.includes('class="katex');
+
+// Block + inline math render; no placeholder leaks; display math is not
+// stranded inside a <p> (the unwrap step).
+{
+  const h = renderMarkdown("# T\n\n$$\\Gamma(z) = \\int_0^\\infty t^{z-1}e^{-t}dt\\,.$$\n\nInline $e^{i\\pi}+1=0$ math.\n");
+  mok("block $$ renders katex-display", h.includes("katex-display"), h.slice(0, 120));
+  mok("inline $...$ renders katex", katexed(h) && !h.includes("<p><!--m"), h.slice(0, 120));
+  mok("no placeholder leaks", !h.includes("<!--m"));
+  mok("display math unwrapped from <p>", !/<p><span class="katex-display"/.test(h));
+}
+// Code regions are sacred.
+mok("fence with $$ untouched", !katexed(renderMarkdown("```\n$$x$$\n```\n")));
+mok("inline code with $ untouched", !katexed(renderMarkdown("a `$x^2$` b")));
+mok("mermaid fence with $ untouched", !katexed(renderMarkdown("```mermaid\nA[$$x$$]\n```")));
+// Pandoc-style prose rules.
+mok("currency $5 and $10 stays prose", !katexed(renderMarkdown("costs $5 and $10 total")) && containsMath("costs $5 and $10 total") === false);
+mok("\\$ escape stays prose", !katexed(renderMarkdown("\\$5 is money")) && containsMath("\\$5 is money") === false);
+mok("unclosed $$ stays prose", !katexed(renderMarkdown("$$x^2 end")) && containsMath("$$x^2 end") === false);
+// Blank-fence guard: the toolbar's fresh $$\n\n$$ scaffold shows its markers.
+mok("blank $$ block stays literal", !katexed(renderMarkdown("$$\n\n$$")) && containsMath("$$\n\n$$") === false);
+// Invalid LaTeX renders INLINE IN RED (throwOnError:false) — katex 0.18 emits
+// the red source with color:#cc0000 (katex-error class only on hard failures).
+mok("invalid latex renders in red", /#cc0000|katex-error/.test(renderMarkdown("$$\\badcmd{x}$$")));
+// Math works inside lists/quotes (placeholder restore path through marked).
+mok("math inside a list item", katexed(renderMarkdown("- item $a_1$ x")));
+mok("math inside a blockquote", katexed(renderMarkdown("> $$q=1$$")));
+mok("containsMath detects inline", containsMath("a $x^2$ b") === true);
+mok("containsMath false on plain docs", containsMath("no math here, just $ signs") === false);
+
+if (mathFails === 0) {
+  console.log("OK math pipeline cases");
+} else {
+  console.error(`${mathFails} math case(s) FAILED`);
+  process.exit(1);
+}

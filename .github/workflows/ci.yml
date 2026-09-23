@@ -125,6 +125,8 @@ jobs:
         run: npm run verify-paste
       - name: Export-as-PDF/HTML (30 cases)
         run: npm run verify-export
+      - name: Math (KaTeX) preview + export (21 cases)
+        run: npm run verify-math
       - name: Scroll-sync lag fix (5 cases)
         run: npm run verify-scroll
       - name: Mode-switch scroll-preserving (8 cases)

@@ -11,6 +11,18 @@
 import { createApp } from "./markdown.js";
 import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
 import "./style.css";
+// KaTeX styles for the live preview + PDF export. The stylesheet import AND
+// the export-asset imports live HERE (main.js-only), never inside the
+// src/markdown.js graph: test/test.mjs loads that graph under plain Node,
+// which cannot resolve .css / ?raw / ?url specs. main.js is the browser-only
+// bootstrap, so it is the one place these can resolve (see katexExportAssets.js).
+import "katex/dist/katex.min.css";
+import { KATEX_EXPORT_ASSETS } from "./katexExportAssets.js";
+import { setKatexExportAssets } from "./math.js";
+
+// Inject the raw katex CSS + bundled font URLs that back the self-contained
+// HTML math export (fonts base64-inlined at export time).
+setKatexExportAssets(KATEX_EXPORT_ASSETS);
 
 // Restore the persisted light/dark theme before first paint so the scrollbars,
 // panels, and text never flash the wrong palette on launch (the CSS is theme
@@ -54,6 +66,12 @@ const sample = [
   "    You->>Editor : press Ctrl+B",
   "    Editor-->>You : that word is bolded",
   "```",
+  "",
+  "## Math, in one block",
+  "",
+  "$$\\Gamma(z) = \\int_0^\\infty t^{z-1} e^{-t}\\,dt$$",
+  "",
+  "Inline math works too: $e^{i\\pi} + 1 = 0$ (the Σ toolbar button inserts the block).",
   "",
   "## Formatting shortcuts",
   "",

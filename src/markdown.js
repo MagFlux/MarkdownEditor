@@ -42,6 +42,7 @@ import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
   src/markdown.js keeps the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
 import { scheduleMermaidRender, restoreMermaid } from "./mermaid.js";
+import { renderMarkdown } from "./math.js";
 import { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
 import { createExportHandlers } from "./export.js";
@@ -135,6 +136,7 @@ export function createApp(root) {
       <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
       <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
       <button class="btn" data-block="mermaid" title="Insert Mermaid diagram">${icons.mermaid}</button>
+      <button class="btn" data-block="math" title="Insert math block — $$ … $$">${icons.math}</button>
     </span>
     <span class="tb-right">
       <button class="btn" data-action="mode" title="View — click to cycle Split / Edit / Preview">
@@ -288,7 +290,7 @@ export function createApp(root) {
   function syncDom(d) {
     const text = d.input.value;
     d.editor.innerHTML = highlightToHtml(text);
-    d.preview.innerHTML = text.trim() ? marked.parse(text) : `<div class="empty">Nothing to preview yet&hellip;</div>`;
+    d.preview.innerHTML = text.trim() ? renderMarkdown(text) : `<div class="empty">Nothing to preview yet&hellip;</div>`;
     if (text.trim()) {
       restoreMermaid(d.preview); // sync: put already-rendered SVGs back (no flicker)
       scheduleMermaidRender(d);  // async: render any NEW/changed diagram (gated by key)

@@ -118,6 +118,12 @@ npm run verify-export  # Export-as-PDF/HTML: hamburger menu open/close/outside-c
                         # HTML save via fs writeFile (in-app picker + blob download fallback),
                         # PDF save via html2canvas→jsPDF (A4 multi-page), both cancel paths,
                         # and format-button isolation (30 cases).
+npm run verify-math    # Math (KaTeX): live preview renders $$ block + $ inline math
+                        # (synchronous, no flicker); code regions and prose dollars
+                        # ("$5 and $10") stay literal; blank $$ scaffold shows markers;
+                        # invalid LaTeX paints red; HTML export embeds the SELF-CONTAINED
+                        # katex stylesheet (fonts as data: URIs) only when math is present;
+                        # PDF export rasterizes math without errors (21 cases).
 npm run verify-scroll  # Split-view scroll-sync regression: a genuine user scroll on the
                         # FOLLOW pane (while its ECHO_MS deadline is still live) is accepted
                         # as a fresh lead immediately — the old time-only window swallowed it
@@ -204,7 +210,7 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                         # a caret ENTERS a hidden (dot) folder (read_dir on the dot-path) —
                         # the UI-level guard for the fs requireLiteralLeadingDot:false fix.
                         # Needs the built dist.
-npm run verify-caret    # Caret placement after editor actions (81 cases): Enter
+npm run verify-caret    # Caret placement after editor actions (87 cases): Enter
                         # auto-continuation keeps the parent item's indentation with a
                         # collapsed caret after the marker (ordered/empty-exit too);
                         # Tab indent (incl. BLANK lines) / Shift+Tab outdent commit a
@@ -213,8 +219,12 @@ npm run verify-caret    # Caret placement after editor actions (81 cases): Enter
                         # collapse at the end of the inner span BEFORE the closing
                         # marker; code-fence AND ```mermaid fence wraps put the caret
                         # inside the fence ("```\n|\n```" / "```mermaid\n|\n```" empty,
-                        # after content otherwise); INSERT-ONLY pins: a table click
-                        # inside an existing table inserts a second scaffold and keeps
+                        # after content otherwise); math-block insert lands the caret
+                        # ON the blank middle line of "$$\n\n$$" (empty caret line
+                        # replaced in place, non-empty line keeps its prose with the
+                        # block below — the table branch's contract); INSERT-ONLY pins:
+                        # a table/math click inside an existing table/math block
+                        # inserts a second scaffold and keeps
                         # the caret line's prose (nothing is ever removed), a fence
                         # click on a fence line re-wraps; table insert
                         # lands the caret in the first body cell; h1 caret at block end;
@@ -233,8 +243,8 @@ npx tauri build        # release binary + bundle artifacts
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
 still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
-see the invariant below. Then re-run the seventeen verify/test steps (`verify`, `verify-undo`,
-`verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-scroll`,
+see the invariant below. Then re-run the verify/test steps (`verify`, `verify-undo`,
+`verify-save`, `verify-toolbar`, `verify-paste`, `verify-export`, `verify-math`, `verify-scroll`,
 `verify-modescroll`, `verify-modefocus`, `verify-tabclick`, `verify-tabscroll`, `verify-themescroll`, `verify-mermaidflicker`, `verify-mermaidstyle`, `verify-mermaidfade`, `verify-tauri`, `verify-caret`, and `npm test`); all must be green.
 For Tauri-native changes also run `npm run verify-tauri`.
 
@@ -301,22 +311,24 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | Path | Role |
 |---|---|
 | `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence. Keeps the STATIC Tauri imports and wires the extracted export handlers; it re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
-| `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. |
+| `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. Markdown→HTML goes through `renderMarkdown()` (math.js) so exported documents are typeset; the HTML export embeds the self-contained KaTeX stylesheet (fonts as data: URIs) ONLY when `containsMath()` says the document has math. |
 | `src/session.js` | Versioned localStorage session persistence and debounced saves, using callbacks for the active tab and serializable tab records. |
 | `src/dialogs.js` | Centered in-app modal primitives, unsaved-changes prompts, and overwrite confirmation, with native filesystem checks supplied by callbacks. |
 | `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. Detects the platform path separator from the initial cwd (`\` on Windows, `/` elsewhere) and uses it consistently for all path joining, crumb reconstruction, and go-up navigation — without this, Windows paths like `C:\Users\…` get joined with `/` producing `/C:\Users\…` which the OS rejects (os error 123). |
-| `src/editing.js` | Formatting mutation factory: inline toggles and the INSERT-ONLY block actions — table scaffold, codeblock/mermaid fence wrap (never removes; every click inserts) — plus the historical h1–h3/quote/list toggles and indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
+| `src/editing.js` | Formatting mutation factory: inline toggles and the INSERT-ONLY block actions — table scaffold, codeblock/mermaid fence wrap, math `$$` block (never removes; every click inserts) — plus the historical h1–h3/quote/list toggles and indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
 | `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, Tauri gate, and browser fallback. |
 | `src/history.js` | Undo/redo history factory, with injected active-doc, typing-flush, input-suppression, and refresh callbacks. |
 | `src/render.js` | Pure overlay-highlight renderer: `esc`, `matchTok`, `renderInline`, `isTableSep`, `computeBlocks`, `lineToHtml`, `highlightToHtml` (round-trip invariant enforced by `test/test.mjs`). |
 | `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `restoreMermaid`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). Also owns the **anti-flicker SVG cache**: `_svgCache` (source → rendered `{svg, bindFunctions}`), `_inflight` (concurrent-render dedup), `restoreMermaid(node)` (synchronous cache-restore after `syncDom` rewrites the preview so an already-seen diagram NEVER flashes raw code), and `mermaidSourceKey(md)` (per-doc "did any fence change" fingerprint that `scheduleMermaidRender` uses to skip render when the source didn't change). Also owns the **blank-fence guard**: `renderMermaidInNode` and `renderMermaidInHtml` skip whitespace-only fence source — mermaid cannot parse an empty fence, so the freshly inserted toolbar ` ```mermaid ` scaffold previews (and exports) as a plain code block instead of a "Mermaid render failed" error box. Also owns the **stylesheet-failure fallback**: `installMermaidStyles(holder)` (head-mirror + stamp) and `stampSvgStyles(holder)` (CSSOM-parse Mermaid's own sheet → presentation attributes on matching shapes; see invariant § Mermaid stylesheet-failure fallback), plus `stripSequenceShadows(holder)` (strips the sequence diagram's inline `url(#…-drop-shadow)` filter attributes — see invariant § Mermaid drop shadow). `renderMermaidSvg`'s `mermaid.initialize` also pins `themeVariables:{useGradient:false,dropShadow:"none"}` (see invariants § Mermaid dark-theme gradient outlines / § Mermaid drop shadow). |
 | `src/format.js` | Pure selection/format helpers: `lineBounds`, `wordAt`, `wordJump` (Markdown-aware Ctrl+Arrow word movement), `detectFormat`, `trimmedSpan`, `wrapFor`. |
 | `src/paste.js` | Rich-paste HTML→Markdown: `mdCellText`, `mdTableFromHtml`, `mdStyleOf`, `mdInlineMd`, `mdFromHtml`. |
-| `src/icons.js` | Inline-SVG toolbar icons (B I S code link table mermaid + save/open + new-tab + undo/redo + hamburger/file-doc + `theme` (light/dark moon) + the three view-mode glyphs `viewSplit` / `viewEdit` / `viewPreview` on the constant-width mode button — `setMode` swaps `.mode-icon`'s innerHTML per mode so the button width never changes and the centered group never jostles). Every toolbar button uses one of these 17px SVGs (a font glyph like `◑` sits on the text baseline and looks vertically off-center — always use an icon). |
+| `src/math.js` | LaTeX math rendering (`$$…$$` display + `$…$` inline, KaTeX): `renderMarkdown` (the single Markdown→HTML pipeline used by syncDom AND both exports), `containsMath`, `katexExportCss` (+ `setKatexExportAssets` injection). Owns the STATIC `katex` + `marked` imports. PROTECT→PARSE→RESTORE: `findMathRanges` lifts math into `<!--mN-->` placeholders, marked parses, KaTeX replaces. Scanner skips fences + inline code, honors `\$`, applies Pandoc's inline rules (closer not space-preceded / not digit-followed), and leaves whitespace-only blocks (the toolbar scaffold) literal. Rendering is synchronous — none of mermaid's flicker/race machinery applies. MUST stay Node-importable (test.mjs loads it): no .css/?raw/?url imports here. |
+| `src/icons.js` | Inline-SVG toolbar icons (B I S code link table mermaid math + save/open + new-tab + undo/redo + hamburger/file-doc + `theme` (light/dark moon) + the three view-mode glyphs `viewSplit` / `viewEdit` / `viewPreview` on the constant-width mode button — `setMode` swaps `.mode-icon`'s innerHTML per mode so the button width never changes and the centered group never jostles). Every toolbar button uses one of these 17px SVGs (a font glyph like `◑` sits on the text baseline and looks vertically off-center — always use an icon). |
+| `src/katexExportAssets.js` | Browser-ONLY katex asset imports (raw `katex.min.css?raw` + all 20 woff2 `?url`s) — imported solely from `main.js`, never from the markdown.js graph: test/test.mjs loads that graph under plain Node, which cannot resolve .css/?raw/?url specs. Injected into math.js via `setKatexExportAssets()` at boot; backs the self-contained HTML math export. |
 | `src/style.css` | All styles, light + dark themes. Lightly touches `[data-theme]`. Owns the per-theme scrollbar palette — `color-scheme`, and the `--sb` / `--sb-hi` thumb vars (light + dark) consumed by `scrollbar-color` and the `::-webkit-scrollbar*` rules, so scrollbars blend with the active theme (see invariant 9). |
-| `src/main.js` | Bootstrap: `createApp('#app')` + sample content. |
-| `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source). |
-  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` `test/verifyMermaidFade.mjs`| Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence AND ```mermaid fence wrap caret inside the fence - `` ```\n|\n``` `` / `` ```mermaid\n|\n``` ``; INSERT-ONLY pins — a table click inside an existing table inserts a second scaffold and never removes, a non-empty caret line keeps its prose with the scaffold pushed below, a fence click on a fence line re-wraps instead of unwrapping; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 81 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases) plus the menu shrink-to-fit width (2 cases, M1c/M1d — the dropdown hugs the widest entry, no 190px floor). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — which never touches a MULTI-LINE label, the `<br/>` note jumble fix — + oversized-edge-label FO normalization + sequence markup-shadow strip — 38 cases). `verifyMermaidFade.mjs` is the mermaid dark-theme gradient-outline regression (no linearGradient in the defs, sheet + computed + stamped node stroke all SOLID in both themes, and no drop-shadow filter — 16 cases).|
+| `src/main.js` | Bootstrap: `createApp('#app')` + sample content. Also the ONLY place allowed to import the katex `.css` / `?raw` / `?url` asset specs (see katexExportAssets.js) — it imports the stylesheet for the live preview and injects the export assets into math.js. |
+| `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source) + the math-pipeline cases (delimiter rules, code-region guards, blank-scaffold guard, error styling — Node, no browser). |
+  | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyMath.mjs` `test/verifyScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` `test/verifyMermaidFade.mjs`| Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats collapse at the inner-span end before the closing marker; code-fence AND ```mermaid fence wrap caret inside the fence - `` ```\n|\n``` `` / `` ```mermaid\n|\n``` ``; math-block insert caret ON the blank middle line of "$$\n\n$$"; INSERT-ONLY pins — a table/math click inside an existing table/math block inserts a second scaffold and never removes, a non-empty caret line keeps its prose with the scaffold pushed below, a fence click on a fence line re-wraps instead of unwrapping; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 87 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases) plus the menu shrink-to-fit width (2 cases, M1c/M1d — the dropdown hugs the widest entry, no 190px floor). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately — 5 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the redundant-tab-click regression (activate() short-circuits when `doc === activeTab` so clicking the already-active tab neither moves the scroll nor rewrites the preview DOM / re-renders mermaid — 6 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — which never touches a MULTI-LINE label, the `<br/>` note jumble fix — + oversized-edge-label FO normalization + sequence markup-shadow strip — 38 cases). `verifyMermaidFade.mjs` is the mermaid dark-theme gradient-outline regression (no linearGradient in the defs, sheet + computed + stamped node stroke all SOLID in both themes, and no drop-shadow filter — 16 cases). `verifyMath.mjs` is the KaTeX math regression (live preview renders `$$` display + `$` inline math synchronously and survives a preview rewrite; code regions / prose dollars / the blank `$$\n\n$$` scaffold stay literal; invalid LaTeX paints red; HTML export embeds the self-contained font-inlined katex stylesheet ONLY when math is present; PDF export rasterizes math — 21 cases).|
 | `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
@@ -419,9 +431,12 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     internally that would normally produce a separate chunk; we force it inline
     with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
-    `jspdf` and `html2canvas` are static top-level imports in `src/export.js`, and
-     `mermaid` is a static top-level import in `src/mermaid.js` (browser-safe —
-      they're inert until called), never `await import(...)`.
+    `jspdf` and `html2canvas` are static top-level imports in `src/export.js`,
+     `mermaid` is a static top-level import in `src/mermaid.js`, and `katex` +
+     `marked` are static top-level imports in `src/math.js` (browser-safe —
+      they're inert until called), never `await import(...)`. KaTeX's fonts are
+      ASSET files (woff2, emitted to dist/assets by Vite from the katex CSS
+      url() refs), not JS chunks — they do not violate this invariant.
 
  9. **Scrollbars must blend with the active theme (do not regress — Windows
     scrollbar mismatch).** On Windows the app runs in WebView2, where the OS can
@@ -450,6 +465,27 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
       the theme must survive a restart (the WebKitGTK/WebView2 webview does not
       apply `prefers-color-scheme` to the *app's* choice, only to the OS, so a
       manual toggle is the only reliable signal).
+
+
+ 10. **The math pipeline is PROTECT → PARSE → RESTORE and the scanner's code
+     guards are load-bearing (do not regress).** `renderMarkdown` (src/math.js)
+     is the SINGLE Markdown→HTML path for the preview and both exports; its
+     scanner (a) skips fenced code blocks and inline code spans — a `$$x$$`
+     inside a mermaid fence or shell example must never typeset, (b) honors
+     `\$` escapes, (c) applies Pandoc's inline rules (closing `$` must be
+     non-space-preceded AND not digit-followed, so "costs $5 and $10" stays
+     prose), and (d) leaves whitespace-only `$$` blocks literal (the freshly
+     inserted toolbar scaffold shows its markers — mermaid's blank-fence
+     guard, math edition). Math rendering is fully SYNCHRONOUS
+     (`katex.renderToString`), so none of mermaid's flicker/cache/stale-render
+     machinery is needed — do not "helpfully" add async caching here. The
+     katex CSS asset imports (.css / `?raw` / `?url`) may ONLY live in
+     src/main.js + src/katexExportAssets.js (test.mjs loads the markdown.js
+     graph under Node, which cannot resolve those specs) — `src/math.js` must
+     stay Node-importable, receiving them via `setKatexExportAssets()`. The
+     HTML export embeds the self-contained stylesheet (fonts as data: URIs,
+     woff/truetype fallbacks stripped) ONLY when `containsMath()` is true;
+     math-free exports must stay byte-comparable to the pre-math pipeline.
 
 ## Conventions
 

@@ -185,11 +185,13 @@ export function createEditingHandlers({
    * toggleBlock — apply a block-level action to the selected range.
    *
    * INSERT-ONLY contract for the fence/scaffold kinds ("table", "codeblock",
-   * "mermaid"): every click always inserts — a table click inserts a fresh
-   * 3-row scaffold, a codeblock/mermaid click wraps the caret line / selection
-   * in a fence — and no branch ever removes existing content. The remaining
-   * kinds ("h1"…"ol", quote) keep their historical toggle-off: clicking the
-   * active block kind strips its marker.
+   * "mermaid", "math"): every click always inserts — a table click inserts a
+   * fresh 3-row scaffold, a codeblock/mermaid click wraps the caret line /
+   * selection in a fence, a math click inserts a `$$\n\n$$` block (an empty
+   * caret line is replaced in place; a non-empty one keeps its prose and the
+   * block lands below it) — and no branch ever removes existing content. The
+   * remaining kinds ("h1"…"ol", quote) keep their historical toggle-off:
+   * clicking the active block kind strips its marker.
    * @param {string} kind Block kind to apply or strip.
    */
   function toggleBlock(kind) {
@@ -235,6 +237,23 @@ export function createEditingHandlers({
       const care = startLine + nb.length - 4;
       const label = kind === "mermaid" ? "wrap mermaid" : "wrap code block";
       commit(label, text.slice(0, startLine) + nb + text.slice(endLine), care, care);
+      return;
+    }
+
+    if (kind === "math") {
+      // INSERT-ONLY math scaffold, mirroring the table branch: an EMPTY caret
+      // line is replaced in place, a NON-EMPTY line keeps its prose and the
+      // $$ block is inserted as its own block on the NEXT line. Never removes
+      // existing content. Caret on the blank middle line, collapsed — the
+      // user starts typing the LaTeX source immediately.
+      const blk = "$$\n\n$$";
+      const [cs, ce] = lineBounds(text, a);
+      const empty = text.slice(cs, ce).trim() === "";
+      const anchor = empty ? cs : ce;
+      const pre = empty ? "" : "\n";
+      const to = text.slice(0, anchor) + pre + blk + "\n" + text.slice(endLine);
+      const caret = anchor + pre.length + 3; // after "$$\n" — the blank middle line
+      commit("insert math block", to, caret, caret);
       return;
     }
 

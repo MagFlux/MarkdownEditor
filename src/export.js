@@ -7,10 +7,10 @@
  * All library imports remain static so Vite still emits one Tauri-loadable
  * bundle.
  */
-import { marked } from "marked";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { renderMermaidInNode, renderMermaidInHtml } from "./mermaid.js";
+import { renderMarkdown, containsMath, katexExportCss } from "./math.js";
 
 const EXPORT_PREVIEW_CSS = `
 body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px;
@@ -55,13 +55,24 @@ export function createExportHandlers({
 }) {
   /**
    * exportHtmlDoc — render Markdown to a self-contained HTML document.
+   *
+   * When the document contains math, a fully self-contained KaTeX stylesheet
+   * (fonts base64-inlined via katexExportCss) is embedded so the exported
+   * file renders identically offline — "the preview you see is the file you
+   * get", no CDN, no sibling font files. Math-free documents skip the
+   * embedding entirely (containsMath gate) and export byte-compatibly with
+   * the pre-math pipeline.
    * @param {string} text Raw Markdown source.
    * @returns {Promise<string>} A complete standalone HTML document.
    */
   async function exportHtmlDoc(text) {
-    let body = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+    let body = text.trim() ? renderMarkdown(text) : "<p>(empty document)</p>";
     try { body = await renderMermaidInHtml(body); } catch { /* keep raw fence */ }
-    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
+    let katexCss = "";
+    if (containsMath(text)) {
+      try { katexCss = (await katexExportCss()) || ""; } catch { /* unstyled math beats a failed export */ }
+    }
+    return `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<style>\n${EXPORT_PREVIEW_CSS}\n${katexCss}\n</style>\n</head>\n<body class="preview">\n${body}\n</body>\n</html>\n`;
   }
 
   /**
@@ -81,7 +92,7 @@ export function createExportHandlers({
     const body = document.createElement("div");
     body.className = "preview";
     body.style.width = width + "px";
-    body.innerHTML = text.trim() ? marked.parse(text) : "<p>(empty document)</p>";
+    body.innerHTML = text.trim() ? renderMarkdown(text) : "<p>(empty document)</p>";
     host.appendChild(body);
     document.body.appendChild(host);
     try {

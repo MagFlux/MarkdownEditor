@@ -11,6 +11,8 @@ shipped inside `node_modules/` (and inlined into the built
 MIT components
 --------------
 marked        — Markdown parser (js)            MIT   (Copyright 2018+ marked authors)
+katex         — LaTeX math renderer (js)        MIT   (Copyright 2013-2026 Khan Academy)
+commander     — CLI arg parser (js, transitive dep of katex)   MIT   (Copyright 2011+ TJ Holowaychuk)
 html2canvas   — HTML-to-canvas renderer (js)    MIT   (Copyright 2012+ Niklas von Hertzen)
 jspdf         — PDF generator (js)              MIT   (Copyright 2010-2025 James Hall / yWorks GmbH)
 vite          — build tooling (js)              MIT   (Copyright 2019-2026 the Vite team)

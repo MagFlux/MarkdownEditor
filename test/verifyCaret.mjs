@@ -12,8 +12,12 @@
  *  - Code-block and MERMAID fence wraps put the caret INSIDE the fence: on
  *    the blank middle line for an empty block ("```\n|\n```" /
  *    "```mermaid\n|\n```"), after the content (before `\n````) otherwise.
- *  - INSERT-ONLY inserter pins: table and codeblock/mermaid NEVER remove —
- *    a click inside an existing table inserts a second scaffold, a click with
+ *  - Math-block insert puts the caret ON the blank middle line of "$$\n\n$$"
+ *    (an empty caret line is replaced in place; a non-empty one keeps its
+ *    prose and the block lands below it — the table branch's contract).
+ *  - INSERT-ONLY inserter pins: table, codeblock/mermaid and math NEVER
+ *    remove — a click inside an existing table/math block inserts a second
+ *    scaffold, a click with
  *    the caret on a fence line re-wraps it (the old unwrap/remove branches
  *    are gone).
  *  - Table insert puts the caret in the first body cell; block formats put the
@@ -252,6 +256,45 @@ txt = await p.evaluate(() => window.editor.documentText);
   ok("4g content mermaid wrap", txt === "```mermaid\nfoo\n```", txt);
   ok("4h caret after content, before the \\n``` tail",
     a === 14 && bb === 14, [a, bb]);
+}
+
+// ---------------------------------------------------------------------------
+// CASE 4X — Math block insert: the toolbar's $$ button inserts the
+// "$$\n\n$$" scaffold. INSERT-ONLY like every inserter (never removes), and
+// it mirrors the table branch's caret-line contract: an EMPTY caret line is
+// replaced in place, a NON-EMPTY line keeps its prose and the block lands
+// BELOW it. Caret on the blank middle line, collapsed.
+// ---------------------------------------------------------------------------
+await setDoc("", 0);
+await block("math");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4k empty math insert = $$\\n\\n$$", txt === "$$\n\n$$\n", txt);
+  ok("4l caret on the blank middle line, collapsed",
+    a === 3 && bb === 3, [a, bb]);
+}
+
+await setDoc("foo", 3);
+await block("math");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4m math insert on a non-empty line KEEPS the prose, block pushed below",
+    txt === "foo\n$$\n\n$$\n", txt);
+  ok("4n caret on the block's blank middle line, collapsed",
+    a === 7 && bb === 7, [a, bb]);
+}
+
+await setDoc("$$\nE=mc^2\n$$", 5);
+await block("math");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4o math click INSIDE an existing math block inserts a SECOND scaffold (never removes)",
+    (txt.match(/^\$\$$/gm) || []).length === 4, txt);
+  ok("4p caret in the SECOND scaffold's blank middle line, collapsed",
+    a === 13 && bb === 13, [a, bb]);
 }
 
 // INSERT-ONLY pin: a caret ON a fence line wraps it AGAIN inside a new fence
