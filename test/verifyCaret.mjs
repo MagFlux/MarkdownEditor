@@ -9,9 +9,13 @@
  *    block). Shift+Tab outdents the same way.
  *  - Inline formats (mid-word or over a selection) commit a collapsed caret at
  *    the end of the inner text, immediately BEFORE the closing marker.
- *  - Code-block wrap puts the caret INSIDE the fence: on the blank middle line
- *    for an empty block ("```\n|\n```"), after the content (before `\n````)
- *    otherwise.
+ *  - Code-block and MERMAID fence wraps put the caret INSIDE the fence: on
+ *    the blank middle line for an empty block ("```\n|\n```" /
+ *    "```mermaid\n|\n```"), after the content (before `\n````) otherwise.
+ *  - INSERT-ONLY inserter pins: table and codeblock/mermaid NEVER remove —
+ *    a click inside an existing table inserts a second scaffold, a click with
+ *    the caret on a fence line re-wraps it (the old unwrap/remove branches
+ *    are gone).
  *  - Table insert puts the caret in the first body cell; block formats put the
  *    caret at the end of the rewritten block.
  *  - Ctrl+Arrow word-wise moves are MARKDOWN-AWARE and engine-independent:
@@ -225,6 +229,45 @@ txt = await p.evaluate(() => window.editor.documentText);
 }
 
 // ---------------------------------------------------------------------------
+// CASE 4M — Mermaid fence insert: the toolbar's ```mermaid button wraps with
+// the SAME fence/caret contract as the codeblock button (offset +7 for the
+// `mermaid\n` tag). INSERT-ONLY like every inserter: no branch removes an
+// existing fence.
+// ---------------------------------------------------------------------------
+await setDoc("", 0);
+await block("mermaid");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4e empty mermaid wrap = ```mermaid\\n\\n```", txt === "```mermaid\n\n```", txt);
+  ok("4f caret on the blank middle line, collapsed",
+    a === 11 && bb === 11, [a, bb]);
+}
+
+await setDoc("foo", 3);
+await block("mermaid");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4g content mermaid wrap", txt === "```mermaid\nfoo\n```", txt);
+  ok("4h caret after content, before the \\n``` tail",
+    a === 14 && bb === 14, [a, bb]);
+}
+
+// INSERT-ONLY pin: a caret ON a fence line wraps it AGAIN inside a new fence
+// (the old unwrap-on-edge-line branch is gone — a second click never removes).
+await setDoc("```\nfoo\n```", 0);
+await block("codeblock");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("4i fence-line click wraps again (insert-only, no unwrap)",
+    txt === "```\n```\n```\nfoo\n```", txt);
+  ok("4j caret at end of the re-wrapped content, before the \\n``` tail",
+    a === 7 && bb === 7, [a, bb]);
+}
+
+// ---------------------------------------------------------------------------
 // CASE 5 — Block level: h1 caret at end of rewritten block; table caret in
 // the first body cell; codeblock-as-selection caret end.
 // ---------------------------------------------------------------------------
@@ -252,6 +295,33 @@ await block("table");
       "| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n");
   ok("5d caret in the first body cell, collapsed",
     (a === good[0] && bb === good[1]), [a, good[0]]);
+}
+
+// INSERT-ONLY pins: (a) clicking table with the caret INSIDE an existing table
+// inserts a SECOND scaffold (the old remove-table branch is gone — a second
+// click never removes) and (b) a table click on a non-empty line keeps that
+// line's text and pushes the scaffold below it (the old splice REPLACED the
+// caret line's text — insert-only means nothing is ever destroyed).
+await setDoc("| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |", 70);
+await block("table");
+{
+  const [a, bb] = await caret();
+  txt = await p.evaluate(() => window.editor.documentText);
+  ok("5e table click INSIDE a table inserts a SECOND scaffold (never removes)",
+    (txt.match(/\| Column 1 \| Column 2 \| Column 3 \|/g) || []).length === 2, txt);
+  ok("5f caret in the SECOND scaffold's first body cell, collapsed",
+    a === 177 && bb === 177, [a, bb]);
+}
+
+await setDoc("hello", 5);
+await block("table");
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("5g table click on a non-empty line KEEPS the prose, scaffold pushed below",
+    txt === "hello\n| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n", txt);
+  ok("5h caret in the new scaffold's first body cell, collapsed",
+    a === 78 && bb === 78, [a, bb]);
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,6 @@ import { wordAt } from "./format.js";
  * @param {Function} deps.detectFormat Detect an existing inline format.
  * @param {Function} deps.trimmedSpan Trim sentence punctuation from a token.
  * @param {Function} deps.wrapFor Wrap text in an inline format.
- * @param {Function} deps.isTableSep Detect a GFM table separator line.
  * @returns {{toggleFormat: Function, toggleBlock: Function, indentLines: Function}}
  */
 export function createEditingHandlers({
@@ -26,7 +25,6 @@ export function createEditingHandlers({
   detectFormat,
   trimmedSpan,
   wrapFor,
-  isTableSep,
 }) {
   /**
    * toggleFormat — apply, toggle off, or INSERT an inline format.
@@ -184,7 +182,14 @@ export function createEditingHandlers({
   }
 
   /**
-   * toggleBlock — wrap or unwrap the selected range as a block element.
+   * toggleBlock — apply a block-level action to the selected range.
+   *
+   * INSERT-ONLY contract for the fence/scaffold kinds ("table", "codeblock",
+   * "mermaid"): every click always inserts — a table click inserts a fresh
+   * 3-row scaffold, a codeblock/mermaid click wraps the caret line / selection
+   * in a fence — and no branch ever removes existing content. The remaining
+   * kinds ("h1"…"ol", quote) keep their historical toggle-off: clicking the
+   * active block kind strips its marker.
    * @param {string} kind Block kind to apply or strip.
    */
   function toggleBlock(kind) {
@@ -193,50 +198,43 @@ export function createEditingHandlers({
     const [startLine, endLine] = selLineRange(text, a, b);
 
     if (kind === "table") {
-      const lines = text.split("\n");
-      const cur = lineBounds(text, a)[0];
-      let row = cur;
-      while (row > 0 && (lines[row - 1] || "").includes("|")) row--;
-      let endRow = row;
-      while (endRow < lines.length && (lines[endRow] || "").includes("|")) endRow++;
-      if (endRow - row >= 2 && (lines[row] || "").includes("|") && isTableSep(lines[row + 1] || "")) {
-        const before = lines.slice(0, row).join("\n");
-        const after = lines.slice(endRow).join("\n");
-        const to = (before && after) ? before + "\n" + after : (before || after);
-        commit("remove table", to, row > 0 ? before.length : 0, row > 0 ? before.length : to.length);
-        return;
-      }
+      // INSERT-ONLY: the button always inserts the 3-row scaffold; it never
+      // removes an existing table (delete the rows by hand) — and it never
+      // destroys the caret line's own text either: an EMPTY line is replaced
+      // in place by the scaffold, a NON-EMPTY line is kept and the scaffold
+      // is inserted as its own block on the NEXT line.
       const tbl = `| Column 1 | Column 2 | Column 3 |\n| -------- | -------- | -------- |\n|          |          |          |`;
-      const pre = (lines[cur] || "").trim() !== "" ? "\n" : "";
-      const to = text.slice(0, startLine) + pre + tbl + "\n" + text.slice(endLine);
+      const row3 = tbl.split("\n")[2];
+      const [cs, ce] = lineBounds(text, a);
+      // Empty caret line → replace it in place (anchor = line start). Non-empty
+      // → keep the line and insert the scaffold BELOW it (anchor = line end +
+      // a "\n" separator; the line's own "\n" stays in slice(endLine)).
+      const empty = text.slice(cs, ce).trim() === "";
+      const anchor = empty ? cs : ce;
+      const pre = empty ? "" : "\n";
+      const to = text.slice(0, anchor) + pre + tbl + "\n" + text.slice(endLine);
       // Cursor in the first body cell so typing starts there immediately
       // (no highlighted selection over the inserted table).
-      const row3 = tbl.split("\n")[2];
-      const caret = startLine + pre.length + (tbl.length - row3.length) + 2;
+      const caret = anchor + pre.length + (tbl.length - row3.length) + 2;
       commit("insert table", to, caret, caret);
       return;
     }
 
-    if (kind === "codeblock") {
+    if (kind === "codeblock" || kind === "mermaid") {
+      // INSERT-ONLY fence wrap (codeblock = plain ```, mermaid = ```mermaid).
+      // The button always wraps; it never unwraps an existing fence — unwrap
+      // the markers by hand.
+      const lang = kind === "mermaid" ? "mermaid" : "";
+      const open = "```" + lang;
       const block = text.slice(startLine, endLine);
-      const arr = block.split("\n");
-      const first = (arr[0] || "").trim(), last = (arr[arr.length - 1] || "").trim();
-      if (/^(```|~~~)/.test(first) || /^(```|~~~)/.test(last)) {
-        if (/^(```|~~~)/.test(arr[0].trim())) arr.shift();
-        if (arr.length && /^(```|~~~)/.test(arr[arr.length - 1].trim())) arr.pop();
-        const nb = arr.join("\n");
-        // Collapsed caret at the end of the (un)wrapped block — no highlight.
-        const care = startLine + nb.length;
-        commit("unwrap code block", text.slice(0, startLine) + nb + text.slice(endLine), care, care);
-        return;
-      }
-      const nb = "```\n" + block + "\n```";
+      const nb = open + "\n" + block + "\n```";
       // Caret INSIDE the fence: end of the content, right before the "\n```"
       // tail (nb.length - 4, NOT - 3 — -3 lands on the closing-fence line
       // itself). With an empty block the caret thus sits on the blank middle
-      // line: "```\n|\n```". Collapsed, no highlight.
+      // line: "```mermaid\n|\n```". Collapsed, no highlight.
       const care = startLine + nb.length - 4;
-      commit("wrap code block", text.slice(0, startLine) + nb + text.slice(endLine), care, care);
+      const label = kind === "mermaid" ? "wrap mermaid" : "wrap code block";
+      commit(label, text.slice(0, startLine) + nb + text.slice(endLine), care, care);
       return;
     }
 

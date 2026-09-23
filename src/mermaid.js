@@ -668,8 +668,10 @@ async function renderMermaidSvg(text) {
  * Finds every `pre > code.language-mermaid`, swaps its parent `<pre>` for a
  * rendered SVG holder, and applies the interactive bindings. CACHED: a fence
  * whose source is already in `_svgCache` is restored from the cache (no
- * `mermaid.render` call, no off-screen mount). A no-op (safe) when the node
- * has no such fences or is null.
+ * `mermaid.render` call, no off-screen mount). Blank (whitespace-only) fences
+ * are SKIPPED — mermaid cannot parse empty source, and the freshly inserted
+ * toolbar fence must preview as a plain code block, not an error box. A no-op
+ * (safe) when the node has no such fences or is null.
  *
  * @param {Element|null} node — the live DOM subtree to walk (the preview or
  *   the off-screen PDF host).
@@ -690,6 +692,12 @@ async function renderMermaidInNode(node) {
     // appending a ghost.
     if (!pre || !pre.isConnected || !node.contains(pre)) continue;
     const text = code.textContent; // textContent is already entity-decoded
+    // BLANK-FENCE GUARD: a freshly inserted (toolbar mermaid button) fence has
+    // empty source, which mermaid cannot parse — without this skip the preview
+    // instantly paints a "Mermaid render failed: …" error box. An empty fence
+    // stays a plain code block until the user types. Never rendered → never
+    // cached → the anti-flicker cache is unaffected.
+    if (!text.trim()) continue;
     let out = _svgCache.get(mmCacheKey(text)) || { svg: "", bindFunctions: null };
     if (!out.svg) {
       try { out = await renderMermaidSvg(text); }
@@ -722,8 +730,10 @@ async function renderMermaidInNode(node) {
  * source is entity-decoded before being handed to mermaid. The result is the
  * same HTML string with each `<pre><code class="language-mermaid">…</code></pre>`
  * replaced by a `<div class="mermaid-diagram">…svg…</div>` element. CACHED:
- * sources already in `_svgCache` are spliced in directly (no render). A no-op
- * (returns `html` unchanged) when the string contains no mermaid fences.
+ * sources already in `_svgCache` are spliced in directly (no render). Blank
+ * (whitespace-only) fences are left as plain code blocks — mermaid cannot
+ * parse empty source. A no-op (returns `html` unchanged) when the string
+ * contains no mermaid fences.
  *
  * @param {string} html — the marked-produced HTML string.
  * @returns {Promise<string>} the same string with the mermaid fences rendered.
@@ -739,6 +749,9 @@ async function renderMermaidInHtml(html) {
   while ((m = re.exec(html))) {
     out.push(html.slice(last, m.index));
     const src = decode(m[1]);
+    // BLANK-FENCE GUARD (export path): an empty fence has no diagram to render
+    // (mermaid would throw), so leave the source block as-is in the export.
+    if (!src.trim()) { out.push(m[0]); last = m.index + m[0].length; continue; }
     let svg = (_svgCache.get(mmCacheKey(src)) || {}).svg || "";
     if (!svg) {
       try { svg = (await renderMermaidSvg(src)).svg; }

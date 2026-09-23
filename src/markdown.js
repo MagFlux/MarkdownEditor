@@ -134,6 +134,7 @@ export function createApp(root) {
       <span class="sep"></span>
       <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
       <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
+      <button class="btn" data-block="mermaid" title="Insert Mermaid diagram">${icons.mermaid}</button>
     </span>
     <span class="tb-right">
       <button class="btn" data-action="mode" title="View — click to cycle Split / Edit / Preview">
@@ -802,7 +803,6 @@ export function createApp(root) {
     detectFormat,
     trimmedSpan,
     wrapFor,
-    isTableSep,
   });
 
   const { findLinkToken, tauriOpenUrl, openAtCaret } = createLinkHandlers({

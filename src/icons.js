@@ -6,7 +6,7 @@
  * `stroke-width="2"`, `stroke-linecap="round"`, `stroke-linejoin="round"`) are
  * applied once by the `wrap` helper so the path bodies stay small.
  *
- * The 18 icons in this file cover B / I / S / code / link / save / open /
+ * The 19 icons in this file cover B / I / S / code / link / save / open /
  * underline / table / new-tab / undo / redo / hamburger-menu / file-doc,
  * the theme (light/dark) toggle, and the three view-mode glyphs
  * (split / edit / preview) shown on the constant-width mode button.
@@ -33,6 +33,8 @@ export const open = wrap(`<path d="M4 6h6l2 2h8v11H4z"/>`);
 export const underline = wrap(`<path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/>`);
 /** table — the grid toolbar icon (used for the GFM table action). */
 export const table = wrap(`<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16"/>`);
+/** mermaid — two boxes joined by an elbow connector (the diagram-insert action). */
+export const mermaid = wrap(`<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M6.5 10v7h7.5"/>`);
 /** plus — the + icon for "new tab". */
 export const plus = wrap(`<path d="M12 5v14M5 12h14"/>`);
 /** undo — the curved back-arrow (Ctrl+Z). */
