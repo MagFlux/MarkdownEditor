@@ -161,6 +161,24 @@ await scenario("M: menu open/close/outside-click/Escape", async ({ page, ok, wai
   ok("M1b data-menu-open=true after open",
      (await page.evaluate(() => document.querySelector('[data-action="menu"]').getAttribute("data-menu-open"))) === "true");
 
+  // Shrink-to-fit width: the dropdown must hug the WIDEST entry plus its own
+  // padding — no fixed min-width floor (the old 190px made the two-item menu
+  // visibly wider than its content). Measured as: widest item width == dropdown
+  // content width (items are width:100%), and the whole box stays well below
+  // the retired 190px floor.
+  const mw = await page.evaluate(() => {
+    const dd = document.querySelector(".menu-dropdown");
+    const items = [...dd.querySelectorAll(".menu-item")];
+    return {
+      dd: dd.getBoundingClientRect().width,
+      items: items.map((i) => i.getBoundingClientRect().width),
+    };
+  });
+  ok("M1c dropdown hugs the widest entry (items fill it exactly)",
+     Math.abs(mw.dd - Math.max(...mw.items) - 12) < 2, // 2x5px padding + 2x1px border
+     JSON.stringify(mw));
+  ok("M1d dropdown has no 190px min-width floor", mw.dd < 190, "width=" + mw.dd.toFixed(1));
+
   await menuBtn.click();
   await wait(60);
   ok("M2 toggling the button again closes the dropdown", (await openClass()) === false);

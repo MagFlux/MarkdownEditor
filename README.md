@@ -79,7 +79,7 @@ MarkdownEditor/
     ├── verifySaveOpen.mjs      # save / open / close-guard UI test
     ├── verifyToolbar.mjs       # toolbar active-states track the caret (41 cases)
     ├── verifyPaste.mjs         # rich-paste HTML→Markdown (18 cases)
-    ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel, 30 cases)
+    ├── verifyExport.mjs        # PDF/HTML export (menu + save/cancel + menu fit-width, 32 cases)
     ├── verifyScroll.mjs        # split-view scroll-sync lag fix (5 cases)
     ├── verifyModeScroll.mjs    # mode-switch scroll-PRESERVING (8 cases)
     ├── verifyModeFocus.mjs     # mode-click focus skipped only entering preview (13 cases)
@@ -369,7 +369,7 @@ releases, add these to **Settings → Secrets and variables → Actions**:
 | `npm run verify-save` | Headless save/close-guard UI test (24 cases, needs Playwright) |
  | `npm run verify-toolbar` | Headless toolbar active-state test: B/I/U/S/code/link/H1–H3 track the caret click/arrow/programmatic, incl. trailing-comma tokens, multi-word spans, code-span precedence, and toggle-OFF comma preservation; also guards collapsed-caret formatting — a plain caret (empty line, between words, token edge) inserts an EMPTY marker pair with the caret between the markers (never wraps a neighbouring word), a caret inside a format span toggles off, a mid-word caret wraps that word, and a single-line selection wraps exactly (41 cases, needs Playwright) |
 | `npm run verify-paste` | Headless rich-paste test: HTML clipboard → Markdown, 1 undo step (18 cases, needs Playwright) |
-| `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation (30 cases, needs Playwright) |
+| `npm run verify-export` | Headless PDF/HTML export test: menu + save/cancel + format isolation + menu shrink-to-fit width (32 cases, needs Playwright) |
 | `npm run verify-scroll` | Headless split-view scroll-sync test: a real follow-pane scroll inside the echo window is accepted at once (5 cases, needs Playwright) |
 | `npm run verify-modescroll` | Headless mode-switch test: split/edit/preview preserves the scroll ratio (8 cases, needs Playwright) |
  | `npm run verify-modefocus` | Headless mode-click focus test: the mode button skips its trailing focus *only* when entering preview (the hidden textarea's scroll-into-view); split/edit targets still get caret-follow focus (13 cases, needs Playwright) |
