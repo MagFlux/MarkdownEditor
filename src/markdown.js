@@ -123,20 +123,20 @@ export function createApp(root) {
       <button class="btn" data-fmt="underline" title="Toggle underline — Ctrl+U">${icons.underline}</button>
       <button class="btn" data-fmt="strike" title="Toggle strikethrough">${icons.strike}</button>
       <button class="btn" data-fmt="code" title="Toggle inline code">${icons.code}</button>
-      <button class="btn" data-fmt="link" title="Insert / toggle link — Ctrl+K">${icons.link}</button>
+      <button class="btn" data-fmt="link" title="Toggle link — Ctrl+K">${icons.link}</button>
       <span class="sep"></span>
-      <button class="btn" data-block="h1">H1</button>
-      <button class="btn" data-block="h2">H2</button>
-      <button class="btn" data-block="h3">H3</button>
+      <button class="btn" data-block="h1" title="Toggle H1">H1</button>
+      <button class="btn" data-block="h2" title="Toggle H2">H2</button>
+      <button class="btn" data-block="h3" title="Toggle H3">H3</button>
       <span class="sep"></span>
       <button class="btn" data-block="quote" title="Toggle blockquote">&rdquo;</button>
       <button class="btn" data-block="ul" title="Toggle bullet list">&bull;&thinsp;&mdash;</button>
       <button class="btn" data-block="ol" title="Toggle numbered list">1.</button>
       <span class="sep"></span>
       <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
-      <button class="btn" data-block="codeblock" title="Toggle code block">&lt;/&gt;</button>
+      <button class="btn" data-block="codeblock" title="Insert code block">&lt;/&gt;</button>
       <button class="btn" data-block="mermaid" title="Insert Mermaid diagram">${icons.mermaid}</button>
-      <button class="btn" data-block="math" title="Insert math block — $$ … $$">${icons.math}</button>
+      <button class="btn" data-block="math" title="Insert math block">${icons.math}</button>
     </span>
     <span class="tb-right">
       <button class="btn" data-action="mode" title="View — click to cycle Split / Edit / Preview">
