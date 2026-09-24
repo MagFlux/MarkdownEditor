@@ -6,10 +6,11 @@
  * `stroke-width="2"`, `stroke-linecap="round"`, `stroke-linejoin="round"`) are
  * applied once by the `wrap` helper so the path bodies stay small.
  *
- * The 19 icons in this file cover B / I / S / code / link / save / open /
- * underline / table / new-tab / undo / redo / hamburger-menu / file-doc,
- * the theme (light/dark) toggle, and the three view-mode glyphs
- * (split / edit / preview) shown on the constant-width mode button.
+ * The 22 icons in this file cover B / I / S / code / codeblock / link /
+ * mathInline / save / open / underline / table / new-tab / undo / redo /
+ * hamburger-menu / file-doc, the theme (light/dark) toggle, and the three
+ * view-mode glyphs (split / edit / preview) shown on the constant-width mode
+ * button.
  */
 
 /** wrap — produce the shared `<svg>` shell around an inner path. */
@@ -23,6 +24,9 @@ export const italic = wrap(`<path d="M19 4h-9M14 20H5M15 4 9 20"/>`);
 export const strike = wrap(`<path d="M4 12h16M8 8h8M7 16h10"/><path d="M13 5c1.7 0 3 .8 3 2.2M11 19c-1.7 0-3-1-3-2.6"/>`);
 /** code — the inline-code toolbar icon. */
 export const code = wrap(`<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>`);
+/** codeblock — chevrons + slash inside a rounded frame (the code-block action;
+ *  a frame distinguishes it from the bare-chevron inline-code icon). */
+export const codeblock = wrap(`<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m9.5 9.5-2.5 2.5 2.5 2.5M14.5 9.5l2.5 2.5-2.5 2.5M13.5 9l-3 6"/>`);
 /** link — the [text](url) toolbar icon. */
 export const link = wrap(`<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 7"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>`);
 /** save — the Save (disk / floppy) icon. */
@@ -37,6 +41,8 @@ export const table = wrap(`<rect x="3" y="4" width="18" height="16" rx="1"/><pat
 export const mermaid = wrap(`<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M6.5 10v7h7.5"/>`);
 /** math — a capital Sigma (Σ), the math-block ($$) insert action. */
 export const math = wrap(`<path d="M17 5H6l7 7-7 7h11"/>`);
+/** mathInline — an integral sign (∫), the inline-math ($…$) toggle action. */
+export const mathInline = wrap(`<path d="M16 4c-2.8-.8-5 .9-5 3.7v8.6c0 2.7-2.2 4.3-5 3.4"/>`);
 /** plus — the + icon for "new tab". */
 export const plus = wrap(`<path d="M12 5v14M5 12h14"/>`);
 /** undo — the curved back-arrow (Ctrl+Z). */

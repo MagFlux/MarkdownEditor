@@ -20,13 +20,21 @@
 /* ================= Selection helpers ================= */
 
 /**
- * FORMATTED_PATTERNS — the inline-format span regexes (bold, italic, strike,
- * code, underline, link). Shared by `wordAt` (format detection) and `wordJump`
- * (Markdown-aware Ctrl+Arrow movement) so both agree on what "one formatted
- * word" is.
+ * FORMATTED_PATTERNS — the inline-format span regexes (code, inline math,
+ * bold, italic, strike, underline, link). Shared by `wordAt` (format
+ * detection) and `wordJump` (Markdown-aware Ctrl+Arrow movement) so both
+ * agree on what "one formatted word" is.
+ *
+ * The inline-math pattern mirrors the math.js PREVIEW scanner's rules exactly
+ * (opener not preceded by `\` / `$`, followed by a non-space char; closer
+ * preceded by a non-space char and not followed by a digit) so the toolbar's
+ * inline-math button lights up exactly where the preview will typeset — and
+ * currency prose (`costs $5 and $10`) never counts as math. `(?<!\$)` keeps
+ * the inner half of `$$…$$` from matching as a `$…$` span.
  */
 const FORMATTED_PATTERNS = [
   /`[^`]+`/,
+  /(?<!\\)(?<!\$)\$(?!\$)[^\s$](?:[^$]*?[^\s$])?\$(?![\d$])/,
   /\*\*(?:[^*]|\*(?!\*))+\*\*/,
   /__(?:[^_]|_(?!_))+__/,
   /~~(?:[^~]|~(?!~))+~~/,
@@ -234,7 +242,8 @@ function wordJump(text, pos, dir) {
  * @param {number} ws — the token start offset.
  * @param {number} we — the token end offset.
  * @returns {{fmt:string, inner:string, url?:string, fs:number, fe:number}|null}
- *   the detected format (`bold`/`strike`/`code`/`underline`/`italic`/`link`),
+ *   the detected format (`bold`/`strike`/`code`/`underline`/`italic`/`link`/
+ *   `inlinemath`),
  *   the inner text, the true span `[fs, fe)`, or null if no format is present.
  */
 function detectFormat(line, ws, we) {
@@ -253,6 +262,11 @@ function detectFormat(line, ws, we) {
   if ((m = core.match(/^~~(.+?)~~$/))) return { fmt: "strike", inner: m[1], fs, fe };
   if ((m = core.match(/^`(.+?)`$/))) return { fmt: "code", inner: m[1], fs, fe };
   if ((m = core.match(/^<u>([\s\S]+?)<\/u>$/))) return { fmt: "underline", inner: m[1], fs, fe };
+  // Inline math `$…$`: same Pandoc guards as the preview scanner — non-space
+  // opener/closer content, closer not digit-followed (so `$x$5` stays
+  // prose), and a leading `$$` can never match (the `[^\s$]` content start
+  // rejects it). Checked AFTER code so `` `$x$` `` stays code.
+  if ((m = core.match(/^\$([^\s$](?:[^$]*?[^\s$])?)\$(?![\d$])$/))) return { fmt: "inlinemath", inner: m[1], fs, fe };
   if ((m = core.match(/^\*([^\s*].*?)\*$/))) return { fmt: "italic", inner: m[1], fs, fe };
   if ((m = core.match(/^_([^_]+?)_$/))) return { fmt: "italic", inner: m[1], fs, fe };
   if ((m = core.match(/^\[([^\]]*)\]\(([^)]*)\)$/))) return { fmt: "link", inner: m[1], url: m[2], fs, fe };
@@ -292,7 +306,7 @@ function trimmedSpan(line, ws, we) {
  * wrapFor — wrap `inner` with the Markdown markers for a format.
  *
  * @param {string} kind — `bold` | `italic` | `strike` | `underline` | `code`
- *   | `link`.
+ *   | `link` | `inlinemath`.
  * @param {string} inner — the text to wrap.
  * @returns {string} the wrapped text (or `inner` unchanged if `kind` is not
  *   a known format, so the caller's existing behaviour is preserved).
@@ -305,6 +319,7 @@ function wrapFor(kind, inner) {
     case "underline": return `<u>${inner}</u>`;
     case "code": return `\`${inner}\``;
     case "link": return `[${inner || "link"}](https://)`;
+    case "inlinemath": return `$${inner}$`;
   }
   return inner;
 }

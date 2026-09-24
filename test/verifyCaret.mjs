@@ -209,6 +209,43 @@ txt = await p.evaluate(() => window.editor.documentText);
     txt === "the **** test" && a === 6 && bb === 6, { txt, sel: [a, bb] });
 }
 
+// Inline math `$…$` mirrors the inline caret contract: wrap ends at the
+// inner-span end BEFORE the closing `$`; toggle-OFF collapses after the span;
+// the empty pair inserts at the caret (pads merge with the gap).
+await setDoc("bold test", [5, 9]);
+await p.evaluate(() => window.editor.toggleFormat("inlinemath")); await sleep(200);
+txt = await p.evaluate(() => window.editor.documentText);
+ok("3e selection 'test' inline-mathed exactly", txt === "bold $test$", txt);
+{
+  const [a, bb] = await caret();
+  ok("3f caret collapsed AFTER 'test', BEFORE closing '$'", a === 10 && bb === 10, [a, bb]);
+}
+
+await setDoc("$value$", 4);
+await p.evaluate(() => window.editor.toggleFormat("inlinemath")); await sleep(200);
+{
+  const [a, bb] = await caret();
+  ok("3f toggle-OFF $value$ unwraps, caret collapsed at span end",
+    (await p.evaluate(() => window.editor.documentText)) === "value" && a === 5 && bb === 5, { sel: [a, bb] });
+}
+
+await setDoc("the test", 4);
+await p.evaluate(() => window.editor.toggleFormat("inlinemath")); await sleep(200);
+txt = await p.evaluate(() => window.editor.documentText);
+{
+  const [a, bb] = await caret();
+  ok("3g gap caret + inline math → $$ pair, caret between the markers",
+    txt === "the $$ test" && a === 5 && bb === 5, { txt, sel: [a, bb] });
+}
+
+await setDoc("price $5,000", 9);
+await p.evaluate(() => window.editor.toggleFormat("inlinemath")); await sleep(200);
+{
+  const [a, bb] = await caret();
+  ok("3h currency token is never wrapped (empty pair instead), token intact",
+    (await p.evaluate(() => window.editor.documentText)) === "price $5, $$ 000" && a === 11 && bb === 11, { sel: [a, bb] });
+}
+
 // ---------------------------------------------------------------------------
 // CASE 4 — Code block: caret INSIDE the fence.
 // ---------------------------------------------------------------------------

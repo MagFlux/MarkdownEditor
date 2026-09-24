@@ -41,7 +41,7 @@ const activeFmt = (name) => p.locator(`button[data-fmt="${name}"]`).first().getA
 
 /** activeBlock — true when the `data-block` button for `name` is lit. */
 const activeBlock = (name) => p.locator(`button[data-block="${name}"]`).first().getAttribute("class").then((c) => /(^|\s)active(\s|$)/.test(c || ""));
-const FMT_NAMES = ["bold", "italic", "underline", "strike", "code", "link"];
+const FMT_NAMES = ["bold", "italic", "underline", "strike", "code", "link", "inlinemath"];
 const BLOCK_NAMES = ["h1", "h2", "h3", "quote", "ul", "ol", "table"];
 /** states — snapshot every fmt + block button's active state into one object. */
 async function states() {
@@ -270,6 +270,92 @@ await sleep(S * 2);
   const txt = await p.evaluate(() => window.editor.activeTab.input.value);
   ok("selection `me` + bold → wraps exactly the selection",
     txt === "select **me** please", "got " + JSON.stringify(txt));
+}
+
+// --- Inline math `$…$`: detection tracks the caret like the other toggles ---
+await setLine("$x^2$", 3);
+{
+  const s = await states();
+  ok("caret in $x^2$ → inlinemath active", s.fmt.inlinemath === true);
+  ok("caret in $x^2$ → no other inline active",
+    !s.fmt.bold && !s.fmt.italic && !s.fmt.underline && !s.fmt.strike && !s.fmt.code && !s.fmt.link);
+}
+await setLine("$e^{i\\pi} + 1 = 0$", 10);
+ok("caret in multi-word inline math → inlinemath active", (await activeFmt("inlinemath")) === true);
+await setLine("value $bold$, done", 8);
+ok("caret in $bold$ with trailing comma → inlinemath active", (await activeFmt("inlinemath")) === true);
+await setLine("costs $5,000 today", 9);
+ok("caret in currency $5,000 → inlinemath NOT active", (await activeFmt("inlinemath")) === false);
+await setLine("costs $5 and $10 total", 10);
+ok("caret in `$5 and $10` prose → inlinemath NOT active", (await activeFmt("inlinemath")) === false);
+await setLine("The `$x$` stays code", 8);
+ok("caret in code-wrapped $x$ → code wins, inlinemath NOT active",
+  (await activeFmt("code")) === true && (await activeFmt("inlinemath")) === false);
+await setLine("x $$y$$ z", 4);
+ok("caret inside $$y$$ display math → inlinemath NOT active", (await activeFmt("inlinemath")) === false);
+await setLine("plain word", 7);
+ok("caret in a plain word → inlinemath NOT active", (await activeFmt("inlinemath")) === false);
+
+// --- Inline math toggle clicks ---
+await setLine("say hello", 6);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("click mid-word `hello` + inline math → wraps the word",
+    txt === "say $hello$", "got " + JSON.stringify(txt));
+}
+
+await setLine("value $bold$, rest", 9);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("toggle OFF $bold$ with trailing comma → comma preserved",
+    txt === "value bold, rest", "got " + JSON.stringify(txt));
+}
+
+await setLine("the test", 4);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("gap caret + inline math → empty marker pair with pads",
+    txt === "the $$ test", "got " + JSON.stringify(txt));
+}
+
+await p.evaluate(() => {
+  const ed = window.editor;
+  ed.setDocumentText("select me please");
+  const t = ed.activeTab.input;
+  t.setSelectionRange(7, 9);
+  t.dispatchEvent(new Event("selectionchange", { bubbles: true }));
+});
+await sleep(S);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("selection `me` + inline math → wraps exactly the selection",
+    txt === "select $me$ please", "got " + JSON.stringify(txt));
+}
+
+await setLine("x $$y$$ z", 4);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("click inside $$y$$ display math → NO-OP (never corrupts the display pair)",
+    txt === "x $$y$$ z", "got " + JSON.stringify(txt));
+}
+
+await setLine("price $5,000 and", 9);
+await p.locator('button[data-fmt="inlinemath"]:visible').first().click();
+await sleep(S * 2);
+{
+  const txt = await p.evaluate(() => window.editor.activeTab.input.value);
+  ok("click inside currency token → empty pair, token untouched (no $$ run)",
+    txt === "price $5, $$ 000 and", "got " + JSON.stringify(txt));
 }
 
 console.log(`\nPASS ${pass} / FAIL ${fail}`);

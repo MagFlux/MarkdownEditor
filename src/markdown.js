@@ -124,6 +124,7 @@ export function createApp(root) {
       <button class="btn" data-fmt="strike" title="Toggle strikethrough">${icons.strike}</button>
       <button class="btn" data-fmt="code" title="Toggle inline code">${icons.code}</button>
       <button class="btn" data-fmt="link" title="Toggle link — Ctrl+K">${icons.link}</button>
+      <button class="btn" data-fmt="inlinemath" title="Toggle inline math">${icons.mathInline}</button>
       <span class="sep"></span>
       <button class="btn" data-block="h1" title="Toggle H1">H1</button>
       <button class="btn" data-block="h2" title="Toggle H2">H2</button>
@@ -134,7 +135,7 @@ export function createApp(root) {
       <button class="btn" data-block="ol" title="Toggle numbered list">1.</button>
       <span class="sep"></span>
       <button class="btn" data-block="table" title="Insert table">${icons.table}</button>
-      <button class="btn" data-block="codeblock" title="Insert code block">&lt;/&gt;</button>
+      <button class="btn" data-block="codeblock" title="Insert code block">${icons.codeblock}</button>
       <button class="btn" data-block="mermaid" title="Insert Mermaid diagram">${icons.mermaid}</button>
       <button class="btn" data-block="math" title="Insert math block">${icons.math}</button>
     </span>
@@ -1421,6 +1422,7 @@ export function createApp(root) {
     setFmtActive("strike", !!(det && det.fmt === "strike"));
     setFmtActive("code", !!(det && det.fmt === "code"));
     setFmtActive("link", !!(det && det.fmt === "link"));
+    setFmtActive("inlinemath", !!(det && det.fmt === "inlinemath"));
     const hm = line.match(/^\s*(#{1,4})\s/);
     setBlockActive("h1", !!hm && hm[1].length === 1);
     setBlockActive("h2", !!hm && hm[1].length === 2);

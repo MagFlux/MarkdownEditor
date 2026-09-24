@@ -47,6 +47,13 @@ export function createEditingHandlers({
    * format without disturbing anything; toggle-OFF puts the caret at the end
    * of the unwrapped span; the empty-marker insertion keeps the caret between
    * the markers.
+   *
+   * INLINE MATH (`$…$`) carries one extra guard: its marker is a character
+   * plain prose also uses (currency), so a wrap that would put a `$` next to
+   * an existing one (span edge `$`, or a `$` inside the span) would create a
+   * `$$` run — the display-math delimiter — and corrupt the document. Those
+   * spans are refused and the empty-marker pair is inserted instead (the same
+   * no-text-destroyed contract as everywhere else).
    * @param {string} kind Inline format to apply.
    */
   function toggleFormat(kind) {
@@ -63,7 +70,19 @@ export function createEditingHandlers({
     // end of the inner text (just BEFORE the closing marker) with NO
     // highlighted selection. Toggle-OFF branches have no marker pair left, so
     // their openLen is 0.
-    const openLen = ({ bold: 2, italic: 1, strike: 2, underline: 3, code: 1, link: 1 })[kind] || 0;
+    const openLen = ({ bold: 2, italic: 1, strike: 2, underline: 3, code: 1, link: 1, inlinemath: 1 })[kind] || 0;
+    // dollarClash — inline math only: wrapping `[fs, fe)` would butt the new
+    // `$` against an existing `$` (or the span itself contains one), producing
+    // a `$$` display-math delimiter run mid-prose. Returns "empty" when the
+    // caller should insert the empty marker pair instead of wrapping, or
+    // "noop" when the probed token carries `$$` (the caret sits INSIDE a
+    // `$$…$$` display span) — inline markers are meaningless there and
+    // wrapping them would corrupt the display pair, so the button must do
+    // nothing at all. `ds`/`de` are the token bounds the caret lives in.
+    const dollarClash = (fs, fe, ds, de) =>
+      kind === "inlinemath" &&
+      (line[fs - 1] === "$" || line[fe] === "$" || line.slice(fs, fe).includes("$")) ?
+        (/\$\$/.test(line.slice(ds, de)) ? "noop" : "empty") : "";
 
     if (collapsed || multiLine) {
       // Line-under-the-caret behaviour (regime 1 for a caret; regime 3 fallback
@@ -77,11 +96,24 @@ export function createEditingHandlers({
       const inFmt = collapsed && det && la >= det.fs && la <= det.fe;
       const { fs, fe } = (det && (!collapsed || inFmt)) ? { fs: det.fs, fe: det.fe } : trimmedSpan(line, ws, we);
       const target = line.slice(fs, fe);
+      // insertEmptyPair — the regime-1 fallback (also the inline-math clash
+      // fallback): an EMPTY marker pair AT THE CARET with the caret in the
+      // middle, padded with one space on a side whose adjacent char is a word
+      // char (`the test` gap carets yield `the **** test` exactly).
+      const insertEmptyPair = () => {
+        const ins = kind === "link" ? "[](https://)" : wrapFor(kind, "");
+        const padB = la > 0 && /\S/.test(line[la - 1]) ? 1 : 0;
+        const padA = /\S/.test(line[la] || "") ? 1 : 0;
+        care = la + padB + openLen;
+        newLine = line.slice(0, la) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(la);
+      };
       if (!collapsed) {
         // Multi-line selection fallback: historical token-wrap behaviour.
         if (det && det.fmt === kind) {
           newLine = line.slice(0, fs) + det.inner + line.slice(fe);
           care = fs + det.inner.length;
+        } else if (det && dollarClash(det.fs, det.fe, ws, we) === "empty") {
+          insertEmptyPair();
         } else {
           const inner = det ? det.inner : target;
           newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
@@ -91,6 +123,12 @@ export function createEditingHandlers({
         // Caret inside a matching format: toggle it OFF.
         newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
         care = det.fs + det.inner.length;
+      } else if (det && dollarClash(det.fs, det.fe, ws, we)) {
+        // A `$`-carrying span the button must not wrap. "noop" = the caret
+        // lives inside `$$…$$` display math (do nothing at all); "empty" =
+        // currency-style clash — refuse the wrap, insert an empty pair.
+        if (dollarClash(det.fs, det.fe, ws, we) === "noop") return;
+        insertEmptyPair();
       } else if (det) {
         // Caret next to (not inside) a DIFFERENT format: wrap the resolved
         // span with `kind` — historical behaviour for a plain caret whose
@@ -100,11 +138,19 @@ export function createEditingHandlers({
         care = det.fs + openLen + inner.length;
       } else if (ws < la && la < we && /\S/.test(line.slice(ws, we))) {
         // Caret strictly INSIDE a plain word: wrap that word (sentence
-        // punctuation at the token edges is preserved via trimmedSpan).
-        const { fs, fe } = trimmedSpan(line, ws, we);
-        const inner = line.slice(fs, fe);
-        newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
-        care = fs + openLen + inner.length;
+        // punctuation at the token edges is preserved via trimmedSpan) —
+        // unless the wrap would clash, in which case the word is untouched
+        // and the empty pair goes in at the caret (or nothing happens inside
+        // display math).
+        const clash = dollarClash(fs, fe, ws, we);
+        if (clash === "noop") return;
+        if (!clash) {
+          const inner = line.slice(fs, fe);
+          newLine = line.slice(0, fs) + wrapFor(kind, inner) + line.slice(fe);
+          care = fs + openLen + inner.length;
+        } else {
+          insertEmptyPair();
+        }
       } else {
         // Plain caret (empty line, whitespace, or a token edge): insert an
         // EMPTY marker pair AT THE CARET with the caret in the middle — the
@@ -112,11 +158,7 @@ export function createEditingHandlers({
         // space on a side whose adjacent char is a word char, so a caret at
         // either edge of the gap in `the test` yields `the **** test`
         // exactly, with the cursor between the markers ready for new text.
-        const ins = kind === "link" ? "[](https://)" : wrapFor(kind, "");
-        const padB = la > 0 && /\S/.test(line[la - 1]) ? 1 : 0;
-        const padA = /\S/.test(line[la] || "") ? 1 : 0;
-        care = la + padB + openLen;
-        newLine = line.slice(0, la) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(la);
+        insertEmptyPair();
       }
       // care is line-LOCAL (like fs/la above); commit expects doc-absolute
       // positions, so lineStart is added twice here to keep the caret collapsed
@@ -138,10 +180,27 @@ export function createEditingHandlers({
     if (det && det.fmt === kind) {
       newLine = line.slice(0, det.fs) + det.inner + line.slice(det.fe);
       care = det.fs + det.inner.length;
+    } else if (det && dollarClash(det.fs, det.fe, s, e) === "empty") {
+      // Inline math: a `$`-carrying span must not be wrapped (see dollarClash)
+      // — fall back to the empty-marker insertion at the selection start.
+      const la2 = s;
+      const ins = wrapFor(kind, "");
+      const padB = la2 > 0 && /\S/.test(line[la2 - 1]) ? 1 : 0;
+      const padA = /\S/.test(line[la2] || "") ? 1 : 0;
+      care = la2 + padB + openLen;
+      newLine = line.slice(0, la2) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(la2);
     } else if (det) {
       const inner = det.inner;
       newLine = line.slice(0, det.fs) + wrapFor(kind, inner) + line.slice(det.fe);
       care = det.fs + openLen + inner.length;
+    } else if (dollarClash(s, e, s, e)) {
+      // Selection containing / butting a bare `$`: refuse the wrap (a `$$` run
+      // would corrupt the doc) and insert the empty pair at the caret instead.
+      const ins = wrapFor(kind, "");
+      const padB = s > 0 && /\S/.test(line[s - 1]) ? 1 : 0;
+      const padA = /\S/.test(line[s] || "") ? 1 : 0;
+      care = s + padB + openLen;
+      newLine = line.slice(0, s) + " ".repeat(padB) + ins + " ".repeat(padA) + line.slice(s);
     } else {
       const inner = line.slice(s, e);
       newLine = line.slice(0, s) + wrapFor(kind, inner) + line.slice(e);

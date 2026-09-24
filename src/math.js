@@ -172,14 +172,28 @@ function findMathRanges(md) {
     if (ch === "\\" && md[i + 1] === "$") { i += 2; continue; } // \$ literal
 
     if (ch === "$" && md[i + 1] === "$") {
-      const close = findBlockClose(md, i + 2);
-      if (close !== -1 && md.slice(i + 2, close).trim() !== "") {
-        ranges.push({ start: i, end: close + 2, src: md.slice(i + 2, close), display: true });
-        i = close + 2;
+      // A `$$` opens DISPLAY math only when it is in "block position" — only
+      // whitespace before it on the line — or is immediately followed by a
+      // non-space character (`$$x$$` mid-line; `text $$x$$ text`). A `$$` that
+      // sits mid-prose and is followed by whitespace/EOL is the inline-math
+      // toolbar's fresh EMPTY marker pair — two adjacent `$` — and must NOT
+      // pair with a later `$$` in the document (that would swallow the text
+      // between them as display math). It falls through to the inline-`$`
+      // rules below, where the empty inner content keeps it literal. Block
+      // forms (the scaffold's `$$\n…`, `$$x$$`) are unaffected.
+      const blockPos = md.slice(ls, i).trim() === "" || !/\s/.test(md[i + 2] || "");
+      if (blockPos) {
+        const close = findBlockClose(md, i + 2);
+        if (close !== -1 && md.slice(i + 2, close).trim() !== "") {
+          ranges.push({ start: i, end: close + 2, src: md.slice(i + 2, close), display: true });
+          i = close + 2;
+          continue;
+        }
+        i += 2; // unclosed or blank — literal
         continue;
       }
-      i += 2; // unclosed or blank — literal
-      continue;
+      // Mid-prose `$$`: fall through — the inline-`$` branch below resolves
+      // both dollars (empty inner → literal), never a display pair.
     }
 
     if (ch === "$") {

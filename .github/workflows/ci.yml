@@ -119,7 +119,7 @@ jobs:
         run: npm run verify-undo
       - name: Save / open / close-guard UI test (24 cases)
         run: npm run verify-save
-      - name: Toolbar active-states track the caret (18 cases)
+      - name: Toolbar active-states track the caret (56 cases)
         run: npm run verify-toolbar
       - name: Rich-paste HTML→Markdown (18 cases)
         run: npm run verify-paste
@@ -143,7 +143,7 @@ jobs:
         run: npm run verify-mermaidstyle
       - name: Mermaid dark-theme gradient-outline fade (12 cases)
         run: npm run verify-mermaidfade
-      - name: Caret placement after editor actions (71 cases)
+      - name: Caret placement after editor actions (92 cases)
         run: npm run verify-caret
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri

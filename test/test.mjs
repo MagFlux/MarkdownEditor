@@ -68,6 +68,9 @@ const cases = [
   "just | a | pipe\nline with | pipe",
   "",
   "plain text with no formatting",
+  "$e^{i\\pi} + 1 = 0$",
+  "costs $5 and $10 total",
+  "$$\\Gamma(z) = \\int_0^\\infty t^{z-1}e^{-t}dt$$",
 ];
 
 let fails = 0;
@@ -133,6 +136,17 @@ mok("\\$ escape stays prose", !katexed(renderMarkdown("\\$5 is money")) && conta
 mok("unclosed $$ stays prose", !katexed(renderMarkdown("$$x^2 end")) && containsMath("$$x^2 end") === false);
 // Blank-fence guard: the toolbar's fresh $$\n\n$$ scaffold shows its markers.
 mok("blank $$ block stays literal", !katexed(renderMarkdown("$$\n\n$$")) && containsMath("$$\n\n$$") === false);
+// Block-position rule: a mid-prose `$$` followed by whitespace (the inline
+// math button's fresh EMPTY marker pair) must not pair with a later `$$`.
+mok("mid-line $$x$$ is display (non-space follower)", /katex-display/.test(renderMarkdown("word $$x^2$$ end")));
+mok("stray mid-prose $$ does not pair with a later block", (() => {
+  const h = renderMarkdown("paid $$ today\n\n$$\nE=mc^2\n$$");
+  return h.includes("paid $$ today") && /katex-display/.test(h);
+})());
+mok("stray $$ at EOL does not pair with a later block", (() => {
+  const h = renderMarkdown("typed $$\nmore prose\n\n$$\nE=mc^2\n$$");
+  return h.includes("typed $$") && /katex-display/.test(h);
+})());
 // Invalid LaTeX renders INLINE IN RED (throwOnError:false) — katex 0.18 emits
 // the red source with color:#cc0000 (katex-error class only on hard failures).
 mok("invalid latex renders in red", /#cc0000|katex-error/.test(renderMarkdown("$$\\badcmd{x}$$")));
