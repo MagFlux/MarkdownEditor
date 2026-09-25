@@ -35,7 +35,10 @@ try {
 
 const app = createApp(document.getElementById("app"));
 
-// Initial sample content (only on first run / an empty document)
+// Initial sample content (only on first run / an empty document).
+// Showcases every headline feature the app ships, including the recent
+// additions — the interactive task list, find & replace, and code
+// highlighting — so a first-run user meets them in the preview itself.
 const sample = [
   "# Welcome to Markdown Editor",
   "",
@@ -45,10 +48,30 @@ const sample = [
   "",
   "- Live **bold**, *italic*, ~~strikethrough~~, `inline code`, and [links](https://example.com)",
   "- The `**markers**` stay dimmed in the editor, so this stays a plain `.md` file",
+  "- **Find & Replace** — `Ctrl+F` searches, `Ctrl+H` replaces (with live match counts, case and regex modes)",
+  "- **Task lists** — the checkboxes below are LIVE in the preview; click one and the source flips",
+  "- **Code highlighting** — fences with a language render in color, in the preview and in exports",
   "- **Rich paste** — paste HTML from Excel / Word (tables, bold spans) and it converts to Markdown in one undoable step",
+  "- **Recent files** — the hamburger menu remembers the last files you open or save",
   "- **Diagrams** — any ` ```mermaid ` fence renders live, here and in your PDF/HTML export",
   "- **Multi-tab** — **Ctrl+click** anywhere for a new tab; open/save real files on Tauri",
-  "- **Export as PDF or HTML** from the hamburger menu — the preview you see is the file you get",
+  "- **Export** from the hamburger menu (Export… → As PDF / As HTML) — the preview you see is the file you get",
+  "",
+  "## Your first tasks",
+  "",
+  "- [x] Open the editor — nice work",
+  "- [ ] Click THIS checkbox in the preview: the source flips to `[x]` (and `Ctrl+Z` flips it back)",
+  "- [ ] Press **Ctrl+F** and search for *highlight* — watch the live match counter",
+  "- [ ] Press **Ctrl+H** and replace a word — one undo step reverts the whole batch",
+  "- [ ] Open a real `.md` file and find it again under **hamburger → Recent files**",
+  "",
+  "## Code, highlighted",
+  "",
+  "```js",
+  "// Fences with a language get syntax colors — here and in the PDF/HTML export.",
+  "const greet = (name) => `Hello, ${name}!`;",
+  "console.log(greet(\"world\")); // → Hello, world!",
+  "```",
   "",
   "## Mermaid, in one fence",
   "",
@@ -78,6 +101,8 @@ const sample = [
   "| Key | Action |",
   "| --- | --- |",
   "| **Ctrl+B / I / U / K** | Bold, italic, underline, link |",
+  "| **Ctrl+F / Ctrl+H** | Find / find & replace (Enter = next, Esc = close) |",
+  "| **Ctrl+Arrow** | Word-wise caret move (formatted spans count as one word) |",
   "| **Ctrl+Z / Ctrl+Y** | Undo / redo |",
   "| **Ctrl+S** | Save (native on Tauri; download in browser) |",
   "| **Ctrl+click** | New tab |",

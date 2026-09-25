@@ -145,6 +145,14 @@ jobs:
         run: npm run verify-mermaidfade
       - name: Caret placement after editor actions (92 cases)
         run: npm run verify-caret
+      - name: Find & Replace bar (34 cases)
+        run: npm run verify-find
+      - name: GFM task lists (12 cases)
+        run: npm run verify-tasks
+      - name: Recent files menu (12 cases)
+        run: npm run verify-recent
+      - name: Fenced-code highlighting (7 cases)
+        run: npm run verify-codecolor
       - name: Native Tauri IPC path (43 cases)
         run: npm run verify-tauri
 

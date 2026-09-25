@@ -12,7 +12,9 @@ import html2canvas from "html2canvas";
 import { renderMermaidInNode, renderMermaidInHtml } from "./mermaid.js";
 import { renderMarkdown, containsMath, katexExportCss } from "./math.js";
 
-const EXPORT_PREVIEW_CSS = `
+/* Exported so the Node test chain (test/test.mjs) can pin that the standalone
+   HTML export ships the hljs token palette. */
+export const EXPORT_PREVIEW_CSS = `
 body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px;
   line-height:1.65;color:#1a1d21;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#fff}
 .preview h1{font-size:30px;line-height:1.25;margin:.2em 0 .5em;font-weight:700}
@@ -37,6 +39,23 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
 .preview .mermaid-diagram{margin:.8em 0;text-align:center}
 .preview .mermaid-diagram svg{max-width:100%;height:auto}
 .preview .mermaid-diagram-err{background:#fdecec;border-left:3px solid #d73a49;padding:8px 14px;border-radius:6px;font-size:.9em;color:#b02a37;margin:.6em 0}
+/* Fenced-code highlighting tokens (fixed LIGHT palette — the exported file is
+   always a white-background document; the PDF rasterizes the live DOM colors).
+   Must stay in lockstep with the hljs token rules in style.css. */
+.preview pre .hljs-comment,.preview pre .hljs-meta{color:#8a9094;font-style:italic}
+.preview pre .hljs-keyword,.preview pre .hljs-selector-tag,.preview pre .hljs-doctag{color:#b5446c}
+.preview pre .hljs-string,.preview pre .hljs-regexp{color:#2e7d32}
+.preview pre .hljs-number,.preview pre .hljs-literal{color:#b35900}
+.preview pre .hljs-title,.preview pre .hljs-function{color:#2f6feb}
+.preview pre .hljs-built_in,.preview pre .hljs-type,.preview pre .hljs-class,
+.preview pre .hljs-attr,.preview pre .hljs-attribute,.preview pre .hljs-name,
+.preview pre .hljs-symbol,.preview pre .hljs-selector-class,.preview pre .hljs-section{color:#8250df}
+.preview pre .hljs-variable,.preview pre .hljs-params{color:#6a5a2e}
+.preview pre .hljs-punctuation,.preview pre .hljs-operator{color:#5a5f66}
+.preview pre .hljs-addition{color:#116329;background:rgba(46,125,50,.12)}
+.preview pre .hljs-deletion{color:#82071e;background:rgba(130,7,30,.10)}
+.preview pre .hljs-emphasis{font-style:italic}
+.preview pre .hljs-strong{font-weight:700}
 `.trim();
 
 /**

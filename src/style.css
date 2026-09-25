@@ -133,6 +133,18 @@ body {
    (past or future) must stay 16px — an unconstrained viewBox SVG defaults to
    300x150-ish on Chromium/WebView2 and blew the menu up huge on Windows. */
 .menu-item > svg { width: 16px; height: 16px; flex: 0 0 auto; display: block; }
+/* Recent files / Export hover submenus: each opens to the RIGHT of its
+   toggle row (positioned outside the dropdown's flow, so the dropdown's
+   shrink-to-fit width is unaffected). The toggle shows a ▸ arrow. Hidden
+   until hovered/clicked; a 250ms close grace period lives in the JS. */
+.submenu-wrap { position: relative; display: block; }
+.submenu { position: absolute; top: -5px; left: calc(100% + 2px); width: max-content;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 5px; z-index: 51; display: none; }
+.submenu.open { display: block; }
+.menu-item .mi-arrow { color: var(--fg-dim); font-size: 9px; margin-left: 6px; flex: 0 0 auto; }
+.menu-recent-item .mi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 260px; }
 
 /* ===== Tab bar ===== */
 /* Explicitly stack the tab bar ABOVE the editor's textarea: .input is z-index 2
@@ -226,6 +238,10 @@ body {
 .editor .cl .mark { color: var(--code-fg); }
 .editor .hr { color: var(--fg-dim); letter-spacing: .12em; user-select: none; }
 .editor .bmark { color: var(--fg-dim); }
+/* GFM task-list checkbox markers (`- [ ] …` / `- [x] …`): accent-colored so
+   they read as interactive even before the preview's live checkboxes — the
+   preview shows a real checkbox for the same construct (src/tasks.js). */
+.editor .task { color: var(--accent); }
 /* table rows: faint band; header slightly stronger */
 .editor .th { background: rgba(0,0,0,.05); }
 [data-theme="dark"] .editor .th { background: rgba(255,255,255,.05); }
@@ -251,11 +267,47 @@ body {
 .preview hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .preview ul, .preview ol { padding-left: 1.6em; margin: .5em 0; }
 .preview li { margin: .15em 0; }
+/* Live task-list checkboxes (enhancePreviewTasks re-enables marked's inert
+   ones and stamps data-task; a delegated click flips the source). */
+.preview input[type="checkbox"] { vertical-align: middle; margin-right: 4px; cursor: pointer; }
+.preview input[type="checkbox"][disabled] { cursor: default; }
 .preview img { max-width: 100%; border-radius: 6px; }
 .preview .empty { color: var(--fg-dim); }
 .preview .mermaid-diagram { margin: .8em 0; text-align: center; }
 .preview .mermaid-diagram svg { max-width: 100%; height: auto; }
 .preview .mermaid-diagram-err { background: #fdecec; border-left: 3px solid #d73a49; padding: 8px 14px; border-radius: 6px; font-size: .9em; color: #b02a37; margin: .6em 0; }
+
+/* ===== Fenced-code syntax highlighting (src/codecolor.js via highlight.js) =====
+   Token classes hljs emits inside `.preview pre code`. Unlisted classes
+   inherit the code color, so a future grammar never renders unstyled-black.
+   Light + dark palettes are per-theme (the preview lives in the app); the
+   standalone HTML export carries its own fixed light palette instead. */
+.preview pre .hljs-comment, .preview pre .hljs-meta { color: #8a9094; font-style: italic; }
+.preview pre .hljs-keyword, .preview pre .hljs-selector-tag, .preview pre .hljs-doctag { color: #b5446c; }
+.preview pre .hljs-string, .preview pre .hljs-regexp { color: #2e7d32; }
+.preview pre .hljs-number, .preview pre .hljs-literal { color: #b35900; }
+.preview pre .hljs-title, .preview pre .hljs-function { color: #2f6feb; }
+.preview pre .hljs-built_in, .preview pre .hljs-type, .preview pre .hljs-class,
+.preview pre .hljs-attr, .preview pre .hljs-attribute, .preview pre .hljs-name,
+.preview pre .hljs-symbol, .preview pre .hljs-selector-class, .preview pre .hljs-section { color: #8250df; }
+.preview pre .hljs-variable, .preview pre .hljs-params { color: #6a5a2e; }
+.preview pre .hljs-punctuation, .preview pre .hljs-operator { color: #5a5f66; }
+.preview pre .hljs-addition { color: #116329; background: rgba(46,125,50,.12); }
+.preview pre .hljs-deletion { color: #82071e; background: rgba(130,7,30,.10); }
+.preview pre .hljs-emphasis { font-style: italic; }
+.preview pre .hljs-strong { font-weight: 700; }
+[data-theme="dark"] .preview pre .hljs-comment, [data-theme="dark"] .preview pre .hljs-meta { color: #8b949e; }
+[data-theme="dark"] .preview pre .hljs-keyword, [data-theme="dark"] .preview pre .hljs-selector-tag, [data-theme="dark"] .preview pre .hljs-doctag { color: #ff7b9c; }
+[data-theme="dark"] .preview pre .hljs-string, [data-theme="dark"] .preview pre .hljs-regexp { color: #7ee787; }
+[data-theme="dark"] .preview pre .hljs-number, [data-theme="dark"] .preview pre .hljs-literal { color: #ffa657; }
+[data-theme="dark"] .preview pre .hljs-title, [data-theme="dark"] .preview pre .hljs-function { color: #79c0ff; }
+[data-theme="dark"] .preview pre .hljs-built_in, [data-theme="dark"] .preview pre .hljs-type, [data-theme="dark"] .preview pre .hljs-class,
+[data-theme="dark"] .preview pre .hljs-attr, [data-theme="dark"] .preview pre .hljs-attribute, [data-theme="dark"] .preview pre .hljs-name,
+[data-theme="dark"] .preview pre .hljs-symbol, [data-theme="dark"] .preview pre .hljs-selector-class, [data-theme="dark"] .preview pre .hljs-section { color: #d2a8ff; }
+[data-theme="dark"] .preview pre .hljs-variable, [data-theme="dark"] .preview pre .hljs-params { color: #e3b341; }
+[data-theme="dark"] .preview pre .hljs-punctuation, [data-theme="dark"] .preview pre .hljs-operator { color: #9ea7ad; }
+[data-theme="dark"] .preview pre .hljs-addition { color: #7ee787; background: rgba(46,160,67,.15); }
+[data-theme="dark"] .preview pre .hljs-deletion { color: #ff8182; background: rgba(248,81,73,.15); }
 .preview table { border-collapse: collapse; margin: .7em 0; width: 100%; max-width: 100%; }
 .preview th, .preview td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
 .preview th { background: var(--bg-panel); font-weight: 600; }
@@ -267,6 +319,48 @@ body {
 .statusbar .sp { flex: 1 1 auto; }
 .statusbar .lc, .statusbar .wc { white-space: nowrap; }
 .statusbar .dirty { color: var(--accent); }
+
+/* ===== Find & Replace bar (floating, non-modal) ===== */
+/* Lives inside .workspace (position:relative), top-right so it floats over
+   either pane in any view mode. display:flex only when .open — a plain
+   display:none bar costs nothing while closed. */
+.findbar { position: absolute; top: 10px; right: 14px; z-index: 45; display: none;
+  flex-direction: column; gap: 6px; width: max-content;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 8px; }
+.findbar.open { display: flex; }
+.find-row { display: flex; align-items: center; gap: 4px; }
+.finput { width: 210px; border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+  border-radius: 6px; padding: 5px 8px; font-size: 13px; line-height: 1.2; outline: none; }
+.finput:focus { border-color: var(--accent); }
+/* Invalid regex: red border on the find input + the count text carries the
+   reason (an in-bar error, never a thrown exception or a modal). */
+.finput.err { border-color: #d73a49; }
+.finput-re { width: 160px; }
+.fcount { font-size: 11.5px; color: var(--fg-dim); min-width: 52px; text-align: center; white-space: nowrap; }
+.fbtn { appearance: none; border: 1px solid transparent; background: transparent; color: var(--fg);
+  border-radius: 6px; padding: 4px 7px; cursor: pointer; font-size: 12px; line-height: 1.2;
+  min-width: 24px; min-height: 24px; display: inline-flex; align-items: center; justify-content: center; }
+.fbtn:hover { background: var(--bg-hover); }
+.fbtn.fopt { font-size: 11px; }
+.fbtn.fopt.active { background: var(--bg-active); border-color: var(--accent); color: var(--accent); }
+
+/* ===== Synthetic find caret + current-match highlight =====
+   While the find bar holds focus (so Enter keeps navigating) the textarea is
+   UNFOCUSED: it paints no caret glyph AND (on WebKitGTK) no ::selection wash,
+   so find.js paints BOTH on the overlay instead — .find-match (one rect per
+   line fragment of the current match, find.js positions them) and the 2px
+   .find-caret at the match end. Both hide when the editor itself is focused
+   (the real selection/caret take over). The highlight uses the SAME
+   translucent color as .input::selection so the two never disagree. */
+.find-match-wrap { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.find-match { position: absolute; background: rgba(47, 111, 235, .28); border-radius: 2px; pointer-events: none; }
+[data-theme="dark"] .find-match { background: rgba(75, 139, 255, .38); }
+.find-caret { position: absolute; width: 2px; border-radius: 1px; background: var(--fg);
+  pointer-events: none; z-index: 2; user-select: none;
+  animation: find-caret-blink 1.06s steps(1, end) infinite; }
+@keyframes find-caret-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .find-caret { animation: none; } }
 /* link / action popover */
 .pop { position: absolute; z-index: 30; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: var(--shadow); padding: 6px; display: flex; gap: 4px; align-items: center; }

@@ -49,6 +49,18 @@ playwright    — browser automation (test-only)  Apache-2.0   (Copyright 2020-2
   includes software developed at Microsoft (the "Contribution"),
   unless otherwise stated.
 
+BSD-3-Clause component
+----------------------
+highlight.js — syntax highlighter (js)         BSD-3-Clause   (Copyright 2006-2026 Ivan Sagalaev / the highlight.js authors)
+
+  Copyright (c) 2006-2026 Ivan Sagalaev and highlight.js contributors.
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the three BSD clauses are
+  met (source notice, binary notice, and non-endorsement). The full
+  license text ships with the package. Only the `core` build plus the
+  explicitly imported language grammars are bundled (see
+  `src/codecolor.js`); the full all-languages build is not used.
+
 Copyleft (user-approved, AGPL-compatible)
 -----------------------------------------
 This project is **AGPL-3.0-licensed** and, per its own licensing policy,

@@ -152,7 +152,7 @@ await scenario("M: menu open/close/outside-click/Escape", async ({ page, ok, wai
 
   ok("M0 menu button present in the toolbar", (await menuBtn.count()) === 1);
   ok("M0b dropdown present but closed by default", (await dropdown.count()) === 1 && (await openClass()) === false);
-  ok("M0c menu items visible in DOM", (await page.locator(".menu-item").count()) === 2);
+  ok("M0c menu items visible in DOM", (await page.locator(".menu-item").count()) === 4); // recent toggle + export toggle + pdf + html (the recent submenu renders on first open)
 
   await menuBtn.click();
   await wait(60);
@@ -216,7 +216,10 @@ await scenario("H1: HTML export saves via picker → write_text_file", async ({ 
   const menuBtn = page.locator('[data-action="menu"]');
   await menuBtn.click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as HTML" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(120);
+
+  await page.locator(".menu-item", { hasText: "As HTML" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 });
   ok("H1a in-app Save-As picker appeared after choosing HTML export", true);
   // Default filename carries over from the tab name + .html suffix.
@@ -250,7 +253,10 @@ await scenario("H2: HTML export cancelled → no write", async ({ page, st, ok, 
   });
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as HTML" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(120);
+
+  await page.locator(".menu-item", { hasText: "As HTML" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 });
   const before = (await st()).textWrites.length;
   await page.locator(".savedlg button:not(.primary)").filter({ hasText: /cancel/i }).first().click();
@@ -272,7 +278,10 @@ await scenario("P: PDF export saves via picker → write_file", async ({ page, s
   });
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as PDF" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(120);
+
+  await page.locator(".menu-item", { hasText: "As PDF" }).click();
   // PDF export is async (canvas capture + PDF generation) before the picker
   // resolves. Wait for the picker to appear (or an error modal, if it failed).
   await page.waitForSelector(".picker-name, .savedlg-msg", { timeout: 5000 }).catch(() => {});
@@ -313,7 +322,10 @@ await scenario("P2: PDF export cancelled → no write", async ({ page, st, ok, w
   });
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as PDF" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(120);
+
+  await page.locator(".menu-item", { hasText: "As PDF" }).click();
   await page.waitForSelector(".picker-name, .savedlg-msg", { timeout: 5000 }).catch(() => {});
   if (!(await page.$(".picker-name"))) {
     const err = await page.locator(".savedlg-msg").first().textContent().catch(() => "(no error modal)");
@@ -347,7 +359,10 @@ await scenario("L: menu items only fire export, not format actions", async ({ pa
   });
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as HTML" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(120);
+
+  await page.locator(".menu-item", { hasText: "As HTML" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 }).catch(() => {});
   // Cancel — we only care that no format action fired while the picker was up.
   await page.locator(".savedlg button:not(.primary)").filter({ hasText: /cancel/i }).first().click().catch(() => {});

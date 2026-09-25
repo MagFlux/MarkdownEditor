@@ -52,6 +52,8 @@ import { createPathPicker } from "./picker.js";
 import { createEditingHandlers } from "./editing.js";
 import { createLinkHandlers } from "./links.js";
 import { createHistoryHandlers } from "./history.js";
+import { createFindHandlers } from "./find.js";
+import { enhancePreviewTasks, scanTaskItems, toggleTaskAt } from "./tasks.js";
 
 /* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
    `highlightToHtml` from here; the app itself calls it from the closure). */
@@ -59,6 +61,7 @@ export { highlightToHtml, computeBlocks, lineToHtml, isTableSep, esc } from "./r
 export { renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
 export { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 export { mdCellText, mdTableFromHtml, mdStyleOf, mdInlineMd, mdFromHtml } from "./paste.js";
+export { scanTaskItems, enhancePreviewTasks, toggleTaskAt } from "./tasks.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -105,8 +108,17 @@ export function createApp(root) {
       <span class="menu-wrap">
         <button class="btn" data-action="menu" data-menu-open="false" title="More actions" aria-haspopup="true" aria-expanded="false">${icons.menu}</button>
         <div class="menu-dropdown" role="menu" aria-label="More actions">
-          <button class="menu-item" data-menu="pdf" role="menuitem"><span class="mi-label">Export as PDF&hellip;</span></button>
-          <button class="menu-item" data-menu="html" role="menuitem"><span class="mi-label">Export as HTML&hellip;</span></button>
+          <div class="submenu-wrap" data-subwrap="recent">
+            <button class="menu-item" data-submenu="recent" role="menuitem" aria-haspopup="true" aria-expanded="false"><span class="mi-label">Recent files&hellip;</span><span class="mi-arrow" aria-hidden="true">&#9654;</span></button>
+            <div class="submenu" data-sub="recent" role="menu" aria-label="Recent files"></div>
+          </div>
+          <div class="submenu-wrap" data-subwrap="export">
+            <button class="menu-item" data-submenu="export" role="menuitem" aria-haspopup="true" aria-expanded="false"><span class="mi-label">Export&hellip;</span><span class="mi-arrow" aria-hidden="true">&#9654;</span></button>
+            <div class="submenu" data-sub="export" role="menu" aria-label="Export">
+              <button class="menu-item" data-menu="pdf" role="menuitem"><span class="mi-label">As PDF&hellip;</span></button>
+              <button class="menu-item" data-menu="html" role="menuitem"><span class="mi-label">As HTML&hellip;</span></button>
+            </div>
+          </div>
         </div>
       </span>
       <span class="sep"></span>
@@ -291,7 +303,13 @@ export function createApp(root) {
   function syncDom(d) {
     const text = d.input.value;
     d.editor.innerHTML = highlightToHtml(text);
-    d.preview.innerHTML = text.trim() ? renderMarkdown(text) : `<div class="empty">Nothing to preview yet&hellip;</div>`;
+    // Task-list enhancement is PREVIEW-ONLY (see src/tasks.js): re-enables the
+    // checkboxes marked rendered inert and stamps data-task ordinals, but ONLY
+    // when the ordinal→source map agrees — so exports (which call
+    // renderMarkdown directly) keep their inert static checkboxes.
+    d.preview.innerHTML = text.trim()
+      ? enhancePreviewTasks(renderMarkdown(text), text)
+      : `<div class="empty">Nothing to preview yet&hellip;</div>`;
     if (text.trim()) {
       restoreMermaid(d.preview); // sync: put already-rendered SVGs back (no flicker)
       scheduleMermaidRender(d);  // async: render any NEW/changed diagram (gated by key)
@@ -386,6 +404,22 @@ export function createApp(root) {
       const text = doc.input.value;
       const to = text.slice(0, a) + md + text.slice(b);
       commit("paste", to, a + md.length, a + md.length);
+    });
+    // GFM task lists: a delegated click on a re-enabled preview checkbox
+    // (data-task stamped by enhancePreviewTasks in syncDom) flips the
+    // checkbox's state char in the SOURCE and commits ONE undo-able edit.
+    // The listener lives on the container so syncDom's innerHTML rewrites
+    // (every keystroke) never detach it. The checkbox's own post-click
+    // `checked` state is the user's intent; the re-render rebuilds the box
+    // from the source, so the source stays the single source of truth.
+    doc.previewScroll.addEventListener("click", (ev) => {
+      const box = ev.target.closest && ev.target.closest('input[type="checkbox"][data-task]');
+      if (!box) return;
+      const ordinal = parseInt(box.getAttribute("data-task"), 10);
+      if (!Number.isInteger(ordinal) || ordinal < 0) return;
+      const res = toggleTaskAt(doc.input.value, ordinal, box.checked);
+      if (!res) return; // unmappable → enhance never stamped it; do nothing
+      commit("toggle task", res.text, res.caret, res.caret);
     });
     doc.tab.querySelector(".tname").addEventListener("click", () => activate(doc));
     // Middle-click (button 1) closes the tab, like most editors/browsers.
@@ -716,6 +750,10 @@ export function createApp(root) {
     updateStatus(doc);
     updateActiveStates();
     setUndoRedoState();
+    // Find & Replace keeps its live match count honest: refresh() is the one
+    // funnel every text mutation passes through (typing, commit, undo/redo,
+    // tab switch), so the bar recomputes here. No-op while the bar is closed.
+    find.noteTextChanged();
   }
   /** scheduleRefresh — coalesce refresh() calls into one per animation frame. */
   function scheduleRefresh() {
@@ -812,6 +850,18 @@ export function createApp(root) {
     getActiveDoc: () => activeTab,
     isTauri,
     openUrl: (url, target) => window.open(url, target),
+  });
+
+  /* ---- Find & Replace (floating non-modal bar; see src/find.js) ----
+     The bar owns its DOM inside `workspace`; commit() keeps every replacement
+     a single undo step. echoMs is the same value-based echo deadline the
+     scroll-sync machinery uses, so the bar's programmatic reveal-scroll is
+     recognized as an echo and never ratchets the preview pane. */
+  const find = createFindHandlers({
+    getActiveDoc: () => activeTab,
+    commit,
+    workspace,
+    echoMs: ECHO_MS,
   });
 
   /**
@@ -1018,6 +1068,7 @@ export function createApp(root) {
           if (!(await confirmOverwriteIfNeeded(d.path))) return false;
           await tauriWriteTextFile(d.path, t);
           d.dirty = false; syncDom(d); updateStatus(d); saveSession();
+          rememberRecent(d.path, d.name); // successful save → recent-files entry
           return true;
         }
         // No location known: ask where to store it, then write.
@@ -1035,6 +1086,7 @@ export function createApp(root) {
         await tauriWriteTextFile(p, t);
         d.name = name || d.name; d.path = p; d.dirty = false;
         syncDom(d); updateStatus(d); saveSession();
+        rememberRecent(p, d.name); // successful Save-As → recent-files entry
         return true;
       } catch (e) {
         const msg = "Tauri save failed: " + ((e && (e.message || e)) || "unknown error");
@@ -1068,6 +1120,7 @@ export function createApp(root) {
   function openFile({ name, text, path }) {
     const doc = makeTab(name, text);
     doc.path = path || null;
+    if (doc.path) rememberRecent(doc.path, doc.name); // native open / drag-drop
     openAtTop(doc);
     activate(doc);
     saveSession();
@@ -1118,6 +1171,121 @@ export function createApp(root) {
     fi.click();
   }
 
+  /* ---- recent files (hamburger menu section) ----
+     Only native opens/saves produce a path, so entries are recorded on the
+     shared success points: openFile() (covers the Open dialog AND drag-drop —
+     both call it with a path; session restore uses makeTab directly and does
+     NOT record) and save()'s two native success paths. The list lives in
+     localStorage ("me.recentPaths") so it survives restarts in BOTH the Tauri
+     app and the browser fallback; every access is guarded because storage can
+     be unavailable (cleared, file:// restrictions). */
+  const RECENT_KEY = "me.recentPaths";
+  const RECENT_MAX = 5; // the Recent submenu shows the last 5 files
+
+  /** basenameOf — the file-name tail of a native path (either separator). */
+  function basenameOf(path) {
+    return String(path).split(/[\\/]/).pop() || String(path);
+  }
+
+  /**
+   * loadRecent — the persisted recent-file entries, oldest-last, validated.
+   * @returns {Array<{path: string, name: string, at: number}>} Entries (empty on any corruption).
+   */
+  function loadRecent() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((e) => e && typeof e.path === "string" && e.path)
+        .map((e) => ({ path: e.path, name: typeof e.name === "string" && e.name ? e.name : basenameOf(e.path), at: +e.at || 0 }));
+    } catch { return []; }
+  }
+
+  /**
+   * rememberRecent — record (or move-to-top) a successfully opened/saved file.
+   * @param {string} path — the native file path.
+   * @param {string} [name] — display name; defaults to the path's basename.
+   */
+  function rememberRecent(path, name) {
+    if (!path) return;
+    try {
+      const list = loadRecent().filter((e) => e.path !== path);
+      list.unshift({ path, name: name || basenameOf(path), at: Date.now() });
+      while (list.length > RECENT_MAX) list.pop();
+      localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+    } catch { /* no storage — recents just won't persist */ }
+  }
+
+  /**
+   * renderRecentMenu — rebuild the "Recent files…" hover submenu.
+   *
+   * Shows the last RECENT_MAX entries; when the list is empty it shows a
+   * single disabled "(No recent files)" placeholder so the hover submenu is
+   * never an empty box. Items carry `data-recent-idx`; the toolbar click
+   * handler routes them to `openRecent`.
+   */
+  function renderRecentMenu() {
+    const box = menuDropdown.querySelector('.submenu[data-sub="recent"]');
+    if (!box) return;
+    const list = loadRecent();
+    box.innerHTML = "";
+    if (!list.length) {
+      const none = document.createElement("button");
+      none.type = "button";
+      none.className = "menu-item";
+      none.disabled = true;
+      const label = document.createElement("span");
+      label.className = "mi-label";
+      label.textContent = "(No recent files)";
+      none.appendChild(label);
+      box.appendChild(none);
+      return;
+    }
+    list.forEach((entry, i) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "menu-item menu-recent-item";
+      item.setAttribute("role", "menuitem");
+      item.setAttribute("data-recent-idx", String(i));
+      const label = document.createElement("span");
+      label.className = "mi-label";
+      label.textContent = entry.name || basenameOf(entry.path);
+      label.title = entry.path; // full path on hover
+      item.appendChild(label);
+      box.appendChild(item);
+    });
+  }
+
+  /**
+   * openRecent — open a recent-files entry in a NEW tab (invariant 6).
+   * Re-reads the file from disk; a failed read (file moved/deleted) shows the
+   * standard "Open failed" modal AND drops the stale entry from the list.
+   * @param {number} idx — index into the current recent list.
+   * @returns {Promise<void>}
+   */
+  async function openRecent(idx) {
+    const list = loadRecent();
+    const entry = list[idx];
+    if (!entry || !entry.path) return;
+    if (!isTauri()) return; // browser fallback: recents exist but cannot be re-read
+    try {
+      const txt = await tauriReadTextFile(entry.path);
+      openFile({ name: entry.name || basenameOf(entry.path), text: txt, path: entry.path });
+    } catch (e) {
+      await messageModal({
+        title: "Open failed",
+        message: "Could not open “" + entry.path + "”: " + ((e && (e.message || e)) || "unknown error"),
+        buttons: [{ label: "OK", kind: "primary", value: "ok" }],
+        kind: "error",
+      });
+      // The file is gone from disk — drop the stale entry so the menu stops
+      // offering it.
+      try {
+        const rest = loadRecent().filter((e2) => e2.path !== entry.path);
+        localStorage.setItem(RECENT_KEY, JSON.stringify(rest));
+      } catch { /* storage unavailable — nothing to drop */ }
+    }
+  }
+
   /* ---- drag & drop (markdown files) ---- */
   const drag = { over: false, depth: 0 };
   workspace.addEventListener("dragenter", (ev) => {
@@ -1166,7 +1334,9 @@ export function createApp(root) {
    * element holds focus — on WebKitGTK focus can slip off the overlay textarea.
    * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), bold, italic,
    * underline, save (Ctrl+S), link, open (Ctrl+O), close tab (Ctrl+W), new
-    * tab (Ctrl+T). Ctrl/Shift+Arrow word-wise caret moves are NOT bound here —
+   * tab (Ctrl+T), and Find & Replace (Ctrl+F / Ctrl+H — the floating bar in
+   * src/find.js, standing down while a centered modal is open).
+   * Ctrl/Shift+Arrow word-wise caret moves are NOT bound here —
     * they live in the textarea-local onKeyDown, where wordJump can make them
     * Markdown-aware (a whole formatted span counts as one word) and fall
     * through to the native move when no span is involved.
@@ -1195,6 +1365,17 @@ export function createApp(root) {
     if (k === "o" && !ev.shiftKey) { ev.preventDefault(); await open(); return; }
     if (k === "w" && !ev.shiftKey) { ev.preventDefault(); if (activeTab) await closeTab(activeTab); return; }
     if (k === "t" && !ev.shiftKey) { ev.preventDefault(); newTab(undefined, ""); return; }
+
+    // Find & Replace — Ctrl/Meta+F opens the bar with the find field focused,
+    // Ctrl/Meta+H with the replace field focused (Chrome-editor convention).
+    // Stands down while a centered modal is open: the modal owns the keyboard,
+    // and its Escape/close flow must not have the bar popping over it.
+    if ((k === "f" || k === "h") && !ev.shiftKey) {
+      ev.preventDefault();
+      if (document.querySelector(".savedlg-backdrop")) return;
+      find.open({ focusReplace: k === "h" });
+      return;
+    }
   }
   window.addEventListener("keydown", onGlobalKeyDown);
 
@@ -1520,6 +1701,54 @@ export function createApp(root) {
     menuDropdown.classList.toggle("open", open);
     menuBtn.setAttribute("data-menu-open", String(open));
     menuBtn.setAttribute("aria-expanded", String(open));
+    // The Recent submenu is rebuilt on every OPEN (the underlying list
+    // changes between opens via save/open); closing the menu also closes any
+    // open submenu (the submenu is a child of the dropdown, so a hidden
+    // dropdown hides it anyway — but its aria-expanded state must reset).
+    if (open) renderRecentMenu();
+    else closeSubmenus();
+  }
+
+  /**
+   * closeSubmenus — close both hover submenus (Recent files / Export) and
+   * sync their toggle buttons' aria-expanded state.
+   */
+  function closeSubmenus() {
+    setSubmenuOpen("recent", false);
+    setSubmenuOpen("export", false);
+  }
+
+  /**
+   * setSubmenuOpen — open/close one hover submenu (radio behavior is
+   * enforced by the callers: opening one closes the other).
+   * @param {string} name — "recent" | "export".
+   * @param {boolean} open — true to reveal the submenu.
+   */
+  function setSubmenuOpen(name, open) {
+    const wrap = menuDropdown.querySelector(`[data-subwrap="${name}"]`);
+    if (!wrap) return;
+    wrap.querySelector(".submenu").classList.toggle("open", open);
+    wrap.querySelector("[data-submenu]").setAttribute("aria-expanded", String(open));
+    if (name === "recent" && open) renderRecentMenu(); // fresh entries on every reveal
+  }
+
+  // Hover wiring: mouseenter on a submenu wrapper opens it (closing the
+  // other); mouseleave starts a short GRACE-PERIOD timer before closing —
+  // the submenu is a visual child positioned outside the toggle's box, so
+  // without the grace period the diagonal move toggle→submenu would close
+  // it mid-travel. Moving INTO the submenu (a DOM child) cancels the timer.
+  const submenuTimers = {};
+  for (const wrap of menuDropdown.querySelectorAll(".submenu-wrap")) {
+    const name = wrap.getAttribute("data-subwrap");
+    wrap.addEventListener("mouseenter", () => {
+      clearTimeout(submenuTimers[name]);
+      setSubmenuOpen(name === "recent" ? "export" : "recent", false);
+      setSubmenuOpen(name, true);
+    });
+    wrap.addEventListener("mouseleave", () => {
+      clearTimeout(submenuTimers[name]);
+      submenuTimers[name] = setTimeout(() => setSubmenuOpen(name, false), 250);
+    });
   }
   // Close the menu on any click outside it (the item clicks below still fire
   // first, in the same event round, because this listener is on `document`).
@@ -1532,17 +1761,64 @@ export function createApp(root) {
     if (ev.target.closest(".menu-wrap")) return;
     setMenuOpen(false);
   });
-  // Keyboard: Escape closes the open menu.
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && menuDropdown.classList.contains("open")) setMenuOpen(false);
+  // Keyboard: Escape has layered duties. (1) If the hamburger menu is open,
+  // Esc closes the menu (and nothing else — a second Esc is the deselect
+  // gesture below). (2) While a centered modal is open it owns Escape — but
+  // its handler (showModalBase) runs on window CAPTURE and REMOVES the
+  // backdrop synchronously, so a later listener can no longer see it. This
+  // handler therefore runs on window CAPTURE and stands down while the
+  // backdrop exists, BEFORE the modal's handler consumes the key. (3) If the
+  // Find bar is open, its own handlers close it (find.isOpen() is still true
+  // at this point — this handler is registered BEFORE the bar's listeners,
+  // so bar Escs are consumed by find.js and land here as a no-op). (4)
+  // Otherwise Esc CLEARS any selected text in the editor (the user's
+  // request: Esc with no search window open deselects — a second Esc after
+  // closing the bar). Collapse honors the selection direction (backward →
+  // start, forward/unknown → end), which is also what keeps the caret on
+  // the just-found hit when the bar was just closed.
+  window.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    if (menuDropdown.classList.contains("open")) { setMenuOpen(false); return; }
+    if (document.querySelector(".savedlg-backdrop")) return; // a modal owns Escape
+    if (find.isOpen()) return;                               // the find bar's own handlers own Escape
+    const d = activeTab;
+    if (!d) return;
+    const s = d.input.selectionStart, e = d.input.selectionEnd;
+    if (s === e) return; // nothing selected — no-op
+    ev.preventDefault();
+    const to = d.input.selectionDirection === "backward" ? s : e;
+    d.input.setSelectionRange(to, to);
+    updateActiveStates();
+    updateStatus(d);
   });
 
   toolbar.addEventListener("click", (ev) => {
     const btn = ev.target.closest("button"); if (!btn) return;
+    const recentIdx = btn.getAttribute("data-recent-idx");
+    const subId = btn.getAttribute("data-submenu");
     const menuId = btn.getAttribute("data-menu");
     const fmt = btn.getAttribute("data-fmt");
     const block = btn.getAttribute("data-block");
     const action = btn.getAttribute("data-action");
+    if (recentIdx !== null) {
+      // A Recent-files entry: close the menu and open that file in a NEW tab
+      // (openRecent → openFile → activate, which focuses the new tab itself).
+      setMenuOpen(false);
+      openRecent(+recentIdx);
+      return;
+    }
+    if (subId) {
+      // A submenu toggle ("Recent files…" / "Export…"): click TOGGLES it
+      // (hover already opens it — the click path is for keyboard/touch
+      // users), and opening one closes the other. Return BEFORE the trailing
+      // activeTab.input.focus() so the editor never steals focus back.
+      const wrap = menuDropdown.querySelector(`[data-subwrap="${subId}"]`);
+      if (!wrap) return;
+      const isOpen = wrap.querySelector(".submenu").classList.contains("open");
+      setSubmenuOpen(subId === "recent" ? "export" : "recent", false);
+      setSubmenuOpen(subId, !isOpen);
+      return;
+    }
     if (menuId) {
       setMenuOpen(false);
       if (menuId === "pdf") exportAsPdf();
@@ -1644,6 +1920,8 @@ export function createApp(root) {
     toggleFormat, toggleBlock,
     undo, redo, indentLines,
     openAtCaret,
+    find,
+    openRecent,
     mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf,
   };
 }

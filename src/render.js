@@ -233,12 +233,23 @@ export function lineToHtml(line, bc) {
     /^\s*\d+\.\s+/.test(line) ? line.match(/^\s*\d+\.\s+/) : null;
   if (mm) markerLen = mm[0].length;
   const marker = line.slice(0, markerLen);
-  const content = line.slice(markerLen);
+  let content = line.slice(markerLen);
   const isHead = ["h1", "h2", "h3", "h4"].includes(bc);
   const markerHtml = marker ? `<span class="mark">${esc(marker)}</span>` : "";
   const cell = ["th", "tsep", "td"].includes(bc);
+  // GFM task marker (`- [ ] todo`): right after the list bullet, `[ ]`/`[x]`/
+  // `[X]` followed by whitespace or EOL gets its own `.task` mark span (the
+  // preview shows a real checkbox for the same construct — see src/tasks.js).
+  // The span strips back to the literal characters, so the round-trip
+  // invariant holds; slicing it out of `content` also stops matchTok from
+  // seeing a `[` that would start a false link-token match.
+  let taskHtml = "";
+  if ((bc === "ul" || bc === "ol")) {
+    const tm = content.match(/^\[[xX ]\](?=[ \t]|$)/);
+    if (tm) { taskHtml = `<span class="mark task">${esc(tm[0])}</span>`; content = content.slice(tm[0].length); }
+  }
   const contentHtml = isHead ? `<span class="hd">${renderInline(content)}</span>` : renderInline(content, cell);
-  let inner = markerHtml + contentHtml;
+  let inner = markerHtml + taskHtml + contentHtml;
   if (isHead) inner = `<span class="${bc}">${inner}</span>`;
   if (bc === "quote") inner = `<span class="q">${inner}</span>`;
   if (cell) inner = `<span class="${bc}">${inner}</span>`;

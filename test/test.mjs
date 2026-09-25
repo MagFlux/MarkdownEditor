@@ -71,6 +71,15 @@ const cases = [
   "$e^{i\\pi} + 1 = 0$",
   "costs $5 and $10 total",
   "$$\\Gamma(z) = \\int_0^\\infty t^{z-1}e^{-t}dt$$",
+  // GFM task lists (the `.task` mark span added in render.js — see below for
+  // the styling assertion; these pin the round-trip with checkbox markers).
+  "- [ ] todo",
+  "- [x] done",
+  "1. [X] ordered",
+  "> - [ ] quoted",
+  "  - [x] nested",
+  "- [ ] **bold** and `code` in a task",
+  "- [ ]",
 ];
 
 let fails = 0;
@@ -90,6 +99,18 @@ for (const src of cases) {
     if (!html.includes(`<span class="u">${inner}</span>`)) {
       fails++;
       console.error("NO .u SPAN for", JSON.stringify(src), "->", JSON.stringify(html));
+    }
+  }
+  // Task-marker styling regression: a list line whose content starts with a
+  // GFM checkbox must render that `[ ]`/`[x]` marker in a `.task` span (the
+  // accent-colored marker the editor paints under the real preview checkbox).
+  // The bracket alone would still round-trip as escaped plain text, so only
+  // this span assertion catches the marker styling breaking.
+  if (/^[-*+]\s\[[xX ]\]/.test(src) || /^\d+\.\s\[[xX ]\]/.test(src)) {
+    const marker = src.replace(/^[-*+]\s/, "").replace(/^\d+\.\s/, "").slice(0, 3);
+    if (!html.includes(`<span class="mark task">${marker}</span>`)) {
+      fails++;
+      console.error("NO .task SPAN for", JSON.stringify(src), "->", JSON.stringify(html));
     }
   }
 }
@@ -160,5 +181,120 @@ if (mathFails === 0) {
   console.log("OK math pipeline cases");
 } else {
   console.error(`${mathFails} math case(s) FAILED`);
+  process.exit(1);
+}
+
+/* ---------------------------------------------------------------------------
+ * GFM task lists (src/tasks.js) — the ordinal→source mapping contract.
+ * The live-preview interactivity is pinned by test/verifyTasks.mjs
+ * (Playwright); these Node cases pin the mapping rules cheaply.
+ * ------------------------------------------------------------------------- */
+const tasks = await import("../src/tasks.js");
+const { scanTaskItems, enhancePreviewTasks, toggleTaskAt } = tasks;
+let taskFails = 0;
+/** tok — record a task-mapping assertion. */
+const tok = (label, cond, extra) => {
+  if (cond) console.log("ok  ", label);
+  else { taskFails++; console.error("TASK FAIL", label, extra !== undefined ? "→ " + JSON.stringify(extra) : ""); }
+};
+
+{
+  const md = "- [ ] a\n- [x] b\n1. [X] c\n> - [ ] d\n  - [x] nested\n";
+  const items = scanTaskItems(md);
+  tok("scan maps 5 task items in document order",
+      items && items.length === 5 &&
+      items[0].line === 0 && items[0].checked === false &&
+      items[1].line === 1 && items[1].checked === true &&
+      items[2].line === 2 && items[2].checked === true &&   // ordered [X]
+      items[3].line === 3 && items[3].checked === false &&  // quoted
+      items[4].line === 4 && items[4].checked === true,     // nested
+      JSON.stringify(items));
+  const html = renderMarkdown(md);
+  tok("marked renders 5 inert checkboxes", (html.match(/disabled="" type="checkbox"/g) || []).length === 5);
+  tok("renderMarkdown (export path) never stamps data-task", !html.includes("data-task"));
+  const enh = enhancePreviewTasks(html, md);
+  tok("enhance re-enables and ordinals every checkbox", (enh.match(/data-task="\d+"/g) || []).length === 5 && !enh.includes("disabled=\"\" type=\"checkbox\""));
+}
+{
+  // An item's continuation prose QUOTING the next item's raw must not steal
+  // the mapping (the line-start verification rejects mid-line matches).
+  const md = '- [ ] a\n  continued "- [ ] a" prose\n- [x] b';
+  const items = scanTaskItems(md);
+  tok("prose-mention does not steal the mapping", items && items.length === 2 && items[1].line === 2 && items[1].checked === true, JSON.stringify(items));
+}
+tok("4-space indented code is not a task", JSON.stringify(scanTaskItems("    - [ ] x\n")) === "[]", scanTaskItems("    - [ ] x\n"));
+tok("plain doc maps to [] (not null)", Array.isArray(scanTaskItems("plain text, no tasks")) && scanTaskItems("plain text, no tasks here").length === 0);
+{
+  const md = "- [ ] one\n- [ ] two";
+  const on = toggleTaskAt(md, 1, true);
+  tok("toggle ON flips the state char in place", on && on.text === "- [ ] one\n- [x] two" && on.caret === 13, JSON.stringify(on));
+  const on0 = toggleTaskAt(md, 0, true);
+  const off0 = on0 && toggleTaskAt(on0.text, 0, false);
+  tok("toggle OFF flips back ([x] → [ ])", off0 && on0.text === "- [x] one\n- [ ] two" && off0.text === md, JSON.stringify({ on0, off0 }));
+  tok("toggle returns null on an out-of-range ordinal", toggleTaskAt(md, 5, true) === null);
+}
+{
+  // Desync safety: enhancing an html against a DIFFERENT source must return
+  // the html unchanged (inert) rather than stamping wrong ordinals.
+  const htmlA = renderMarkdown("- [ ] a\n- [ ] b\n");
+  const mdB = "- [ ] x\n";
+  tok("count mismatch → html unchanged (stay inert)", enhancePreviewTasks(htmlA, mdB) === htmlA);
+}
+
+if (taskFails === 0) {
+  console.log("OK task-list cases");
+} else {
+  console.error(`${taskFails} task case(s) FAILED`);
+  process.exit(1);
+}
+
+/* ---------------------------------------------------------------------------
+ * Fenced-code highlighting (src/codecolor.js via highlight.js core).
+ * Node cases pin: hljs markup for registered languages, marked's exact
+ * byte-shape for unregistered/unknown ones, and that NO raw `<` can ever
+ * leak from a highlighted fence (hljs escapes its output). The live preview
+ * + exported-HTML behavior is pinned by test/verifyCodeColor.mjs.
+ * ------------------------------------------------------------------------- */
+const codecolor = await import("../src/codecolor.js");
+const { LANGS } = codecolor;
+let ccFails = 0;
+/** cok — record a code-highlighting assertion. */
+const cok = (label, cond, extra) => {
+  if (cond) console.log("ok  ", label);
+  else { ccFails++; console.error("CODE FAIL", label, extra !== undefined ? "→ " + JSON.stringify(extra) : ""); }
+};
+
+{
+  const h = renderMarkdown("```js\nconst a = 1;\n```");
+  cok("js fence is highlighted with hljs spans", /class="hljs-keyword"/.test(h) && /class="hljs-number"/.test(h), h);
+  cok("no raw < leaks from a highlighted fence", !/</.test(h.replace(/<[^>]*>/g, "")), h);
+  cok("the language class survives (language-js)", /<code class="language-js">/.test(h));
+}
+{
+  // Raw HTML inside a highlighted fence must stay ESCAPED (security).
+  const h = renderMarkdown("```js\n// <img src=x onerror=alert(1)>\nconst s = \"<b>\";\n```");
+  cok("html-looking code stays escaped in the highlight", !h.includes("<img src") && !h.includes("<b>"), h);
+}
+cok("unknown language keeps marked's plain escaped shape",
+    renderMarkdown("```unknownlang\nkeep raw\n```") === "<pre><code class=\"language-unknownlang\">keep raw\n</code></pre>\n");
+cok("no info string keeps marked's plain escaped shape",
+    renderMarkdown("```\na<b & c>d\"e\n```") === "<pre><code>a&lt;b &amp; c&gt;d&quot;e\n</code></pre>\n");
+cok("mermaid fence stays untouched (mermaid.js owns it)",
+    renderMarkdown("```mermaid\nA-->B\n```") === "<pre><code class=\"language-mermaid\">A--&gt;B\n</code></pre>\n");
+cok("math inside a fence still stays literal",
+    !renderMarkdown("```js\nconst x = \"$$a$$\";\n```").includes("katex"));
+cok("aliases cover common spellings",
+    LANGS.includes("bash") && LANGS.includes("python") && LANGS.includes("typescript") && LANGS.includes("cpp"));
+{
+  // The exported standalone HTML carries the light token palette.
+  const exportMod = await import("../src/export.js");
+  const css = exportMod.EXPORT_PREVIEW_CSS;
+  cok("EXPORT_PREVIEW_CSS styles hljs tokens", /\.hljs-keyword/.test(css) && /\.hljs-string/.test(css));
+}
+
+if (ccFails === 0) {
+  console.log("OK code-highlighting cases");
+} else {
+  console.error(`${ccFails} code case(s) FAILED`);
   process.exit(1);
 }

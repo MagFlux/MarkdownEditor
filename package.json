@@ -27,6 +27,10 @@
     "verify-mermaidfade": "node test/verifyMermaidFade.mjs",
     "verify-tauri": "node test/verifyTauriClose.mjs",
     "verify-caret": "node test/verifyCaret.mjs",
+    "verify-find": "node test/verifyFind.mjs",
+    "verify-tasks": "node test/verifyTasks.mjs",
+    "verify-recent": "node test/verifyRecent.mjs",
+    "verify-codecolor": "node test/verifyCodeColor.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
     "app:build": "tauri build"
@@ -41,6 +45,7 @@
     "vite": "^8.3.0"
   },
   "dependencies": {
+    "highlight.js": "^11.12.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "katex": "^0.18.7",

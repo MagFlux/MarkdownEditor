@@ -10,6 +10,10 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 
 - **Split / Edit / Preview** view modes, **multi-file tabs** (`Ctrl+T` new, `Ctrl+W` / `×` close)
 - **Inline formatting** — bold, italic, underline, strikethrough, code, links (`Ctrl+B/I/U/K`); a plain caret inserts an empty marker pair, a mid-word caret wraps that word, a selection wraps exactly
+- **Find & Replace** — floating non-modal bar (`Ctrl+F` find, `Ctrl+H` replace); live match count, the current match is auto-selected and highlighted as you type; `Esc` stays on the hit instead of jumping back (`Enter`/`F3` next, `Shift+Enter`/`Shift+F3` prev, wrap-around), case toggle, regex mode with `$1` substitutions; replace and replace-all each commit as ONE undo step
+- **GFM task lists** — `- [ ]` / `- [x]` render as live checkboxes in the preview; clicking flips the source line in one undo-able step (exports keep them inert)
+- **Recent files** — hamburger → "Recent files…" opens a hover sub-menu with the last 5 opened/saved files (persisted); a click reopens the file in a new tab, stale entries fail and are dropped. "Export…" groups the PDF/HTML export items in its own sub-menu
+- **Code highlighting** — fenced code blocks with a known language (js/ts, python, json, bash, html, css, rust, go, c/cpp, java, sql, yaml, diff, ini/toml) render with syntax colors in the preview and both exports; unknown languages stay plain code
 - **Block formatting** — H1–H3, quotes, lists, code fences, GFM tables, Mermaid and math scaffolds (Σ button). Inserters are **insert-only**: a second click inserts another scaffold, never removes
 - **LaTeX math (KaTeX)** — `$$…$$` display blocks and inline `$…$` typeset in the live preview and both exports (the HTML export embeds the KaTeX fonts, so it renders offline). Pandoc-style rules keep prose like `costs $5 and $10` literal; invalid LaTeX shows in red
 - **Mermaid diagrams** — `` ```mermaid `` fences render live in the preview and are captured in exports; errors show inline in red
@@ -17,7 +21,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Markdown-aware caret moves** — `Ctrl+←/→` jump a whole word (formatted spans count as one word, trailing punctuation rides along); add `Shift` to extend/shrink from the caret edge
 - **Enter / Tab smart editing** — Enter auto-continues list items with indentation; Tab / Shift+Tab indent/outdent (blank lines too), always committing a collapsed caret
 - **Rich paste** — an HTML clipboard (Excel/Word table, bold/italic/underline spans) converts to Markdown in one undo-able step
-- **Export as PDF / HTML** — hamburger menu; renders your live preview into a self-contained `.html` (math fonts embedded) or multi-page A4 `.pdf`
+- **Export** — hamburger → "Export…" → "As PDF…" / "As HTML…"; renders your live preview into a self-contained `.html` (math fonts embedded) or multi-page A4 `.pdf`
 - **Drag-and-drop** `.md` files onto the window; **Ctrl+click** a link in the source to open it
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
 - **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches; scrollbar colors follow the theme
@@ -41,8 +45,8 @@ MarkdownEditor/
 ├── index.html                  # entry page, loads the Vite bundle
 ├── vite.config.js              # dev/preview server on 127.0.0.1 (avoids IPv6 localhost mismatch)
 ├── src/
-│   ├── main.js                 # bootstrap: createApp(#app) + sample content (+ katex css/asset imports)
-│   ├── markdown.js             # app shell: createApp() — tabs, undo, keybinds, save/open, DnD, modals; static Tauri imports
+│   ├── main.js                 # bootstrap: createApp(#app) + sample content (feature-tour welcome doc; + katex css/asset imports)
+│   ├── markdown.js             # app shell: createApp() — tabs, undo, keybinds, save/open, DnD, modals, recent-files menu; static Tauri imports
 │   ├── export.js               # static PDF/HTML export pipeline and native/browser save adapters
 │   ├── session.js              # versioned localStorage persistence and debounced saves
 │   ├── dialogs.js              # centered in-app modals and overwrite confirmation
@@ -50,6 +54,9 @@ MarkdownEditor/
 │   ├── editing.js              # formatting mutations (inline toggles incl. $…$ math) and indentation factory
 │   ├── links.js                # link detection and Tauri/browser opening factory
 │   ├── history.js              # undo/redo history factory
+│   ├── find.js                 # floating non-modal Find & Replace bar (literal + regex, one-undo replace-all)
+│   ├── tasks.js                # GFM task lists: preview checkbox enhancement + ordinal→source mapping
+│   ├── codecolor.js            # fenced-code syntax highlighting (highlight.js core + ~16 grammars)
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
 │   ├── mermaid.js              # mermaid SVG rendering + anti-flicker cache + stylesheet-failure fallback
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
@@ -102,6 +109,7 @@ Window title/size/icons/identifier live in `src-tauri/tauri.conf.json` (default 
 | Action | Shortcut |
 |---|---|
 | Bold / Italic / Underline / Link | `Ctrl+B` / `Ctrl+I` / `Ctrl+U` / `Ctrl+K` |
+| Find / Replace | `Ctrl+F` / `Ctrl+H` (next `Enter`/`F3`, prev `Shift+Enter`/`Shift+F3`, close `Esc`) |
 | Save / New tab / Close tab | `Ctrl+S` / `Ctrl+T` / `Ctrl+W` |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
 | Word-wise caret move / selection | `Ctrl+←` / `Ctrl+→` (+ `Shift`; formatted spans count as one word) |
@@ -140,6 +148,10 @@ npm run verify                    # UI smoke test (tabs, undo, tables)
 | `verify-mermaidfade` | 16 | dark-theme gradient outlines off, no drop shadow |
 | `verify-tauri` | 49 | native Tauri path (stubs `__TAURI_INTERNALS__`, real api/IPC) |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
+| `verify-find` | 34 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups |
+| `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |
+| `verify-recent` | 12 | recent-files menu: record on open/save, dedupe, cap 10, click opens a new tab, stale entries drop |
+| `verify-codecolor` | 7 | fenced-code tokens highlight in the preview, unknown/mermaid stay plain, token colors paint |
 
 ---
 
@@ -174,7 +186,7 @@ The pipeline (`.github/workflows/ci.yml`) does **not** run on every push (saves 
 
 ## License
 
-[AGPL-3.0](LICENSE.md) — chosen deliberately: everything shipped (or served) stays open-source. [NOTICE.md](NOTICE.md) lists the bundled dependencies and their licenses (permissive by default; `elkjs` is the one user-approved copyleft exception; the Linux WebKitGTK runtime is a system library, not bundled). Adding a dependency? Prefer permissive (MIT/Apache-2.0/BSD), get copyleft user-reviewed, and update `NOTICE.md` in the same change — see [AGENTS.md](AGENTS.md).
+[AGPL-3.0](LICENSE.md) — chosen deliberately: everything shipped (or served) stays open-source. [NOTICE.md](NOTICE.md) lists the bundled dependencies and their licenses (permissive by default; `highlight.js` is BSD-3-Clause, `elkjs` is the one user-approved copyleft exception; the Linux WebKitGTK runtime is a system library, not bundled). Adding a dependency? Prefer permissive (MIT/Apache-2.0/BSD), get copyleft user-reviewed, and update `NOTICE.md` in the same change — see [AGENTS.md](AGENTS.md).
 
 ## Maintainers / contributors
 

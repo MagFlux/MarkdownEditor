@@ -139,7 +139,9 @@ await scenario("E1: HTML export with math embeds inlined katex fonts", async (pa
   }, GAMMA_DOC);
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as HTML" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(150);
+  await page.locator(".menu-item", { hasText: "As HTML" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 });
   await page.locator(".picker-name input").fill("math_out.html");
   await page.locator(".savedlg button.primary").click();
@@ -167,7 +169,9 @@ await scenario("E2: HTML export without math stays katex-free", async (page) => 
   });
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as HTML" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(150);
+  await page.locator(".menu-item", { hasText: "As HTML" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 });
   await page.locator(".picker-name input").fill("plain_out.html");
   await page.locator(".savedlg button.primary").click();
@@ -193,7 +197,9 @@ await scenario("P: PDF export with math", async (page) => {
   }, GAMMA_DOC);
   await page.locator('[data-action="menu"]').click();
   await wait(60);
-  await page.locator(".menu-item", { hasText: "Export as PDF" }).click();
+  await page.locator('[data-submenu="export"]').hover(); // reveal the Export submenu
+  await wait(150);
+  await page.locator(".menu-item", { hasText: "As PDF" }).click();
   await page.waitForSelector(".picker-name", { timeout: 2500 });
   await page.locator(".picker-name input").fill("math_out.pdf");
   await page.locator(".savedlg button.primary").click();

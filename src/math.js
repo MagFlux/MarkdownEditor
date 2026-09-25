@@ -40,6 +40,7 @@
 
 import katex from "katex";
 import { marked } from "marked";
+import { highlightCode } from "./codecolor.js";
 
 /** FENCE_OPEN — a ``` / ~~~ fence opener (0–3 space indent, info string allowed). */
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
@@ -220,6 +221,27 @@ const KATEX_OPTS = {
   output: "html",
 };
 
+/* ---- fenced-code highlighting (the `code` renderer override) ----
+   The override replicates marked's default output shape byte-for-byte when
+   `highlightCode` declines (unknown/unowned language): `<pre><code[ class=
+   "language-…"]>ESCAPED\n</code></pre>\n` with marked's own entity set
+   (& < > " '), so math-free, unhighlighted documents stay byte-comparable
+   with the pre-highlighting pipeline. Registered languages get hljs's
+   `<span class="hljs-*">` markup instead (hljs escapes the code itself). */
+const CODE_ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const escapeCodeText = (s) => s.replace(/[&<>"']/g, (c) => CODE_ENTITIES[c]);
+marked.use({
+  renderer: {
+    code(token) {
+      const lang = String(token.lang || "").trim().split(/\s+/)[0].toLowerCase();
+      const code = token.text.replace(/\n$/, "") + "\n";
+      const cls = lang ? ' class="language-' + escapeCodeText(lang) + '"' : "";
+      const body = highlightCode(lang, token.text.replace(/\n$/, ""));
+      return "<pre><code" + cls + ">" + (body !== null ? body : escapeCodeText(code)) + "</code></pre>\n";
+    },
+  },
+});
+
 /**
  * katexHtml — render one math span with the shared KaTeX options.
  * @param {{src: string, display: boolean}} range — the math span.
@@ -232,7 +254,10 @@ function katexHtml(range) {
 /**
  * renderMarkdown — the app's single Markdown→HTML pipeline (math included).
  * Drop-in for the previous `marked.parse(text)` call sites. Returns "" for
- * empty input so callers keep their own empty-state markup.
+ * empty input so callers keep their own empty-state markup. The `code`
+ * renderer override adds fenced-code syntax highlighting through
+ * src/codecolor.js (preview AND both exports share this pipeline); unknown /
+ * mermaid languages keep marked's plain escaped output.
  * @param {string} md — raw Markdown source.
  * @returns {string} HTML with every math span typeset by KaTeX.
  */
