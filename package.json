@@ -17,6 +17,7 @@
     "verify-export": "node test/verifyExport.mjs",
     "verify-math": "node test/verifyMath.mjs",
     "verify-scroll": "node test/verifyScroll.mjs",
+    "verify-scrollsync": "node test/verifyScrollSync.mjs",
     "verify-modescroll": "node test/verifyModeScroll.mjs",
     "verify-modefocus": "node test/verifyModeFocus.mjs",
     "verify-tabclick": "node test/verifyTabClick.mjs",

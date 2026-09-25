@@ -25,6 +25,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Drag-and-drop** `.md` files onto the window; **Ctrl+click** a link in the source to open it
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
 - **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches; scrollbar colors follow the theme
+- **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; end-of-document positions snap together
 - **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; browser fallback throughout
 
 ---
@@ -56,6 +57,7 @@ MarkdownEditor/
 │   ├── history.js              # undo/redo history factory
 │   ├── find.js                 # floating non-modal Find & Replace bar (literal + regex, one-undo replace-all)
 │   ├── tasks.js                # GFM task lists: preview checkbox enhancement + ordinal→source mapping
+│   ├── scrollsync.js           # block-anchored split-view scroll sync (marked-lexer anchors + measured overlay geometry)
 │   ├── codecolor.js            # fenced-code syntax highlighting (highlight.js core + ~16 grammars)
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
 │   ├── mermaid.js              # mermaid SVG rendering + anti-flicker cache + stylesheet-failure fallback
@@ -137,7 +139,8 @@ npm run verify                    # UI smoke test (tabs, undo, tables)
 | `verify-paste` | 18 | HTML clipboard → Markdown, single undo step |
 | `verify-export` | 32 | PDF/HTML export menu + save/cancel paths |
 | `verify-math` | 21 | KaTeX preview rendering; self-contained HTML export; PDF raster |
-| `verify-scroll` | 5 | split-view scroll-sync accepts a real follow-pane scroll instantly |
+| `verify-scroll` | 5 | split-view scroll-sync accepts a real follow-pane scroll instantly; follow lands on the content-matched block |
+| `verify-scrollsync` | 16 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly |
 | `verify-modescroll` | 8 | mode switch preserves the scroll ratio |
 | `verify-modefocus` | 13 | mode click skips its trailing focus only when entering preview |
 | `verify-tabclick` | 6 | re-clicking the active tab is a no-op |

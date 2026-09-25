@@ -129,6 +129,8 @@ jobs:
         run: npm run verify-math
       - name: Scroll-sync lag fix (5 cases)
         run: npm run verify-scroll
+      - name: Block-anchored scroll sync (12 cases)
+        run: npm run verify-scrollsync
       - name: Mode-switch scroll-preserving (8 cases)
         run: npm run verify-modescroll
       - name: Mode-click does not focus the editor (13 cases)

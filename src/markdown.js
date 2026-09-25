@@ -54,6 +54,7 @@ import { createLinkHandlers } from "./links.js";
 import { createHistoryHandlers } from "./history.js";
 import { createFindHandlers } from "./find.js";
 import { enhancePreviewTasks, scanTaskItems, toggleTaskAt } from "./tasks.js";
+import { createScrollSync, collectEls } from "./scrollsync.js";
 
 /* Re-exported so `markdown.js` keeps its public shape (test.mjs imports
    `highlightToHtml` from here; the app itself calls it from the closure). */
@@ -241,6 +242,10 @@ export function createApp(root) {
       path: null,
       dirty: false,
       undo: [], redo: [],
+      // Block-anchored scroll-sync map for THIS tab (scrollsync.js): rebuilt
+      // on text change in syncDom, consulted by followScroll while the split
+      // view is live. Falls back to ratio math whenever the map says null.
+      scrollSync: createScrollSync(),
     };
 
     const tab = document.createElement("div");
@@ -302,6 +307,8 @@ export function createApp(root) {
    */
   function syncDom(d) {
     const text = d.input.value;
+    // Feed the block-anchored scroll-sync map (cheap; no-ops when unchanged).
+    d.scrollSync.noteText(text);
     d.editor.innerHTML = highlightToHtml(text);
     // Task-list enhancement is PREVIEW-ONLY (see src/tasks.js): re-enables the
     // checkboxes marked rendered inert and stamps data-task ordinals, but ONLY
@@ -483,6 +490,15 @@ export function createApp(root) {
       // wrote. (scrollTop can be fractional; ECHO_EPS absorbs rounding.)
       const pane = letter === "e" ? doc.editorScroll : doc.previewScroll;
       if (s && s.deadline > now && Math.abs(pane.scrollTop - s.value) <= ECHO_EPS) return;
+      // A genuine user scroll on this pane kills its glide IMMEDIATELY — not
+      // on the next rAF's followScroll. The takeover is otherwise asynchronous
+      // (realScroll → kickScrollSync → rAF → followScroll → cancelGlide), and
+      // in that one-frame window an in-flight glide keeps writing value-stamped
+      // echoes toward its STALE target — clobbering the user's fresh position
+      // (seen as a preview-lead landing ~1 line past the fence). Its own
+      // frames' events are echoes and return above, so this cancel only ever
+      // fires for a real user scroll.
+      cancelGlide(doc, letter === "e" ? "__glideE" : "__glideP");
       doc.__lead = letter;
       kickScrollSync();
     }
@@ -760,34 +776,186 @@ export function createApp(root) {
     if (raf) return;
     raf = requestAnimationFrame(() => { raf = 0; refresh(); });
   }
-  // Apply the leading pane's scroll ratio to its follower. Kept idempotent and
-  // cheap: called at most once per frame by kickScrollSync while scrolling.
+  // Apply the leading pane's scroll position to its follower. Kept idempotent
+  // and cheap: called at most once per frame by kickScrollSync while scrolling.
   /**
-   * followScroll — apply the leading pane's scroll RATIO to the follower pane.
+   * followScroll — drive the follower pane from the leading pane's position.
    *
-   * Reads the __lead pane's ratio and writes the follower's scrollTop to match.
+   * With a usable block-anchored map (scrollsync.js, rebuilt per text change
+   * and validated per frame by buildPairs) the leading position maps through
+   * the per-block curve, so heading/table/KaTeX regions of the preview stay
+   * aligned with their source lines — the old linear RATIO math drifted badly
+   * mid-document (50% of the editor ≠ 50% of the preview for any document
+   * whose preview density is non-uniform). When the map is unavailable (count
+   * desync, hidden pane, mid-parse) it falls back to the exact old ratio
+   * math — behavior for degraded cases is unchanged.
+   *
    * Stamps the value-based echo guard (deadline + exact target offset) BEFORE
-   * the write, so realScroll later recognizes the echo by value+time and doesn't
-   * flip the lead back to the follower (the feedback ratchet).
+   * the write, so realScroll later recognizes the echo by value+time and
+   * doesn't flip the lead back to the follower (the feedback ratchet).
+   *
+   * Large deltas LAND AS A GLIDE (glideFollower below): through tall rendered
+   * blocks (mermaid/KaTeX/table rows) the anchored curve's slope is 3-4× the
+   * editor's, so one wheel notch would otherwise teleport the preview
+   * 150-340px — the "jump". The glide writes the SAME target over a few
+   * frames; the mapping and block parity are untouched.
    * @param {object} doc The tab in split view.
    */
   function followScroll(doc) {
     const src = doc.__lead === "e" ? doc.editorScroll : doc.previewScroll;
     const dst = doc.__lead === "e" ? doc.previewScroll : doc.editorScroll;
-    const maxA = src.scrollHeight - src.clientHeight;
-    if (maxA <= 0) return;
-    const ratio = src.scrollTop / maxA;
-    const target = ratio * (dst.scrollHeight - dst.clientHeight);
-    // Record, for THIS pane, the deadline and the exact offset we're about to
-    // drive it to. realScroll later drops a scroll event from this pane only
-    // while it's still within the deadline AND at ≈ this value — so a genuine
-    // user scroll (a different offset) is accepted immediately. Suppressing the
-    // echo by this value+deadline check is what stops it flipping the lead back
-    // and start driving the OTHER pane (the feedback ratchet).
-    const dstKey = doc.__lead === "e" ? "__suppP" : "__suppE";
-    doc[dstKey] = { deadline: performance.now() + ECHO_MS, value: target };
-    dst.scrollTop = target;
+    const srcIsEditor = doc.__lead === "e";
+    const maxSrc = src.scrollHeight - src.clientHeight;
+    if (maxSrc <= 0) return;
+    const maxDst = dst.scrollHeight - dst.clientHeight;
+    /**
+     * anchoredTarget — the block-anchored follower target for a leading
+     * position `y`, falling back to the linear-ratio math when the map is
+     * unavailable (count desync / hidden pane / build failure). Result is
+     * clamped into the follower's scroll range.
+     * @param {number} y The lead position (its scrollTop).
+     * @returns {number} Follower scrollTop.
+     */
+    function anchoredTarget(y) {
+      // Block-anchored path (scrollsync.js). Pairs live in preview-content
+      // px (directly comparable with a preview scrollTop); the editor side
+      // of the curve is the MEASURED per-line geometry (measureLineTops),
+      // also in editor content px — scrollTop maps directly in both
+      // directions, no pad arithmetic.
+      const P = doc.scrollSync.buildPairs(doc.preview, doc.previewScroll, doc.editor, doc.editorScroll);
+      if (P) {
+        const t = srcIsEditor ? doc.scrollSync.mapEdToPv(y, P) : doc.scrollSync.mapPvToEd(y, P);
+        if (t != null) return clampToRange(t, 0, maxDst);
+      }
+      // Ratio fallback (the original behavior).
+      return clampToRange((y / maxSrc) * maxDst, 0, maxDst);
+    }
+    // NOTE: no end-of-doc snap or blend. An earlier version hard-snapped the
+    // follower to its end when the lead got near ITS end; that overshoots the
+    // semantic correspondence exactly where documents have their last big
+    // sections (a table) — the preview scrolled PAST the table's top and the
+    // heading/table were cut off above the viewport ("weird snapping"). The
+    // anchored curve + the clamp below already converge at the ends: the
+    // target for the lead's final position is the content that actually
+    // corresponds, clamped into the follower's range — the follower reaches
+    // its own end only when the correspondence does.
+    let target = anchoredTarget(src.scrollTop);
+    const dstKey = srcIsEditor ? "__suppP" : "__suppE";
+    // The lead's position belongs to the user now — stop any glide running on
+    // it (this is also the takeover path: a user scroll on the pane that was
+    // gliding as the FOLLOWER flips the lead to it, and that glide must die
+    // here or it would keep writing against the user).
+    cancelGlide(doc, srcIsEditor ? "__glideE" : "__glideP");
+    glideFollower(doc, dst, dstKey, srcIsEditor ? "__glideP" : "__glideE", target);
+    // Stamp AFTER the glide read the previous value: glideFollower measures
+    // the lead's idle time as (now − previous __followAt) to decide whether a
+    // large delta is a one-off re-correction (slow pan) or part of a burst.
+    doc.__followAt = performance.now();
   }
+
+  // GLIDE — how the follower LANDS on its mapped target. Through tall rendered
+  // blocks (mermaid SVGs, KaTeX displays, table rows) the anchored curve's
+  // slope is 3-4× the editor's, so a single wheel notch maps to a 150-340px
+  // follower move; writing it instantly reads as a teleport ("jump"). The
+  // glide approaches the SAME target exponentially over a few frames — the
+  // mapping, the targets and block parity are untouched, only the write
+  // mechanism changes. Contracts it must keep:
+  //  - every per-frame write refreshes the pane's value-based echo stamp
+  //    FIRST (value = the offset being written, deadline refreshed, plus a
+  //    glide id), so the frames' own scroll events stay suppressed echoes;
+  //  - a new lead event RE-TARGETS the glide in place (no restart) and the
+  //    LEAD pane's own glide is cancelled by followScroll;
+  //  - a stamp written by anyone else (setMode ratio restore, tab-switch
+  //    restore, find.js reveal, openAtTop) carries no glide id — the loop
+  //    sees the mismatch and STANDS DOWN instead of fighting that writer;
+  //  - deltas ≤ GLIDE_MIN_PX (and reduced-motion users) write instantly, so
+  //    sub-line adjustments don't spin rAF loops — everything else glides,
+  //    INCLUDING one-line keyboard scrolls and ~100px wheel notches (the
+  //    elastic follow the user asked for: "small jumps don't look smooth");
+  //  - a LARGE delta after the lead has been idle ≥ 150ms is a RE-CORRECTION
+  //    (e.g. re-entering the correspondence after the exhausted end region —
+  //    the preview was wheeled into its tail pad while the editor sat at its
+  //    max, so the next editor scroll must pull it back ~200px, exactly at a
+  //    document's last big section). At the base τ that lands too fast and
+  //    reads as a jump; corrections get CORRECTION_TAU so they pan over
+  //    ~0.7s. A glide started under τ keeps it across re-targets, and a
+  //    burst (followScroll < 150ms apart) always uses the base τ — the
+  //    continuous follow never lags more than ~v·τ.
+  //  - the loop terminates on arrival, an 800ms cap, tab switch, or cancel —
+  //    no persistent per-frame work.
+  const GLIDE_MIN_PX = 10; // at/below this the write is instant (sub-line adjustments); everything else glides
+  const GLIDE_TAU_MS = 80;  // exponential approach time-constant (~90% in 2.3τ ≈ 184ms) — the elastic follow
+  const CORRECTION_TAU_MS = 150; // slower pan for a big one-off correction after idle
+  const CORRECTION_MIN_PX = 150; // deltas above this qualify as a correction
+  const IDLE_CORRECTION_MS = 150; // lead idle for at least this long → next big delta is a correction
+  const GLIDE_MAX_MS = 800; // hard cap per glide session (corrections at τ=150 can need ~700ms)
+  let glideSeq = 0;
+  /** cancelGlide — stop a running follower glide on `doc`, if any. */
+  function cancelGlide(doc, key) {
+    const g = doc[key];
+    if (g) { cancelAnimationFrame(g.raf); doc[key] = null; }
+  }
+  /**
+   * glideFollower — drive the follower pane to `target`: instantly for tiny
+   * deltas (≤ GLIDE_MIN_PX) and reduced-motion, otherwise as an exponential
+   * glide (base τ for continuous scrolling, a slower τ for big one-off
+   * corrections after idle). Each write refreshes the pane's echo stamp
+   * (value + deadline + glide id) BEFORE the write so realScroll suppresses
+   * the frames' own events; a stamp from any other writer (no matching gid)
+   * makes the glide stand down.
+   * @param {object} doc The tab in split view.
+   * @param {HTMLElement} dst The follower pane's scrollable element.
+   * @param {string} stampKey "__suppE" | "__suppP" for the follower pane.
+   * @param {string} glideKey "__glideE" | "__glideP" glide state for the pane.
+   * @param {number} target The mapped follower scrollTop.
+   */
+  function glideFollower(doc, dst, stampKey, glideKey, target) {
+    const reduced = window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const delta = target - dst.scrollTop;
+    if (reduced || Math.abs(delta) <= GLIDE_MIN_PX) {
+      cancelGlide(doc, glideKey);
+      doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: target };
+      dst.scrollTop = target;
+      return;
+    }
+    let g = doc[glideKey];
+    if (g) { g.target = target; g.t0 = performance.now(); return; } // re-target in place (keeps the glide's own τ)
+    // A fresh glide with a LARGE delta after the lead has been idle is a
+    // re-correction (see the block comment above) — land it as a slow pan.
+    const idle = performance.now() - (doc.__followAt || 0);
+    const tau = (idle >= IDLE_CORRECTION_MS && Math.abs(delta) >= CORRECTION_MIN_PX)
+      ? CORRECTION_TAU_MS : GLIDE_TAU_MS;
+    g = doc[glideKey] = { gid: ++glideSeq, target, tau, t0: performance.now(), last: performance.now(), raf: 0 };
+    // Claim the pane's echo stamp with OUR gid synchronously: the loop's
+    // first frame checks the stamp's gid, and a stale gid-less stamp from an
+    // earlier instant write would otherwise make the glide stand down at
+    // once. The pane is still AT `value`, so any event before the first
+    // frame is a valid suppressed echo.
+    doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: dst.scrollTop, gid: g.gid };
+    const step = (now) => {
+      if (doc !== activeTab || doc[glideKey] !== g) return; // cancelled or tab switched
+      const s = doc[stampKey];
+      if (s && s.gid !== g.gid) { doc[glideKey] = null; return; } // another writer claimed the pane
+      const dt = Math.max(1, now - g.last); g.last = now;
+      const remain = g.target - dst.scrollTop;
+      if (Math.abs(remain) <= 1 || now - g.t0 > GLIDE_MAX_MS) {
+        doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: g.target, gid: g.gid };
+        dst.scrollTop = g.target;
+        doc[glideKey] = null;
+        return;
+      }
+      const next = dst.scrollTop + remain * (1 - Math.exp(-dt / g.tau));
+      // Stamp the value we are ABOUT to write (per frame), so the frames' own
+      // scroll events stay suppressed echoes (value+deadline contract).
+      doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: next, gid: g.gid };
+      dst.scrollTop = next;
+      g.raf = requestAnimationFrame(step);
+    };
+    g.raf = requestAnimationFrame(step);
+  }
+  /** clampToRange — clamp v into [lo, hi]. */
+  function clampToRange(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
   let scrollRaf = 0;
   /** kickScrollSync — schedule followScroll once per frame while a pane leads. */
   function kickScrollSync() {
@@ -1923,5 +2091,16 @@ export function createApp(root) {
     find,
     openRecent,
     mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf,
+    /** getActiveScrollSyncDebug — scroll-sync map internals of the active
+     *  tab (anchors, pair table, ok flags). Test/diagnostic hook only. */
+    getActiveScrollSyncDebug: () => {
+      if (!activeTab) return null;
+      const dbg = activeTab.scrollSync.debug();
+      // Live element census — the SAME expansion rule the map pairs with
+      // (scrollsync.js collectEls: lists → items, tables → rows).
+      const els = collectEls(activeTab.preview);
+      const countsAgree = els.length === dbg.anchors.length;
+      return { ...dbg, liveEls: els.length, countsAgree, liveTags: els.slice(0, 30).map((e) => e.tagName + "." + (e.className || "")) };
+    },
   };
 }
