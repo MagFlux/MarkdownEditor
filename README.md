@@ -24,7 +24,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Export** — hamburger → "Export…" → "As PDF…" / "As HTML…"; renders your live preview into a self-contained `.html` (math fonts embedded) or multi-page A4 `.pdf`
 - **Drag-and-drop** `.md` files onto the window; **Ctrl+click** a link in the source to open it
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
-- **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches; scrollbar colors follow the theme
+- **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches and while the Save/Open/Export dialog is open (and on its close — no flicker); scrollbar colors follow the theme
 - **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; end-of-document positions snap together
 - **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; browser fallback throughout
 
@@ -133,6 +133,11 @@ npm test                          # round-trip invariant + math pipeline (Node, 
 npm run verify                    # UI smoke test (tabs, undo, tables)
 ```
 
+**Run targeted, not everything.** The suite is long, and CI runs the FULL roster
+on every PR and release. Locally, run `npm test` plus only the `verify-*` suites
+your change touches (the mapping is listed in [AGENTS.md](AGENTS.md)); save the
+full local run for release-grade milestones.
+
 | Script | Cases | Guards |
 |---|---|---|
 | `verify-undo` | 11 | undo/redo UI walk |
@@ -142,6 +147,7 @@ npm run verify                    # UI smoke test (tabs, undo, tables)
 | `verify-export` | 32 | PDF/HTML export menu + save/cancel paths |
 | `verify-math` | 21 | KaTeX preview rendering; self-contained HTML export; PDF raster |
 | `verify-scroll` | 5 | split-view scroll-sync accepts a real follow-pane scroll instantly; follow lands on the content-matched block |
+| `verify-dialogscroll` | 30 | opening the Save/Open/Export picker never moves the document (toolbar buttons, Ctrl+S/O, cancel keeps focus+position, close doesn't flicker) |
 | `verify-scrollsync` | 16 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly |
 | `verify-modescroll` | 8 | mode switch preserves the scroll ratio |
 | `verify-modefocus` | 13 | mode click skips its trailing focus only when entering preview |

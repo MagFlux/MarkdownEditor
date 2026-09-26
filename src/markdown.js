@@ -643,12 +643,119 @@ export function createApp(root) {
     exists: tauriExists,
   });
 
-  const { pickPath } = createPathPicker({
+  const { pickPath: pickPathBase } = createPathPicker({
     showModalBase,
     readDir: tauriReadDir,
     homeDir: tauriHomeDir,
     isTauri,
   });
+
+  /**
+   * capturePaneScroll — snapshot a doc's editor + preview scroll position as
+   * 0..1 RATIOs (px offsets re-measure at restore time, mirroring setMode /
+   * activate). Hidden panes (edit/preview mode) read max=0 and are skipped at
+   * restore, so this degrades to preserving the visible pane only.
+   * @param {object} doc The active tab to record.
+   * @returns {{e: number, p: number}|null} {e,p} ratios, or null without a doc.
+   */
+  function capturePaneScroll(doc) {
+    if (!doc) return null;
+    const ratio = (sc) => { const m = sc.scrollHeight - sc.clientHeight; return m > 0 ? sc.scrollTop / m : 0; };
+    return { e: ratio(doc.editorScroll), p: ratio(doc.previewScroll) };
+  }
+
+  /**
+   * restorePaneScroll — re-assert recorded pane ratios once a focus move /
+   * dialog teardown / engine scroll-into-view has settled.
+   *
+   * Same shape as setMode / toggleTheme / activate restoration: the write lands
+   * after two rAF ticks (the causative focus's caret-into-view scroll happens
+   * first, so the reassert WINS), stamps the value-based echo guard so the
+   * restoring writes can't flip the two-pane lead, and clears `__lead` (a
+   * programmatic restore is not a user scroll). Skips when the doc stopped
+   * being the active tab inside the rAF window.
+   * @param {object} doc The tab whose panes get restored.
+   * @param {{e?: number, p?: number}|null} keep Ratios from capturePaneScroll.
+   */
+  function restorePaneScroll(doc, keep) {
+    if (!doc || !keep) return;
+    const apply = () => {
+      if (doc !== activeTab) return;
+      for (const [sc, fraction, key] of [[doc.editorScroll, keep.e, "__suppE"], [doc.previewScroll, keep.p, "__suppP"]]) {
+        const max = sc.scrollHeight - sc.clientHeight;
+        if (max <= 0) continue;
+        const value = fraction * max;
+        doc[key] = { deadline: performance.now() + ECHO_MS, value };
+        sc.scrollTop = value;
+      }
+      doc.__lead = null;
+    };
+    requestAnimationFrame(() => { requestAnimationFrame(apply); });
+  }
+
+  /**
+   * focusKeepScroll — (re)focus the markdown textarea WITHOUT moving either
+   * split pane vertically.
+   *
+   * A causative .focus() from a blurred state (mousedown on a toolbar button
+   * already blurred the textarea) makes the engine scroll the caret into view;
+   * that parks `.editor-scroll` AT the caret — the document bottom for a caret
+   * at the end, the top for one above the viewport — and in split view the
+   * follow chain drags the preview with it. focus({preventScroll:true}) is the
+   * engine-level knob that SUPPRESSES that reveal (Chromium + WebKit both
+   * honor it), so this is the quiet variant of the trailing toolbar focus for
+   * dialog-opening actions. The rAF reassert stays as the safety net for the
+   * modal-mount / dismissal quirks. Everyday format actions keep the plain
+   * causative focus (caret-follow stays the sanction there).
+   * @param {object} doc The active tab to refocus.
+   */
+  function focusKeepScroll(doc) {
+    if (!doc) return;
+    const keep = capturePaneScroll(doc);
+    doc.input.focus({ preventScroll: true });
+    restorePaneScroll(doc, keep);
+  }
+
+  /**
+   * pickPathKeepScroll — run the in-app Save/Open picker while HOLDING the
+   * active tab's vertical position for the dialog's whole lifecycle.
+   *
+   * Opening an in-app picker (Save-As, Open, and the Export dialogs run the
+   * same one) must never move the scroll of the open file behind it: engines
+   * can drag the caret-into-view scroll underneath a modal (focusing controls
+   * in the dialog, teardown reflow, the WebKitGTK eager scroll quirk), and the
+   * related focus-move variant is the reported "the open file scrolls to the
+   * bottom when the dialog opens". Capture the ratios BEFORE the modal
+   * exists; on resolution re-assert them (echo-stamped). When the dialog
+   * closed without opening ANOTHER modal and no new tab is about to be
+   * activated (a cancel, or a straight Save-As fall-through), also hand
+   * keyboard focus straight back to the editor — a cancel must not leave the
+   * caret stranded on the dialog's button (pre-existing UX kept, minus the
+   * scroll jump). THE FOCUS IS PREVENTSCROLL: the reveal scroll that a plain
+   * focus() fires (parks the pane AT the caret for a frame or two, then the
+   * rAF restore pulls it back) is exactly the close-of-dialog FLICKER, so a
+   * causative focus is never acceptable on this path. A tab switch inside the
+   * rAF window skips the restore (activate() already manages per-tab ratios)
+   * — and the open-confirm path deliberately does NOT refocus, because
+   * openFile activates the new tab.
+   * @param {object} [opts] Same contract as createPathPicker's pickPath.
+   * @returns {Promise<{path: string|null, name?: string}>} Selected path or cancel.
+   */
+  function pickPathKeepScroll(opts = {}) {
+    const d = activeTab;
+    const keep = capturePaneScroll(d);
+    return pickPathBase(opts).then((result) => {
+      if (!d || d !== activeTab || !keep) return result;
+      const opensNewTab = opts.mode === "open" && result && result.path;
+      if (!opensNewTab) d.input.focus({ preventScroll: true }); // NO reveal — that IS the close flicker
+      restorePaneScroll(d, keep);
+      return result;
+    });
+  }
+
+  // All in-app pickers (save(), open(), and the injected Export pickers in
+  // export.js) open through the scroll-holding wrapper.
+  const pickPath = pickPathKeepScroll;
 
   /**
    * resetLastTab — empty the last tab in place and reset it to a blank, clean
@@ -2002,7 +2109,18 @@ export function createApp(root) {
       setMenuOpen(false);
       if (menuId === "pdf") exportAsPdf();
       else if (menuId === "html") exportAsHtml();
-      if (activeTab) activeTab.input.focus();
+      // The Export items open the SAME in-app Save-As picker (native path) or
+      // a browser download (fallback). Never causatively focus the textarea
+      // underneath a picker dialog — the menu button press already blurred it,
+      // so a focus here is a REAL focus move whose caret-into-view scroll
+      // parks the pane at the caret (often the document bottom) the instant
+      // the dialog opens. Stand down while a backdrop is up; the picker's own
+      // rAF targets the dialog's controls and pickPathKeepScroll returns the
+      // typing focus (and the scroll) when the dialog closes without another
+      // modal. focusKeepScroll covers the download fallback (no backdrop).
+      if (!activeTab) return;
+      if (document.querySelector(".savedlg-backdrop")) return;
+      focusKeepScroll(activeTab);
       return;
     }
     if (fmt) toggleFormat(fmt);
@@ -2035,7 +2153,24 @@ export function createApp(root) {
         return;
       }
     }
-    if (activeTab) activeTab.input.focus();
+    // The trailing focus exists so most toolbar actions (format / list / mode
+    // for split & edit) hand keyboard focus back and the engine keeps its
+    // normal caret-follow behavior. For the SAVE / OPEN buttons it must never
+    // run causatively: their click already blurred the textarea, so this
+    // focus() is a REAL focus move whose caret-into-view scroll parks the
+    // pane AT the caret — the document bottom for a caret at the end, the top
+    // for one above the viewport — the moment the open/save dialog mounts
+    // ("when the open/save dialog opens the current file scrolls to the
+    // bottom"). And under any picker backdrop the editor must not steal focus
+    // back at all (the dialog owns the keyboard; native pickers mount the
+    // backdrop synchronously, so it is already up here on the Tauri path).
+    // So: stand down under a backdrop; for save/open use focusKeepScroll so
+    // the browser-fallback's OS file dialog path ALSO cannot move either
+    // pane; everyday actions keep the plain trailing focus untouched.
+    if (!activeTab) return;
+    if (document.querySelector(".savedlg-backdrop")) return;
+    if (action === "save" || action === "open") { focusKeepScroll(activeTab); return; }
+    activeTab.input.focus();
   });
 
   /* ---- ctrl+click anywhere in window → new tab (except when a .md is being dragged) ---- */

@@ -31,6 +31,7 @@
     "verify-find": "node test/verifyFind.mjs",
     "verify-tasks": "node test/verifyTasks.mjs",
     "verify-recent": "node test/verifyRecent.mjs",
+    "verify-dialogscroll": "node test/verifyDialogScroll.mjs",
     "verify-codecolor": "node test/verifyCodeColor.mjs",
     "tauri": "tauri",
     "app": "tauri dev",
