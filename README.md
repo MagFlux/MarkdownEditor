@@ -26,7 +26,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
 - **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches and while the Save/Open/Export dialog is open (and on its close — no flicker); scrollbar colors follow the theme
 - **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; end-of-document positions snap together
-- **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; browser fallback throughout
+- **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; every directory you enter opens with its list at the top; browser fallback throughout
 
 ---
 
@@ -157,7 +157,7 @@ full local run for release-grade milestones.
 | `verify-mermaidflicker` | 7 | no raw-code flash on prose keystrokes outside a fence |
 | `verify-mermaidstyle` | 38 | mermaid stylesheet-failure fallback + label centering |
 | `verify-mermaidfade` | 16 | dark-theme gradient outlines off, no drop shadow |
-| `verify-tauri` | 49 | native Tauri path (stubs `__TAURI_INTERNALS__`, real api/IPC) |
+| `verify-tauri` | 55 | native Tauri path (stubs `__TAURI_INTERNALS__`, real api/IPC); the picker list re-opens at the TOP on every directory entry |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
 | `verify-find` | 38 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal |
 | `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |

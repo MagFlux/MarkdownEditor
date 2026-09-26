@@ -182,7 +182,23 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
         });
       };
       const confirmFile = (name) => done({ path: state.cwd + SEP + name, name });
+      /**
+       * render — display one directory listing, always pinned to the TOP.
+       * The <ul> is created once per picker and only its content is rebuilt
+       * per directory; the browser retains a scrollable's scrollTop across an
+       * innerHTML swap (the offset is only clamped against the NEW content at
+       * the next layout), so a directory entered after scrolling the previous
+       * one down opened mid-list. Reset to 0 (always a valid offset) BEFORE
+       * the swap so no stale offset can survive into the new listing — every
+       * entry path (folder click, crumb click, Home, Up) funnels through
+       * goToDir → render, so this single line covers all of them.
+       * @param {any[]} entries The read_dir entries to list.
+       * @returns {void}
+       */
       const render = (entries) => {
+        // WHY: keep the newest listing at the top — a persistent scrollable
+        // that only swaps content does NOT reset its own scroll position.
+        list.scrollTop = 0;
         list.innerHTML = "";
         if (!Array.isArray(entries) || !entries.length) {
           const empty = document.createElement("li");

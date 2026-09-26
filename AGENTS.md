@@ -250,7 +250,7 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
     # themes (16 cases: solid stroke + no drop-shadow filter — the Windows
     # "fuzzy borders" report).
    npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
-                         # real api/IPC (49 cases) — save→in-app picker→write+close,
+                         # real api/IPC (55 cases) — save→in-app picker→write+close,
                         # overwrite-confirmation→write, overwrite-cancel→stays,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
@@ -258,7 +258,13 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                         # Home button always present in the picker pathbar and jumps
                         # back to the home dir even after navigating deep, and the
                         # a caret ENTERS a hidden (dot) folder (read_dir on the dot-path) —
-                        # the UI-level guard for the fs requireLiteralLeadingDot:false fix.
+                        # the UI-level guard for the fs requireLiteralLeadingDot:false fix —
+                        # and scenario I: EVERY directory entry (folder click, Up,
+                        # Home, crumb click) pins the picker list's scrollTop back to 0 —
+                        # the <ul> is long-lived, so a stale offset survived the
+                        # innerHTML swap and a folder entered after scrolling down
+                        # opened MID-LIST (render() now resets before the swap);
+                        # verified to FAIL with the pin removed.
                         # Needs the built dist.
 npm run verify-caret    # Caret placement after editor actions (92 cases): Enter
                         # auto-continuation keeps the parent item's indentation with a
@@ -419,7 +425,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. Markdown→HTML goes through `renderMarkdown()` (math.js) so exported documents are typeset AND code-highlighted; the HTML export embeds the self-contained KaTeX stylesheet (fonts as data: URIs) ONLY when `containsMath()` says the document has math. Owns `EXPORT_PREVIEW_CSS` (exported for the Node test chain) — a fixed LIGHT palette that includes the `.hljs-*` token rules so exported HTML keeps code colors. |
 | `src/session.js` | Versioned localStorage session persistence and debounced saves, using callbacks for the active tab and serializable tab records. |
 | `src/dialogs.js` | Centered in-app modal primitives, unsaved-changes prompts, and overwrite confirmation, with native filesystem checks supplied by callbacks. |
-| `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. Detects the platform path separator from the initial cwd (`\` on Windows, `/` elsewhere) and uses it consistently for all path joining, crumb reconstruction, and go-up navigation — without this, Windows paths like `C:\Users\…` get joined with `/` producing `/C:\Users\…` which the OS rejects (os error 123). |
+| `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. Detects the platform path separator from the initial cwd (`\` on Windows, `/` elsewhere) and uses it consistently for all path joining, crumb reconstruction, and go-up navigation — without this, Windows paths like `C:\Users\…` get joined with `/` producing `/C:\Users\…` which the OS rejects (os error 123). **Every directory render pins the list's `scrollTop` to 0** (do not regress): the `.picker-list` `<ul>` is created once per picker and only its content is rebuilt per directory, and browsers retain a scrollable's `scrollTop` across an innerHTML swap (the offset is only clamped against the NEW content at the next layout) — so a directory entered after scrolling the previous one down opened mid-list. `render()` resets before the swap; the Playwright repro in `test/verifyTauriClose.mjs` scenario I fails with the pin removed. |
 | `src/editing.js` | Formatting mutation factory: inline toggles (incl. the inline-math `$…$` toggle with its `dollarClash` guards — currency spans are never wrapped, display `$$…$$` is a hard no-op) and the INSERT-ONLY block actions — table scaffold, codeblock/mermaid fence wrap, math `$$` block (never removes; every click inserts) — plus the historical h1–h3/quote/list toggles and indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
 | `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, Tauri gate, and browser fallback. |
 | `src/history.js` | Undo/redo history factory, with injected active-doc, typing-flush, input-suppression, and refresh callbacks. |

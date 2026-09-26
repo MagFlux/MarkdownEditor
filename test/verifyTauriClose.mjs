@@ -4,7 +4,8 @@
  * Injects the exact `window.__TAURI_INTERNALS__` a bundler app receives and
  * drives the real @tauri-apps api/IPC: save→picker→write+close, picker-cancel,
  * save-discard-cancel, known-path direct write, open→picker→new tab, navigate
- * into forbidden dir, Home button, and the hidden (dot) folder picker entry.
+ * into forbidden dir, Home button, the hidden (dot) folder picker entry, and
+ * the picker list's scroll reset on every directory entry (top-pinned).
  * Run with `npm run verify-tauri` (needs the built dist).
  */
 // Native (Tauri) path verification — injects the exact `window.__TAURI_INTERNALS__`
@@ -63,6 +64,8 @@ setTimeout(() => {
  * installInternals — install a stub `window.__TAURI_INTERNALS__` (+ `__state` log) inside
  * the page. Injected via addInitScript so Playwright contextifies it once. Records
  * IPC, text writes, window-destroy, and close-request emissions on `__state`.
+ * read_dir serves a default fake listing unless `window.__fsListings[path]`
+ * (test-injected per-path listings, set by scenarios) provides one first.
  */
 function installInternals() {
   let cbid = 0;
@@ -103,6 +106,10 @@ function installInternals() {
           if (Array.isArray(S.failingDirs) && S.failingDirs.includes(p)) {
             return Promise.reject(new Error("path not allowed"));
           }
+          // Test-injected per-path listings (scenario I's scrollable dirs)
+          // take precedence over the default 3-entry listing below.
+          const injected = window.__fsListings && window.__fsListings[p];
+          if (injected) return injected;
           // Fake an FS listing; used by the in-app save/open picker.
           // A couple of plausible entries so the list isn't empty.
           return [
@@ -436,6 +443,120 @@ await scenario("H: hidden (dot) folder is navigable in the picker", async ({ pag
   // H4: no error status — the read succeeded.
   const status = await page.locator(".picker-status").first().textContent();
   ok("H4 no read error shown for the dot-folder", !/cannot read/i.test(status || ""), JSON.stringify(status));
+
+  // Cleanup: cancel.
+  await byRole(page, "button", "Cancel", true).first().click({ timeout: 3000 }).catch(() => {});
+});
+
+// ---- I: entering a directory always shows the NEW listing from the TOP ----
+// Regression guard for the picker list's scroll reset: the <ul class=
+// "picker-list"> is created once per picker and only its content is rebuilt
+// per directory (render()'s list.innerHTML=""). Browsers retain a scrollable's
+// scrollTop across an innerHTML swap — the offset is only clamped against the
+// NEW content at the next layout — so a directory entered after scrolling the
+// previous one down opened MID-LIST ("every time a new folder is entered the
+// vertical view isn't always at the top"). The fix pins list.scrollTop = 0
+// before the swap in render(); every entry path (folder click, crumb click,
+// Home, Up) funnels through goToDir → render, so the pin covers all of them.
+// The stub serves the tall homes via window.__fsListings (test-injected
+// listings, checked BEFORE the default 3-entry fake).
+await scenario("I: dir entry always opens the new listing at the TOP", async ({ page, st, ok, wait }) => {
+  // Inject directories tall enough to scroll: the HOME dir lists 40 dirs
+  // (the list viewport is 260px ≈ 10-12 rows, so it scrolls) ending with
+  // "sub"; the SUB dir lists 30 files (also scrollable). /home is injected
+  // too for the crumb-click case.
+  await page.evaluate(() => {
+    window.__fsListings = {
+      "/home/user": [
+        ...Array.from({ length: 39 }, (_, i) => ({
+          name: "d" + String(i).padStart(2, "0"), isDirectory: true, isFile: false, isSymlink: false,
+        })),
+        { name: "sub", isDirectory: true, isFile: false, isSymlink: false },
+      ],
+      "/home/user/sub": Array.from({ length: 30 }, (_, i) => ({
+        name: "f" + String(i).padStart(2, "0") + ".md", isDirectory: false, isFile: true, isSymlink: false,
+      })),
+      "/home": Array.from({ length: 20 }, (_, i) => ({
+        name: "u" + String(i).padStart(2, "0"), isDirectory: true, isFile: false, isSymlink: false,
+      })),
+    };
+  });
+  await page.evaluate(() => { window.editor.open(); return true; });
+  await page.waitForSelector(".picker-list", { timeout: 2500 });
+  await wait(300); // goToDir's async read_dir → render must have completed.
+
+  /** listState — the <ul>'s scrollTop and whether "d00" (its first row) is visible. */
+  const listState = () => page.evaluate(() => {
+    const l = document.querySelector(".picker-list");
+    return {
+      st: l ? l.scrollTop : -1,
+      view: l ? l.clientHeight : 0,
+      full: l ? l.scrollHeight : 0,
+    };
+  });
+
+  // I1: home listing starts at the top.
+  const s0 = await listState();
+  ok("I1 home listing starts at the top", s0.st === 0, JSON.stringify(s0));
+
+  // I2: scroll the home list to the BOTTOM, then enter "sub".
+  await page.evaluate(() => {
+    const l = document.querySelector(".picker-list");
+    l.scrollTop = l.scrollHeight; // scroll far down (40 rows >> 260px viewport)
+  });
+  await wait(80);
+  const s1a = await listState();
+  ok("I2a home list did scroll down (fixture sanity)", s1a.st > 0, JSON.stringify(s1a));
+  // Scroll-to and click the "sub" row (Playwright's real click keeps the
+  // engine's scroll intact; the row sits at the sorted end of the home list).
+  await page.locator(".picker-list li", { hasText: "sub" }).first().scrollIntoViewIfNeeded();
+  await page.locator(".picker-list li", { hasText: "sub" }).first().click({ timeout: 3000 });
+  await wait(350); // read_dir + render
+  const s2 = await listState();
+  // CONTRACT: the new listing (30 files ≈ 700px of content in a 260px
+  // viewport) must be pinned to its TOP. The OLD scrollTop at the end of the
+  // home listing was ~255px; a regression (stale offset surviving the
+  // innerHTML swap) would land the sub listing ~250px down (row ~10), NOT
+  // ≤1px — so this assertion genuinely separates fix from regression.
+  ok("I2b entering a folder opens the new listing at the TOP (≤1px)",
+     s2.st <= 1, JSON.stringify(s2));
+
+  // I3: scroll the sub listing down, then go UP — the SAME scrollable, so the
+  // stale-offset hazard is identical; the pin must cover goUp too. The parent
+  // (home) listing is 40 rows tall, so a stale offset would survive here.
+  await page.evaluate(() => {
+    const l = document.querySelector(".picker-list");
+    l.scrollTop = l.scrollHeight;
+  });
+  await wait(80);
+  await page.locator('.picker-pathbar .ctrl[aria-label="Go up"]').first().click({ timeout: 3000 });
+  await wait(350);
+  const s3 = await listState();
+  ok("I3 go-up opens the parent listing at the TOP (≤1px)", s3.st <= 1, JSON.stringify(s3));
+
+  // I4: scroll down, then Home — same contract for the Home control.
+  await page.evaluate(() => {
+    const l = document.querySelector(".picker-list");
+    l.scrollTop = l.scrollHeight;
+  });
+  await wait(80);
+  await page.locator('.picker-pathbar .ctrl[aria-label="Home directory"]').first().click({ timeout: 3000 });
+  await wait(350);
+  const s4 = await listState();
+  ok("I4 Home opens the home listing at the TOP (≤1px)", s4.st <= 1, JSON.stringify(s4));
+
+  // I5: scroll down, then click the root ("/") crumb — same contract for the
+  // breadcrumb pathbar. The injected /home listing is 20 dirs tall, so a
+  // stale offset would survive the swap here too.
+  await page.evaluate(() => {
+    const l = document.querySelector(".picker-list");
+    l.scrollTop = l.scrollHeight;
+  });
+  await wait(80);
+  await page.locator('.picker-pathbar [data-crumb="/home"]').first().click({ timeout: 3000 }).catch(() => {});
+  await wait(350);
+  const s5 = await listState();
+  ok("I5 crumb click opens the target listing at the TOP (≤1px)", s5.st <= 1, JSON.stringify(s5));
 
   // Cleanup: cancel.
   await byRole(page, "button", "Cancel", true).first().click({ timeout: 3000 }).catch(() => {});
