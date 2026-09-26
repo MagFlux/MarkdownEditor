@@ -9,7 +9,10 @@
  * behave (invalid regex = inline red, never a throw), Replace replaces the
  * selected match as ONE undo step, Replace-all replaces everything as ONE
  * undo step, regex `$1` substitutions work, the bar recomputes across tab
- * switches, and typing in the editor updates the count while the bar is open.
+ * switches, typing in the editor updates the count while the bar is open, and
+ * in split view a reveal scroll DRIVES the preview pane to the matching
+ * position (the preview follows the found match through the block-anchored
+ * scroll-sync machinery).
  * Run with `npm run verify-find`.
  */
 import { chromium } from "playwright";
@@ -358,6 +361,84 @@ const cleared = await p.evaluate(() => {
 });
 ok("8e Esc with no search window CLEARS the selection (collapsed at its end)",
    cleared[0] === cleared[1] && cleared[0] > 0, JSON.stringify(cleared));
+
+// ---------------------------------------------------------------------------
+// CASE 9 — split view: the PREVIEW pane follows the editor's reveal scroll.
+// Jumping to a match far down must bring BOTH panes there — the bar's
+// programmatic editor write drives the preview through the same
+// block-anchored followScroll machinery a real editor scroll uses (the
+// reported gap: the preview used to sit still while the editor hopped
+// between hits).
+// ---------------------------------------------------------------------------
+await p.evaluate(() => {
+  const ed = window.editor;
+  const para = "Filler paragraph for scroll depth without the keyword. ";
+  const lines = [];
+  for (let i = 0; i < 40; i++) {
+    lines.push("## Section " + i + "\n\n" + para.repeat(3));
+    if (i === 0) lines.push("\n\nneedle one right up top\n\n");
+    if (i === 20) lines.push("\n\nneedle two far far down\n\n");
+  }
+  ed.setDocumentText(lines.join("\n"));
+});
+await sleep(S);
+const mode9 = await p.evaluate(() => window.editor.workspace.closest(".app").dataset.mode);
+const parked = await p.evaluate(() => {
+  const d = window.editor.activeTab;
+  d.editorScroll.scrollTop = 0;
+  d.previewScroll.scrollTop = 0;
+  d.input.focus();
+  d.input.setSelectionRange(0, 0);
+  const pv = d.previewScroll;
+  return { mode: window.editor.workspace.closest(".app").dataset.mode,
+           pvMax: Math.round(pv.scrollHeight - pv.clientHeight) };
+});
+ok("9-pre split mode with a scrollable preview", mode9 === "split" && parked.pvMax > 400, JSON.stringify(parked));
+await p.keyboard.press("Control+f");
+await p.keyboard.type("needle");
+await sleep(150);
+await p.keyboard.press("F3"); // jump to the FAR match (needle two, section 20)
+await sleep(900); // let the follower glide land (cap ~0.8s)
+const follow = await p.evaluate(() => {
+  const d = window.editor.activeTab;
+  const pv = d.previewScroll;
+  const pvRect = pv.getBoundingClientRect();
+  let hit = false;
+  for (const el of d.preview.querySelectorAll("p")) {
+    if (!el.textContent.includes("needle two far far down")) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > pvRect.top && r.top < pvRect.bottom) { hit = true; break; }
+  }
+  return {
+    edSt: Math.round(d.editorScroll.scrollTop),
+    pvSt: Math.round(pv.scrollTop),
+    pvMax: Math.round(pv.scrollHeight - pv.clientHeight),
+    hit,
+  };
+});
+ok("9a jumping to the far match scrolled BOTH panes (preview follows the reveal)",
+   follow.edSt > 0 && follow.pvSt > follow.pvMax * 0.3, JSON.stringify(follow));
+ok("9b the found paragraph is visible in the preview pane after the jump", follow.hit, JSON.stringify(follow));
+
+await p.keyboard.press("Shift+F3"); // wrap back to the TOP needle
+await sleep(900);
+const back = await p.evaluate(() => {
+  const d = window.editor.activeTab;
+  const pv = d.previewScroll;
+  const pvRect = pv.getBoundingClientRect();
+  let hit = false;
+  for (const el of d.preview.querySelectorAll("p")) {
+    if (!el.textContent.includes("needle one right up top")) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > pvRect.top && r.top < pvRect.bottom) { hit = true; break; }
+  }
+  return { pvSt: Math.round(pv.scrollTop), pvMax: Math.round(pv.scrollHeight - pv.clientHeight), hit };
+});
+ok("9c stepping back re-follows the preview toward the top",
+   back.pvSt < back.pvMax * 0.15 && back.hit, JSON.stringify(back));
+
+await p.keyboard.press("Escape"); // clean state for anything after
+await sleep(120);
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);

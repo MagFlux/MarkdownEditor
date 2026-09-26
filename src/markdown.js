@@ -884,7 +884,7 @@ export function createApp(root) {
   //  - the loop terminates on arrival, an 800ms cap, tab switch, or cancel —
   //    no persistent per-frame work.
   const GLIDE_MIN_PX = 10; // at/below this the write is instant (sub-line adjustments); everything else glides
-  const GLIDE_TAU_MS = 80;  // exponential approach time-constant (~90% in 2.3τ ≈ 184ms) — the elastic follow
+  const GLIDE_TAU_MS = 70;  // exponential approach time-constant (~90% in 2.3τ ≈ 184ms) — the elastic follow
   const CORRECTION_TAU_MS = 150; // slower pan for a big one-off correction after idle
   const CORRECTION_MIN_PX = 150; // deltas above this qualify as a correction
   const IDLE_CORRECTION_MS = 150; // lead idle for at least this long → next big delta is a correction
@@ -1024,12 +1024,23 @@ export function createApp(root) {
      The bar owns its DOM inside `workspace`; commit() keeps every replacement
      a single undo step. echoMs is the same value-based echo deadline the
      scroll-sync machinery uses, so the bar's programmatic reveal-scroll is
-     recognized as an echo and never ratchets the preview pane. */
+     recognized as an echo and never ratchets the preview pane. followFromEditor
+     is the split-view hook: after the bar scrolls the editor to a match, the
+     preview follows through the SAME followScroll machinery a real editor
+     scroll uses (block-anchored map, echo stamping, glide) — the lead is
+     claimed as "e" explicitly, so the programmatic write never has to be
+     re-interpreted from the pane's scroll event. */
   const find = createFindHandlers({
     getActiveDoc: () => activeTab,
     commit,
     workspace,
     echoMs: ECHO_MS,
+    followFromEditor: () => {
+      const doc = activeTab;
+      if (!doc) return;
+      doc.__lead = "e"; // the editor is the explicit lead of this reveal
+      followScroll(doc);
+    },
   });
 
   /**

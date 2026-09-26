@@ -78,9 +78,14 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  *   the bar is appended to.
  * @param {number} deps.echoMs The echo-suppression deadline (ECHO_MS) used
  *   when stamping programmatic scroll writes.
+ * @param {Function} [deps.followFromEditor] Optional split-view hook: called
+ *   after the bar has programmatically repositioned the editor pane so the
+ *   preview pane follows to the corresponding position (markdown.js drives it
+ *   through the block-anchored followScroll machinery, stamping its own echo
+ *   guard). A no-op outside split view; absent in tests that don't need it.
  * @returns {{open: Function, close: Function, toggle: Function, step: Function, replaceOne: Function, replaceAll: Function, noteTextChanged: Function, isOpen: Function}} Find actions.
  */
-export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs }) {
+export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, followFromEditor }) {
   let bar = null;            // lazily built .findbar element
   let visible = false;
   let regexMode = false;
@@ -250,8 +255,17 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs }) 
    *
    * Measures the caret point with `textPoint` and writes the scroll
    * container's scrollTop — stamped with the echo guard so this programmatic
-   * write can't drive the follower pane. Skips the write when the line is
-   * already comfortably visible.
+   * write can't be mistaken for a user scroll. Skips the write when the line
+   * is already comfortably visible.
+   *
+   * SPLIT VIEW: when the editor pane actually moves, `followFromEditor`
+   * (injected by markdown.js) drives the preview pane to the corresponding
+   * position through the same block-anchored machinery a real editor scroll
+   * uses — so a match revealed far down the document brings BOTH panes to it
+   * (the reported gap: the preview used to sit still while the editor jumped
+   * between hits). When the match is already comfortably visible the editor
+   * doesn't move, and neither does the preview — preserving the sanctioned
+   * end-of-document follower drift (invariant 14e) instead of re-correcting.
    * @param {object} d — the active doc.
    * @param {number} offset — the source offset to bring into view.
    */
@@ -266,9 +280,11 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs }) 
     const target = Math.max(0, Math.min(top - sc.clientHeight / 3, max));
     // Stamp the value-based echo guard BEFORE the write (same convention as
     // followScroll/setMode): realScroll drops this pane's echo event because
-    // the offset matches what we wrote, so the preview pane never ratchets.
+    // the offset matches what we wrote, so this programmatic write never
+    // flips the lead — the preview follow below is explicit, not an echo.
     d.__suppE = { deadline: performance.now() + echoMs, value: target };
     sc.scrollTop = target;
+    if (followFromEditor) followFromEditor();
   }
 
   /**

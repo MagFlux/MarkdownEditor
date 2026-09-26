@@ -10,7 +10,7 @@ Built with **Tauri** (native shell) + **Vite** (web frontend). No framework — 
 
 - **Split / Edit / Preview** view modes, **multi-file tabs** (`Ctrl+T` new, `Ctrl+W` / `×` close)
 - **Inline formatting** — bold, italic, underline, strikethrough, code, links (`Ctrl+B/I/U/K`); a plain caret inserts an empty marker pair, a mid-word caret wraps that word, a selection wraps exactly
-- **Find & Replace** — floating non-modal bar (`Ctrl+F` find, `Ctrl+H` replace); live match count, the current match is auto-selected and highlighted as you type; `Esc` stays on the hit instead of jumping back (`Enter`/`F3` next, `Shift+Enter`/`Shift+F3` prev, wrap-around), case toggle, regex mode with `$1` substitutions; replace and replace-all each commit as ONE undo step
+- **Find & Replace** — floating non-modal bar (`Ctrl+F` find, `Ctrl+H` replace); live match count, the current match is auto-selected and highlighted as you type; `Esc` stays on the hit instead of jumping back (`Enter`/`F3` next, `Shift+Enter`/`Shift+F3` prev, wrap-around), case toggle, regex mode with `$1` substitutions; replace and replace-all each commit as ONE undo step; in split view the preview pane follows the editor to the revealed match
 - **GFM task lists** — `- [ ]` / `- [x]` render as live checkboxes in the preview; clicking flips the source line in one undo-able step (exports keep them inert)
 - **Recent files** — hamburger → "Recent files…" opens a hover sub-menu with the last 5 opened/saved files (persisted); a click reopens the file in a new tab, stale entries fail and are dropped. "Export…" groups the PDF/HTML export items in its own sub-menu
 - **Code highlighting** — fenced code blocks with a known language (js/ts, python, json, bash, html, css, rust, go, c/cpp, java, sql, yaml, diff, ini/toml) render with syntax colors in the preview and both exports; unknown languages stay plain code
@@ -151,7 +151,7 @@ npm run verify                    # UI smoke test (tabs, undo, tables)
 | `verify-mermaidfade` | 16 | dark-theme gradient outlines off, no drop shadow |
 | `verify-tauri` | 49 | native Tauri path (stubs `__TAURI_INTERNALS__`, real api/IPC) |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
-| `verify-find` | 34 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups |
+| `verify-find` | 38 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal |
 | `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |
 | `verify-recent` | 12 | recent-files menu: record on open/save, dedupe, cap 10, click opens a new tab, stale entries drop |
 | `verify-codecolor` | 7 | fenced-code tokens highlight in the preview, unknown/mermaid stay plain, token colors paint |
