@@ -156,7 +156,8 @@ npm run verify-scrollsync # Block-anchored split-view scroll sync: the anchor ma
                           # ~200ms at τ=80, tiny sub-line adjustments stay instant), and the
                           # END-REGION re-correction (preview wheeled into its tail pad while
                           # the editor sat exhausted, then one editor notch) lands as a slow
-                          # pan (τ=150) instead of the jump (16 cases).
+                          # pan (τ=150) instead of the jump, and the follower is bit-still
+                          # after the glide lands (the float-position stall fix; 17 cases).
 npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scroll RATIO:
                           # previously the mode button refocused the textarea and the browser
                           # caret-follow snap + followScroll ratchet jumped the view to the
@@ -757,7 +758,21 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     target, clobbering the user's fresh position (a preview-lead landing
     ~1 line past the target; surfaced when the correction τ made a prior
     glide outlive the test's step). The loop terminates on arrival, an
-    800ms cap, tab switch, or cancel — no persistent per-frame work. A
+    800ms cap, tab switch, or cancel — no persistent per-frame work.
+    **Arrival is measured against the glide's FLOAT position state
+    (`g.pos`), never against the pane's live scrollTop** — engines that
+    quantize scrollTop writes to integers (WebKitGTK on X11, WebView2,
+    headless Chromium) turn the sub-pixel tail increments
+    (`current + remain×0.204`) back into the SAME integer once the
+    remaining distance is under ~2.5px, so a read-back glide STALLS there:
+    the arrival test never fires, the loop silently spins rAF no-ops, and
+    the 800ms cap then force-writes the residual 1-2px as ONE visible jump
+    ~0.8s after the pane already looked stopped (the "follower stops, then
+    nudges a few px in the scroll direction a second later" report —
+    reproduced headlessly at t=346ms stop → t=846ms snap). The float walk
+    converges regardless of how the pane quantizes each write, so arrival
+    fires normally, the loop still terminates on arrival (its final write
+    is ≤1px — part of the glide), and the cap stays a true backstop. A
     LARGE delta (≥ CORRECTION_MIN_PX) arriving after the lead has been
     idle ≥ IDLE_CORRECTION_MS is a RE-CORRECTION — re-entering the
     correspondence after the exhausted end region (the preview was wheeled
@@ -769,7 +784,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     so the continuous follow never lags more than ~v·τ. Do not write the
     follower pane directly anywhere else without re-stamping, or the glide
     will keep fighting you.
-    `test/verifyScrollSync.mjs` (16 cases) + `test/verifyScroll.mjs` (5
+    `test/verifyScrollSync.mjs` (17 cases) + `test/verifyScroll.mjs` (5
     cases) pin it; `window.editor.getActiveScrollSyncDebug()` exposes the
     map state (anchors, pair table, countsAgree) for tests/diagnostics.
 

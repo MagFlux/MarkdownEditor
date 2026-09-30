@@ -148,7 +148,7 @@ full local run for release-grade milestones.
 | `verify-math` | 21 | KaTeX preview rendering; self-contained HTML export; PDF raster |
 | `verify-scroll` | 5 | split-view scroll-sync accepts a real follow-pane scroll instantly; follow lands on the content-matched block |
 | `verify-dialogscroll` | 30 | opening the Save/Open/Export picker never moves the document (toolbar buttons, Ctrl+S/O, cancel keeps focus+position, close doesn't flicker) |
-| `verify-scrollsync` | 16 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly |
+| `verify-scrollsync` | 17 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly, and the follower never moves again once the glide lands |
 | `verify-modescroll` | 8 | mode switch preserves the scroll ratio |
 | `verify-modefocus` | 13 | mode click skips its trailing focus only when entering preview |
 | `verify-tabclick` | 6 | re-clicking the active tab is a no-op |

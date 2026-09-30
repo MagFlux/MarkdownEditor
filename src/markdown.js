@@ -989,7 +989,10 @@ export function createApp(root) {
   //    burst (followScroll < 150ms apart) always uses the base τ — the
   //    continuous follow never lags more than ~v·τ.
   //  - the loop terminates on arrival, an 800ms cap, tab switch, or cancel —
-  //    no persistent per-frame work.
+  //    no persistent per-frame work. "Arrival" is measured against the
+  //    glide's FLOAT position state (not the pane's rounded scrollTop), so
+  //    integer-scroll engines (WebKitGTK/WebView2) cannot stall the loop
+  //    just short of the target and turn the cap into a late visible jump.
   const GLIDE_MIN_PX = 10; // at/below this the write is instant (sub-line adjustments); everything else glides
   const GLIDE_TAU_MS = 70;  // exponential approach time-constant (~90% in 2.3τ ≈ 184ms) — the elastic follow
   const CORRECTION_TAU_MS = 150; // slower pan for a big one-off correction after idle
@@ -1009,7 +1012,12 @@ export function createApp(root) {
    * corrections after idle). Each write refreshes the pane's echo stamp
    * (value + deadline + glide id) BEFORE the write so realScroll suppresses
    * the frames' own events; a stamp from any other writer (no matching gid)
-   * makes the glide stand down.
+   * makes the glide stand down. The glide's position is advanced in FLOAT
+   * state (g.pos) and only WRITTEN to the pane — never re-read from it — so
+   * engines that quantize scrollTop to integers (WebKitGTK/WebView2) cannot
+   * stall the approach short of the target: the float walk always reaches
+   * |remain| ≤ 1 and the loop terminates on arrival (the final write is ≤1px,
+   * part of the glide, never a late jump).
    * @param {object} doc The tab in split view.
    * @param {HTMLElement} dst The follower pane's scrollable element.
    * @param {string} stampKey "__suppE" | "__suppP" for the follower pane.
@@ -1033,7 +1041,20 @@ export function createApp(root) {
     const idle = performance.now() - (doc.__followAt || 0);
     const tau = (idle >= IDLE_CORRECTION_MS && Math.abs(delta) >= CORRECTION_MIN_PX)
       ? CORRECTION_TAU_MS : GLIDE_TAU_MS;
-    g = doc[glideKey] = { gid: ++glideSeq, target, tau, t0: performance.now(), last: performance.now(), raf: 0 };
+    // The glide's position is tracked in FLOAT state (`pos`), NOT by
+    // re-reading the pane each frame. WHY: engines that round scrollTop to
+    // integers (WebKitGTK on X11, WebView2, headless Chromium) turn a
+    // sub-pixel per-frame write — current + remain×0.204 — back into the
+    // SAME integer once the remaining distance is under ~2.5px, so a
+    // read-back glide STALLS there: the |remain| ≤ 1 arrival test never
+    // fires, the loop silently spins rAF frames writing no-ops, and the
+    // GLIDE_MAX_MS cap then force-writes the residual 1-2px in ONE visible
+    // jump ~0.8s after the pane already looked stopped (the "follower
+    // stops, then nudges a few px in the scroll direction a second later"
+    // report — reproduced in headless Chromium, t=346ms stop → t=846ms
+    // snap). The float walk converges regardless of how the pane quantizes
+    // each write, so arrival fires normally and the cap stays a backstop.
+    g = doc[glideKey] = { gid: ++glideSeq, target, tau, t0: performance.now(), last: performance.now(), pos: dst.scrollTop, raf: 0 };
     // Claim the pane's echo stamp with OUR gid synchronously: the loop's
     // first frame checks the stamp's gid, and a stale gid-less stamp from an
     // earlier instant write would otherwise make the glide stand down at
@@ -1045,18 +1066,24 @@ export function createApp(root) {
       const s = doc[stampKey];
       if (s && s.gid !== g.gid) { doc[glideKey] = null; return; } // another writer claimed the pane
       const dt = Math.max(1, now - g.last); g.last = now;
-      const remain = g.target - dst.scrollTop;
+      // remain is measured against the FLOAT state, not the pane: the pane
+      // quantizes writes to integers, so a pane-derived remain can plateau
+      // above the arrival threshold forever (the stall above).
+      const remain = g.target - g.pos;
       if (Math.abs(remain) <= 1 || now - g.t0 > GLIDE_MAX_MS) {
+        g.pos = g.target;
         doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: g.target, gid: g.gid };
         dst.scrollTop = g.target;
         doc[glideKey] = null;
         return;
       }
-      const next = dst.scrollTop + remain * (1 - Math.exp(-dt / g.tau));
+      g.pos += remain * (1 - Math.exp(-dt / g.tau));
       // Stamp the value we are ABOUT to write (per frame), so the frames' own
-      // scroll events stay suppressed echoes (value+deadline contract).
-      doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: next, gid: g.gid };
-      dst.scrollTop = next;
+      // scroll events stay suppressed echoes (value+deadline contract). The
+      // pane may quantize the write to an integer; ECHO_EPS (±1px) absorbs
+      // the rounding.
+      doc[stampKey] = { deadline: performance.now() + ECHO_MS, value: g.pos, gid: g.gid };
+      dst.scrollTop = g.pos;
       g.raf = requestAnimationFrame(step);
     };
     g.raf = requestAnimationFrame(step);

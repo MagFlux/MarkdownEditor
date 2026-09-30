@@ -29,6 +29,11 @@
  *     while a one-line delta glides smoothly; and a realistic wheel walk
  *     (100px notches crossing the fence) never teleports more than ~140px
  *     per frame.
+ *  8. Post-settle stability: once the glide lands the follower NEVER moves
+ *     again on its own — the old read-back glide stalled on integer-scroll
+ *     engines (the sub-pixel tail rounded into no-ops) and the 800 ms cap
+ *     then teleported the residual, the "stops, then nudges a few px a
+ *     second later" report.
  *
  * Run with `npm run verify-scrollsync`.
  */
@@ -632,6 +637,32 @@ const parity7d = await (async () => {
 ok("7d end-region re-correction lands as a slow pan (≤80px/frame), settles at parity",
    corr7d.maxStep <= 80 && parity7d.blk >= 0 && Math.abs(parity7d.blk - parity7d.pvi) <= 1,
    "correction max step=" + corr7d.maxStep + "px over " + corr7d.n + " frames | fold block ed=" + parity7d.blk + " pv=" + parity7d.pvi);
+
+/* 7e — POST-SETTLE STABILITY: after the glide lands, the follower must NEVER
+   move again on its own. The old glide read its position back from the pane
+   each frame; on engines that quantize scrollTop to integers (WebKitGTK on
+   X11, WebView2, headless Chromium) the sub-pixel tail increments rounded
+   back to the same integer, the |remain| ≤ 1 arrival test never fired, the
+   loop silently spun rAF no-ops, and the 800 ms GLIDE_MAX_MS cap then
+   force-wrote the residual 1-2px — the user-visible "follower stops, then
+   nudges a few px in the scroll direction a second later" report. The float
+   position state (g.pos) fixes the stall; this case replays a notch and
+   asserts the pane is bit-still for 1.4 s past the settle (long enough to
+   cover the old cap-teleport window). */
+await scrollToLineTop(2, 0); // a mid-document 1:1 prose region (never the clamped ends)
+await sleep(700);
+const stab7e = await p.evaluate(async () => {
+  const d = window.editor.activeTab;
+  const ed = d.editorScroll, pv = d.previewScroll;
+  ed.scrollTop = Math.min(ed.scrollHeight - ed.clientHeight, ed.scrollTop + 90); // one ~100px notch
+  await new Promise((r) => setTimeout(r, 700)); // let the glide fully land
+  const settled = pv.scrollTop;
+  await new Promise((r) => setTimeout(r, 1400)); // > the old 800ms cap-teleport window
+  return { settled: Math.round(settled), after: Math.round(pv.scrollTop) };
+});
+ok("7e post-settle stability: the follower never moves again after the glide lands",
+   Math.abs(stab7e.after - stab7e.settled) <= 0.5,
+   "settled=" + stab7e.settled + " after 1.4s=" + stab7e.after);
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);
