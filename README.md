@@ -119,7 +119,7 @@ Window title/size/icons/identifier/publisher live in `src-tauri/tauri.conf.json`
 | Word-wise caret move / selection | `Ctrl+←` / `Ctrl+→` (+ `Shift`; formatted spans count as one word) |
 | Indent / Outdent | `Tab` / `Shift+Tab` |
 | Open link at caret | `Ctrl+Click` |
-| New tab (anywhere) | `Ctrl+Click` the window |
+| New tab (anywhere) | `Ctrl+Click` the window (a `Ctrl+Click` on a tab just activates it) |
 
 ---
 
@@ -151,7 +151,7 @@ full local run for release-grade milestones.
 | `verify-scrollsync` | 17 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly, and the follower never moves again once the glide lands |
 | `verify-modescroll` | 8 | mode switch preserves the scroll ratio |
 | `verify-modefocus` | 13 | mode click skips its trailing focus only when entering preview |
-| `verify-tabclick` | 6 | re-clicking the active tab is a no-op |
+| `verify-tabclick` | 10 | a click anywhere in a tab (padding included) activates it; re-clicking the active tab is a no-op |
 | `verify-tabscroll` | 7 | a tab's scroll positions survive switching away and back |
 | `verify-themescroll` | 10 | theme switch preserves scroll; scrollbars flip with the theme |
 | `verify-mermaidflicker` | 7 | no raw-code flash on prose keystrokes outside a fence |

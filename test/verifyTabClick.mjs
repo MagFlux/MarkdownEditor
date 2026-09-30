@@ -1,10 +1,15 @@
 /**
- * verifyTabClick.mjs — clicking an already-active tab is a no-op.
+ * verifyTabClick.mjs — tab-click behavior regressions.
  *
- * The old activate() did input.focus()+refresh() on every click, refocusing the
- * textarea (scrolled it into view — both panes jumped 90%→~25%) and re-running
- * marked + mermaid. activate() now short-circuits when doc === activeTab.
- * Run with `npm run verify-tabclick`.
+ * 1-2. Clicking an ALREADY-active tab is a no-op: the old activate() did
+ *      input.focus()+refresh() on every click, refocusing the textarea
+ *      (scrolled it into view — both panes jumped 90%→~25%) and re-running
+ *      marked + mermaid. activate() now short-circuits when doc === activeTab.
+ * 3.   A click ANYWHERE in a tab (its padding, not just the .tname text)
+ *      activates it: the whole .tab paints itself clickable (cursor:pointer +
+ *      hover background) but the old activation binding sat on .tname only, so
+ *      clicks on the padding changed no cursor behavior yet did nothing.
+ *      Run with `npm run verify-tabclick`.
  */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
@@ -118,6 +123,46 @@ const alive = await p.evaluate(() => {
 });
 ok("2a preview DOM not rewritten on redundant click (probe alive)", alive.probe === "alive", "probe=" + alive.probe);
 ok("2b mermaid diagram still rendered, count unchanged", alive.mermaid >= 1, "mermaid=" + alive.mermaid);
+
+// ---------------------------------------------------------------------------
+// CASE 3 — a click on the tab's PADDING (NOT the .tname span) activates the
+// tab. The whole .tab advertises clickability (`.tab { cursor: pointer }` and
+// the hover background cover the 12px left padding around the name), but the
+// activation listener used to sit on .tname only — clicks there changed
+// nothing ("pointer changes, click does nothing"). The listener now binds to
+// the whole .tab element (the × close button stopPropagation()s in its own
+// handler, so closing never also fires activation), and 3b-3d extend case 1-2's
+// no-op contract to the same padding click when the tab is ALREADY active.
+// ---------------------------------------------------------------------------
+await p.evaluate(() => { window.editor.newTab("PadTab", "second tab content"); });
+await sleep(S);
+const firstName = await p.evaluate(() => window.editor.tabs[0].name);
+// x=3px is inside the tab's 12px LEFT PADDING (the .tname span starts at
+// ~13px), so this click can never land on the name span itself.
+const padPos = { x: 3, y: 14 };
+await p.locator(".tab").first().click({ position: padPos });
+await sleep(S);
+const afterPad = await p.evaluate(() => window.editor.activeTab.name);
+ok("3a a click on the tab PADDING (not the name) activates the tab", afterPad === firstName, "active=" + afterPad);
+
+// Redundant padding click on the NOW-active tab: same no-op contract as case 1.
+await setScroll();
+await sleep(S);
+const e2 = await probe("e"), pr2 = await probe("p");
+await armProbe();
+await p.locator(".tab").first().click({ position: padPos });
+await sleep(520);
+const e3 = await probe("e"), pr3 = await probe("p");
+const alive3 = await p.evaluate(() => {
+  const d = window.editor.activeTab;
+  const first = d.preview.firstElementChild;
+  return { probe: first ? first.getAttribute("data-tcprobe") : null, mermaid: d.preview.querySelectorAll(".mermaid-diagram").length };
+});
+ok("3b editor scroll preserved after redundant PADDING click", Math.abs(e3.ratio - e2.ratio) <= 0.05,
+   "was " + e2.ratio.toFixed(3) + " now " + e3.ratio.toFixed(3));
+ok("3c preview scroll preserved after redundant PADDING click", Math.abs(pr3.ratio - pr2.ratio) <= 0.05,
+   "was " + pr2.ratio.toFixed(3) + " now " + pr3.ratio.toFixed(3));
+ok("3d preview DOM not rewritten after redundant PADDING click (probe alive)", alive3.probe === "alive", "probe=" + alive3.probe);
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);

@@ -428,7 +428,14 @@ export function createApp(root) {
       if (!res) return; // unmappable → enhance never stamped it; do nothing
       commit("toggle task", res.text, res.caret, res.caret);
     });
-    doc.tab.querySelector(".tname").addEventListener("click", () => activate(doc));
+    // Activate on a click ANYWHERE in the tab, not just the name span. The
+    // whole tab paints itself clickable (`.tab { cursor: pointer }` + hover
+    // background covers the padding around .tname), so a click on the padding
+    // or the empty stretch between name and × must behave like a click on the
+    // name — the old .tname-only binding left those areas dead ("pointer
+    // changes, click does nothing"). The × button's own click handler stops
+    // propagation (below), so closing never also fires this activation.
+    doc.tab.addEventListener("click", () => activate(doc));
     // Middle-click (button 1) closes the tab, like most editors/browsers.
     // preventDefault stops the browser's default autoscroll on middle mouse.
     // Guarding on button===1 means left/right clicks on the × button still work
@@ -2216,7 +2223,13 @@ export function createApp(root) {
   /* ---- ctrl+click anywhere in window → new tab (except when a .md is being dragged) ---- */
   app.addEventListener("click", (ev) => {
     if (!ev.ctrlKey && !ev.metaKey) return;
-    if (ev.target.closest("a, button, input, textarea, .tab .tname")) return;
+    // The WHOLE .tab is excluded (not just .tab .tname): tab activation is now
+    // bound to the entire tab element, so a ctrl+click on any part of a tab
+    // must mean "switch to that tab" everywhere on it — the old .tname-only
+    // guard let a ctrl+click on the tab's padding spawn a new tab AND
+    // activate, a different result per pixel. .tclose is a <button>, covered
+    // by the button selector.
+    if (ev.target.closest("a, button, input, textarea, .tab")) return;
     ev.preventDefault();
     newTab(undefined, "");
   }, true);
