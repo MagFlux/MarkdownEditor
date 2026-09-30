@@ -106,7 +106,7 @@ Artifacts land in `src-tauri/target/release/bundle/` (`.app`/`.dmg` on macOS, `.
 sudo apt-get install -y libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2
 ```
 
-Window title/size/icons/identifier live in `src-tauri/tauri.conf.json` (default 1200×780, min 720×400). App icons come from `src-tauri/icons/` — regenerate the whole set with `npx tauri icon icon.svg` after editing the source art (the bare `.exe`/AppImage icon is embedded into the binary at Rust build time and picked from `icons/icon.ico`; Windows Explorer can cache the old glyph — `ie4uinit.exe -show` refreshes it).
+Window title/size/icons/identifier/publisher live in `src-tauri/tauri.conf.json` (default 1200×780, min 720×400; `bundle.publisher` = "MagFlux" is what the Windows installers show instead of "Unknown publisher"). App icons come from `src-tauri/icons/` — regenerate the whole set with `npx tauri icon icon.svg` after editing the source art (the bare `.exe`/AppImage icon is embedded into the binary at Rust build time and picked from `icons/icon.ico`; Windows Explorer can cache the old glyph — `ie4uinit.exe -show` refreshes it).
 
 ## Shortcut reference
 
