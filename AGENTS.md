@@ -772,7 +772,19 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     reproduced headlessly at t=346ms stop → t=846ms snap). The float walk
     converges regardless of how the pane quantizes each write, so arrival
     fires normally, the loop still terminates on arrival (its final write
-    is ≤1px — part of the glide), and the cap stays a true backstop. A
+    is ≤1px — part of the glide), and the cap stays a true backstop. The
+    per-frame dt is CLAMPED at 100ms so a janked frame cannot leap the
+    exponential — this also keeps the glide's `animated` accumulator
+    (Σdt, exposed via `getActiveScrollSyncDebug().glide`) a true measure
+    of CONVERGENCE (τ·ln(delta)) rather than wall time, which is what
+    case 7e asserts on: a fixed wall-clock settle point cannot distinguish
+    a healthy glide from a stalled one (both look "still" for a while),
+    and a fixed sleep before a probe can bleed a still-running τ=150
+    correction leg into the probe (the notch then RE-TARGETS it and
+    inherits its slow τ — measured 688ms = 150·ln(84) on an otherwise
+    healthy run). 7e therefore polls the glide state to termination and
+    asserts animated ≤ 500ms for its base-τ notch, then 1.4s of
+    post-termination stillness. A
     LARGE delta (≥ CORRECTION_MIN_PX) arriving after the lead has been
     idle ≥ IDLE_CORRECTION_MS is a RE-CORRECTION — re-entering the
     correspondence after the exhausted end region (the preview was wheeled

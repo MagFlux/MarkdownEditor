@@ -1035,7 +1035,11 @@ export function createApp(root) {
       return;
     }
     let g = doc[glideKey];
-    if (g) { g.target = target; g.t0 = performance.now(); return; } // re-target in place (keeps the glide's own τ)
+    // Re-target in place (keeps the glide's own τ). `animated` resets so it
+    // measures the CURRENT leg only — that is the value case 7e asserts on
+    // (a re-targeted leg must still arrive within ~τ·ln(delta) of animated
+    // time).
+    if (g) { g.target = target; g.t0 = performance.now(); g.animated = 0; return; }
     // A fresh glide with a LARGE delta after the lead has been idle is a
     // re-correction (see the block comment above) — land it as a slow pan.
     const idle = performance.now() - (doc.__followAt || 0);
@@ -1054,7 +1058,7 @@ export function createApp(root) {
     // report — reproduced in headless Chromium, t=346ms stop → t=846ms
     // snap). The float walk converges regardless of how the pane quantizes
     // each write, so arrival fires normally and the cap stays a backstop.
-    g = doc[glideKey] = { gid: ++glideSeq, target, tau, t0: performance.now(), last: performance.now(), pos: dst.scrollTop, raf: 0 };
+    g = doc[glideKey] = { gid: ++glideSeq, target, tau, t0: performance.now(), last: performance.now(), pos: dst.scrollTop, animated: 0, raf: 0 };
     // Claim the pane's echo stamp with OUR gid synchronously: the loop's
     // first frame checks the stamp's gid, and a stale gid-less stamp from an
     // earlier instant write would otherwise make the glide stand down at
@@ -1065,7 +1069,16 @@ export function createApp(root) {
       if (doc !== activeTab || doc[glideKey] !== g) return; // cancelled or tab switched
       const s = doc[stampKey];
       if (s && s.gid !== g.gid) { doc[glideKey] = null; return; } // another writer claimed the pane
-      const dt = Math.max(1, now - g.last); g.last = now;
+      // dt is CLAMPED at 100ms: a janked frame must not leap the exponential
+      // (the approach just takes a few more frames) — and this keeps the
+      // glide's `animated` accumulator below a true measure of the
+      // approach's CONVERGENCE budget (τ·ln(delta) ≈ 2-4.5τ) rather than
+      // wall time, which is what verifyScrollSync case 7e asserts on: a
+      // healthy glide terminates at animated ≈ τ·ln(delta), while a stalled
+      // read-back glide runs to the 800ms cap (~800 animated, its no-op
+      // frames still counting).
+      const dt = Math.min(100, Math.max(1, now - g.last)); g.last = now;
+      g.animated += dt;
       // remain is measured against the FLOAT state, not the pane: the pane
       // quantizes writes to integers, so a pane-derived remain can plateau
       // above the arrival threshold forever (the stall above).
@@ -2265,7 +2278,11 @@ export function createApp(root) {
     openRecent,
     mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf,
     /** getActiveScrollSyncDebug — scroll-sync map internals of the active
-     *  tab (anchors, pair table, ok flags). Test/diagnostic hook only. */
+     *  tab (anchors, pair table, ok flags) plus the LIVE follower glide
+     *  state when one is running (`glide: {animated, tau, target}`; animated =
+     *  accumulated frame dt of the current leg — the cadence-independent
+     *  stall metric verifyScrollSync case 7e asserts on). Test/diagnostic
+     *  hook only. */
     getActiveScrollSyncDebug: () => {
       if (!activeTab) return null;
       const dbg = activeTab.scrollSync.debug();
@@ -2273,7 +2290,12 @@ export function createApp(root) {
       // (scrollsync.js collectEls: lists → items, tables → rows).
       const els = collectEls(activeTab.preview);
       const countsAgree = els.length === dbg.anchors.length;
-      return { ...dbg, liveEls: els.length, countsAgree, liveTags: els.slice(0, 30).map((e) => e.tagName + "." + (e.className || "")) };
+      const g = activeTab.__glideP;
+      return {
+        ...dbg, liveEls: els.length, countsAgree,
+        liveTags: els.slice(0, 30).map((e) => e.tagName + "." + (e.className || "")),
+        glide: g ? { animated: Math.round(g.animated), tau: g.tau, target: Math.round(g.target) } : null,
+      };
     },
   };
 }

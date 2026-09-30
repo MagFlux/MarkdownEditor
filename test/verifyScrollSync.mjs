@@ -29,11 +29,13 @@
  *     while a one-line delta glides smoothly; and a realistic wheel walk
  *     (100px notches crossing the fence) never teleports more than ~140px
  *     per frame.
- *  8. Post-settle stability: once the glide lands the follower NEVER moves
- *     again on its own — the old read-back glide stalled on integer-scroll
- *     engines (the sub-pixel tail rounded into no-ops) and the 800 ms cap
- *     then teleported the residual, the "stops, then nudges a few px a
- *     second later" report.
+ *  8. Post-settle stability: the glide terminates in ANIMATED time (Σdt ≤
+ *     500ms for a base-τ notch — not the 800ms cap; the old read-back glide
+ *     stalled on integer-scroll engines, its no-op frames accumulating ~800ms
+ *     of dt before the cap teleported the residual — the "stops, then nudges
+ *     a few px a second later" report) and the pane never moves again once
+ *     the glide is gone. The settle point is polled from the glide's own
+ *     state, never a fixed wall-clock sample.
  *
  * Run with `npm run verify-scrollsync`.
  */
@@ -638,31 +640,86 @@ ok("7d end-region re-correction lands as a slow pan (≤80px/frame), settles at 
    corr7d.maxStep <= 80 && parity7d.blk >= 0 && Math.abs(parity7d.blk - parity7d.pvi) <= 1,
    "correction max step=" + corr7d.maxStep + "px over " + corr7d.n + " frames | fold block ed=" + parity7d.blk + " pv=" + parity7d.pvi);
 
-/* 7e — POST-SETTLE STABILITY: after the glide lands, the follower must NEVER
-   move again on its own. The old glide read its position back from the pane
-   each frame; on engines that quantize scrollTop to integers (WebKitGTK on
-   X11, WebView2, headless Chromium) the sub-pixel tail increments rounded
-   back to the same integer, the |remain| ≤ 1 arrival test never fired, the
-   loop silently spun rAF no-ops, and the 800 ms GLIDE_MAX_MS cap then
-   force-wrote the residual 1-2px — the user-visible "follower stops, then
-   nudges a few px in the scroll direction a second later" report. The float
-   position state (g.pos) fixes the stall; this case replays a notch and
-   asserts the pane is bit-still for 1.4 s past the settle (long enough to
-   cover the old cap-teleport window). */
+/* 7e — POST-SETTLE STABILITY: the follower must NEVER move again once it has
+   stopped. The old glide read its position back from the pane each frame; on
+   engines that quantize scrollTop to integers (WebKitGTK on X11, WebView2,
+   headless Chromium) the sub-pixel tail increments rounded back to the same
+   integer, the |remain| ≤ 1 arrival test never fired, the loop silently spun
+   rAF no-ops, and the 800 ms GLIDE_MAX_MS cap then force-wrote the residual
+   1-2px — the user-visible "follower stops, then nudges a few px in the
+   scroll direction a second later" report. The float position state (g.pos)
+   fixes the stall.
+
+   TWO assertions, both deliberately FRAME-CADENCE-ROBUST (a fixed wall-clock
+   "settled" sample is neither — the glide's ~2.3τ arrival is measured in
+   ANIMATED time and its start waits on the engine's scroll-event delivery,
+   so on a loaded runner the last ≤1px landing can legitimately fall past any
+   fixed sample point and read as a false "moved again", settled=170 → 171):
+
+   (i)  TERMINATION IN ANIMATED TIME: the glide must end at Σdt ≈ τ·ln(delta)
+        (~315ms for this ~90px notch at τ=70) — NOT at the 800ms cap. A
+        stalled glide's no-op frames still accumulate dt, so animated ≈ 800
+        is the old bug's fingerprint; ≤ 500ms passes healthy with headroom
+        for a spiky first frame while excluding the cap path by ~300ms.
+   (ii) POST-TERMINATION STILLNESS: once `__glideP` is null the pane never
+        moves again for 1.4s (guards any future post-termination writer —
+        echo-expiry lead flips, stray events). */
 await scrollToLineTop(2, 0); // a mid-document 1:1 prose region (never the clamped ends)
-await sleep(700);
+// Settle the relocation's OWN glide by polling it to termination — the
+// glide starts a frame AFTER the scroll event, so the poll must wait for it
+// to APPEAR before waiting for it to end (a naive "glide==null → break"
+// reads before the first frame, settles nothing, and the probe's notch then
+// re-targets the still-live τ=150 correction leg — measured: one glide
+// walking 1334 → 119 with animated=799ms on an otherwise healthy run).
+await p.evaluate(async () => {
+  let seen = false;
+  const t0 = performance.now();
+  while (performance.now() - t0 < 3000) {
+    const dbg = window.editor.getActiveScrollSyncDebug();
+    if (dbg && dbg.glide) seen = true;
+    else if (seen) break; // glide appeared and has now terminated
+    await new Promise((r) => setTimeout(r, 15));
+  }
+});
 const stab7e = await p.evaluate(async () => {
   const d = window.editor.activeTab;
   const ed = d.editorScroll, pv = d.previewScroll;
-  ed.scrollTop = Math.min(ed.scrollHeight - ed.clientHeight, ed.scrollTop + 90); // one ~100px notch
-  await new Promise((r) => setTimeout(r, 700)); // let the glide fully land
+  const changes = [];
+  pv.addEventListener("scroll", () => {
+    changes.push({ t: performance.now(), v: pv.scrollTop, glide: !!d.__glideP });
+  }, { passive: true });
+  const t0 = performance.now();
+  ed.scrollTop = Math.min(ed.scrollHeight - ed.clientHeight, ed.scrollTop + 45); // ~40px mapped delta < CORRECTION_MIN_PX → a base-τ glide
+  // Poll the glide's own state: wait for it to APPEAR (its start waits on
+  // the engine's scroll event + a frame), then for it to terminate (the
+  // loop nulls __glideP on arrival/cap/cancel) — never assuming a
+  // wall-clock settle point. maxAnimated = the largest Σdt seen while
+  // live ≈ its termination value.
+  let sawGlide = false, maxAnimated = 0;
+  const pollT0 = performance.now();
+  while (performance.now() - pollT0 < 3000) {
+    const dbg = window.editor.getActiveScrollSyncDebug();
+    if (dbg && dbg.glide) {
+      sawGlide = true;
+      const a = dbg.glide.animated;
+      if (Number.isFinite(a)) maxAnimated = Math.max(maxAnimated, a);
+    } else if (sawGlide) break; // glide started and has now terminated
+    await new Promise((r) => setTimeout(r, 15));
+  }
   const settled = pv.scrollTop;
-  await new Promise((r) => setTimeout(r, 1400)); // > the old 800ms cap-teleport window
-  return { settled: Math.round(settled), after: Math.round(pv.scrollTop) };
+  await new Promise((r) => setTimeout(r, 1400)); // post-termination stillness window
+  return {
+    sawGlide, maxAnimated, settled: Math.round(settled), after: Math.round(pv.scrollTop),
+    n: changes.length,
+    first: changes.length ? Math.round(changes[0].v) : null,
+    last: changes.length ? Math.round(changes[changes.length - 1].v) : null,
+    tail: changes.slice(-8).map((c) => Math.round(c.t - t0) + ":" + Math.round(c.v) + (c.glide ? "g" : "")),
+  };
 });
-ok("7e post-settle stability: the follower never moves again after the glide lands",
-   Math.abs(stab7e.after - stab7e.settled) <= 0.5,
-   "settled=" + stab7e.settled + " after 1.4s=" + stab7e.after);
+ok("7e post-settle stability: glide terminates in animated time (≤500ms Σdt, not the 800ms cap) and the pane never moves again",
+   stab7e.sawGlide && stab7e.maxAnimated <= 500 && stab7e.n >= 3 && Math.abs(stab7e.after - stab7e.settled) <= 0.5,
+   "glide animated=" + stab7e.maxAnimated + "ms changes=" + stab7e.n + " " + stab7e.first + "→" + stab7e.last +
+   " settled=" + stab7e.settled + " after1.4s=" + stab7e.after + " tail=" + JSON.stringify(stab7e.tail));
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
 console.log(`\n${pass} ok / ${fail} fail`);
