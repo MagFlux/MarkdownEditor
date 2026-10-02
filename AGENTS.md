@@ -12,6 +12,36 @@ Guidance for AI coding agents (and humans) working in this repo. Read this befor
   without being told to, against the user's wishes.) When unsure, ask first.
 - **Never put false attribution in a commit message.** No `Co-Authored-By:
   Claude …`, no `Generated-by`, no "made by an AI" trailer unless its actually true.
+- **Commit messages, when a commit IS requested, follow the CONVENTIONAL
+  COMMITS format (always).** First line = `<type>(optional scope):
+  <description>` — lowercase type, lowercase imperative description, no
+  trailing period, ≤ ~72 chars. Types: `feat` (new user-facing feature or a
+  non-breaking behavior change), `fix` (bug fix), `docs` (documentation),
+  `test` (tests only), `refactor` (no behavior change), `perf`, `build`,
+  `ci`, `chore`, `style`, `revert`. A scope naming the touched area is
+  encouraged when it narrows the message (`fix(editor):`, `fix(picker):`);
+  a wide-reach change may omit it (`docs: …`). Breaking changes get `!`
+  before the colon (`feat!:` / `fix!:`) — the semver mapping falls out of
+  the type: `feat` → minor, `fix`/`chore`/`docs`/… → patch, `!` → major.
+  The description casing is ALL LOWERCASE (a tag-like fragment — matching
+  the Conventional Commits/commitlint defaults; git's kernel style
+  capitalizes the first word, we deliberately do not, and NOBODY uses ALL
+  UPPERCASE). Then a blank line, then the body is a bulleted list (`- `) of
+  the changes made: one bullet per logical change, plain lowercase text —
+  name the files/areas touched and the tests added or updated (incl. the
+  AGENTS.md/README.md doc sync when it happened). This format applies only
+  to commits the user explicitly asked for; it never licenses a commit
+  (rule 1 above). Example:
+
+  ```text
+  fix(picker): pin the picker list to the top when entering a directory
+
+  - src/picker.js: render() resets the list's scrollTop before the innerHTML
+    swap (a folder entered after scrolling down opened MID-LIST)
+  - test/verifyTauriClose.mjs: scenario I pins the reset; fails with the pin
+    removed
+  - AGENTS.md: picker scrollTop contract noted in the file table
+  ```
 
 ## What this is
 
