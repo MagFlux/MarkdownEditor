@@ -11,6 +11,8 @@
 import { createApp } from "./markdown.js";
 import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
 import "./style.css";
+import { createWheelDiag } from "./wheeldiag.js";
+import { installWheelOverride } from "./wheeloverride.js";
 // KaTeX styles for the live preview + PDF export. The stylesheet import AND
 // the export-asset imports live HERE (main.js-only), never inside the
 // src/markdown.js graph: test/test.mjs loads that graph under plain Node,
@@ -117,6 +119,9 @@ if (app.getDocumentText() === "") {
 }
 app.refresh();
 window.editor = app;
+/* Claim the wheel stream on the pane scrollers (see wheeloverride.js — the
+   WSLg wheel saga). Must run once; idempotent listener, no other wiring. */
+installWheelOverride();
 // Expose the mermaid style-stampers for the diagnostics hook + tests.
 window.editor.stampSvgStyles = stampSvgStyles;
 window.editor.installMermaidStyles = installMermaidStyles;
@@ -279,3 +284,23 @@ document.addEventListener("keydown", async (ev) => {
   document.body.appendChild(backdrop);
   btn.focus();
 });
+
+/* ---- Wheel diagnostics hook (Ctrl+Shift+D) ------------------------------------
+   Same diagnostics family as Ctrl+Shift+M just above. The Linux "2-4 wheel
+   notches dead, then scrolling catches up" report could not be reproduced
+   with any synthetic input (CDP mouseWheel and XTest button presses both
+   scroll from notch 1 — synthetic devices lack the XI2 smooth-scroll
+   valuator real mice report, so they exercise different Chromium input
+   paths). This opens a live NON-MODAL floating panel (src/wheeldiag.js):
+   NOT the centered-modal convention, deliberately — the user must wheel the
+   panes while it is open. It logs every wheel event that reaches the page
+   (deltas, mode, target, time gap) plus each pane's actual displacement
+   32 ms / 300 ms later, and a Copy button turns it into a bug-report text.
+   Passive (capture+passive listener, no preventDefault); no text mutation. */
+const wheelDiag = createWheelDiag(() => app.activeTab || null);
+document.addEventListener("keydown", (ev) => {
+  if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return;
+  if (ev.key !== "D" && ev.key !== "d") return;
+  ev.preventDefault();
+  wheelDiag.toggle();
+}, true);

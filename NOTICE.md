@@ -19,13 +19,20 @@ html2canvas   — HTML-to-canvas renderer (js)    MIT   (Copyright 2012+ Niklas 
 jspdf         — PDF generator (js)              MIT   (Copyright 2010-2025 James Hall / yWorks GmbH)
 vite          — build tooling (js)              MIT   (Copyright 2019-2026 the Vite team)
 mermaid       — diagram renderer (js)           MIT   (Copyright 2014-2026 knsv / mermaid.js authors)
+lodash-es     — utility library (js, transitive dep of mermaid — chevrotain / dagre-d3-es)
+              MIT   (Copyright JS Foundation and other contributors)
 electron      — desktop shell runtime (bundles Chromium + Node; MIT)   MIT
               (Copyright 2013-2026 OpenJS Foundation and Electron contributors)
 electron-builder — app packaging tooling (js; build-time only, not shipped
                 inside the installers)      MIT   (Copyright 2016+ Vladimir Krstić / electron-builder contributors)
 
-Apache-2.0-only component
+Apache-2.0 components
 -------------------------
+chevrotain    — tokenizer/parser toolkit (js, transitive dep of mermaid — its
+              flowchart parser runs in the bundle)   Apache-2.0   (Copyright 2014+ Robert Einhorn / chevrotain contributors)
+dompurify     — HTML sanitizer (js; bundled via jspdf and mermaid, dual
+              MPL-2.0 OR Apache-2.0 — the Apache-2.0 side is taken per this
+              project's dual-license policy)   Apache-2.0   (Copyright 2015-2026 Mario Heiderich / Cure53 and DOMPurify contributors)
 playwright    — browser automation (test-only)  Apache-2.0   (Copyright 2020-2026 Microsoft Corporation)
 
   Copyright 2020-2026 Microsoft Corporation
@@ -65,4 +72,8 @@ elkjs       — ELK layout engine (js)   EPL-2.0   (Copyright 2018-2026 Eclipse 
     https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt
 
   (No other bundled dependency is non-permissive; the rest of the
-  mermaid runtime is MIT / Apache-2.0 / ISC / BSD-3-Clause.)
+  mermaid runtime is MIT / Apache-2.0 / ISC / BSD-3-Clause — chevrotain
+  is Apache-2.0, and dompurify (arriving via both jspdf and mermaid 12.2)
+  is dual MPL-2.0 OR Apache-2.0 with the Apache-2.0 side taken. Mermaid
+  12.2 no longer bundles its own katex copy; it reuses the top-level
+  katex listed above.)

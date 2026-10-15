@@ -16,6 +16,8 @@ productName: Markdown Editor
 # name): the Windows exe, the Linux binary inside AppImage/deb/tar.gz, and
 # macOS keeps the productName .app ("Markdown Editor.app").
 executableName: markdown-editor
+# Compiles electron/xwheel-daemon (the X-record wheel rescue) before packing.
+beforeBuild: scripts/before-build.cjs
 electronDist: node_modules/electron/dist
 npmRebuild: false
 asar: true
@@ -26,6 +28,11 @@ files:
   - dist/**/*
   - electron/**/*
   - "!node_modules/**"
+# The X-wheel daemon (electron/xwheel-daemon, compiled at build time on
+# Linux) must be EXECUTABLE — spawn-in-from-asar won't run ELF files, so it
+# is unpacked next to the app and the shell resolves app.asar → app.asar.unpacked.
+asarUnpack:
+  - electron/xwheel-daemon
 
 win:
   icon: build/icons/icon.ico

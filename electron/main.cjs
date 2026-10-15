@@ -33,6 +33,7 @@
  * (`npm run electron:dev`).
  */
 const { app, BrowserWindow, Menu, ipcMain, shell, protocol } = require("electron");
+const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
 const fsp = fs.promises;
@@ -59,6 +60,73 @@ function trace(msg) {
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
+
+/* Run NATIVE WAYLAND whenever the display server offers it — mirroring the
+   Tauri shell (GTK3 under a Wayland session is a native Wayland client), so
+   the app speaks the same input/compositing protocol the old shell did.
+   FORCE, not hint=auto: Chromium's "auto" consults XDG_SESSION_TYPE, which
+   is EMPTY under WSLg, so auto silently resolved to X11/XWayland — verified
+   by an empty wayland-debug journal — and that X11 path is exactly where
+   the real-wheel regressions live (upstream issues.chromium.org/496255940
+   XI2 smooth-scroll valuator re-baselining; 41249467 "wheel doesn't work
+   while moving mouse"). Synthetic probes (CDP mouseWheel, XTest button
+   presses on Xvfb) could never reproduce it: synthetic devices carry no XI2
+   smooth-scroll valuator, so they decode through the still-working button
+   4/5 path while real hardware wheels hit the broken valuator decode.
+   Argv-forcing `--ozone-platform=wayland` boots
+   correctly (wayland_screen registers the real display). NOTE: Electron
+   SCRUBS environment variables during its startup bar the ones it keeps
+   (WAYLAND_DISPLAY survives; ELECTRON_OZONE_PLATFORM_HINT / WAYLAND_DEBUG
+   do NOT), so overrides must arrive as ARGV: `--md-x11` (our alias) or
+   `--ozone-platform=x11` force the XWayland path back for A/B. */
+const mdArgv = process.argv.slice(1);
+let ozoneUsingX11 = true; // set false below when native Wayland is chosen
+if (!process.env.WAYLAND_DISPLAY) {
+  // X11-only (or headless CI/probes): behave like "auto" (x11 first).
+  app.commandLine.appendSwitch("ozone-platform-hint", "auto");
+} else if (mdArgv.includes("--md-x11")) {
+  app.commandLine.appendSwitch("ozone-platform", "x11");
+} else if (!mdArgv.some((a) => a.startsWith("--ozone-platform"))) {
+  ozoneUsingX11 = false;
+  app.commandLine.appendSwitch("ozone-platform", "wayland");
+} else if (!mdArgv.some((a) => a.includes("wayland"))) {
+  app.commandLine.appendSwitch("ozone-platform", "x11");
+  ozoneUsingX11 = true;
+} else {
+  ozoneUsingX11 = false;
+}
+trace("ozone decision: " + (process.env.WAYLAND_DISPLAY
+  ? (mdArgv.includes("--md-x11") ? "x11 (argv override)" : "wayland (forced; WebKitGTK parity)")
+  : "auto (no WAYLAND_DISPLAY — x11-first)"));
+
+/* Without a GPU render node (/dev/dri missing — WSLg frequently does not
+   forward one), the GPU process's WAYLAND buffer manager cannot initialize
+   ("Failed to initialize drm render node handle") and the GPU process
+   aborts: "GPU process isn't usable. Goodbye." — the window's first frame
+   never arrives, ready-to-show never fires, and the window stays invisible
+   forever. Force Chromium's browser-side software compositor with plain SHM
+   wl buffers in that configuration (--disable-gpu removes the GPU process
+   entirely, the known-good WSLg display path). Leave the default when a
+   render node exists. */
+if (process.env.WAYLAND_DISPLAY && !fs.existsSync("/dev/dri")) {
+  app.commandLine.appendSwitch("disable-gpu");
+  trace("no /dev/dri render node — using browser-side software compositing (SHM buffers)");
+}
+
+/* Software compositing by default. WHY: this machine's real environment is
+   WSLg (WAYLAND_DISPLAY points at /mnt/wslg/runtime-dir/wayland-0) with the
+   Windows NVIDIA driver (617.14) bridged through the paravirtual GPU. On
+   that path Chromium repeatedly FAILS to create/advance its scroll
+   animation for the first wheel notches of a gesture (the crbug 797708
+   failure class — GestureScrollBegin/Update ignored until the compositor
+   recovers), so wheel deltas vanish BEFORE the renderer: the user's live
+   wheel capture (Ctrl+Shift+D) showed zero logged events for several
+   notches, then catch-up. EVERY software-rendered probe (Xvfb/SwiftShader —
+   the same configuration the whole Playwright suite runs on) scrolls from
+   notch 1, and the pre-conversion WebKitGTK shell never drove Chromium's
+   compositor at all. For a text editor the GPU buys nothing; opt back IN
+   for GPU-compositing comparison with MD_ELECTRON_GPU=1. */
+if (!process.env.MD_ELECTRON_GPU) app.disableHardwareAcceleration();
 
 /* Production CSP — mirrors the old Tauri config (tauri.conf.json app.security.csp)
    plus the bits the app needs (inline styles: mermaid SVG sheets, KaTeX spans,
@@ -371,6 +439,142 @@ function requestClose(win) {
  * callbacks; nodeIntegration stays off so the page itself has no Node).
  * @returns {Electron.BrowserWindow} The created window.
  */
+/* The WSLg wheel saga, layer 5 (final input rescue): Chromium's X11 wheel
+   decode eats real notches BEFORE the DOM for wheel devices carrying an XI2
+   scroll class (no DOM wheel events for the first notches of each gesture —
+   captured live with Ctrl+Shift+D) while the RAW X stream still delivers
+   every notch as a clean ButtonPress (verified with a ctypes XEvent probe:
+   41 presses in 20 s, one per notch, clean timing). Every engine knob is
+   exhausted (GPU on/off, smooth on/off, protocol, non-passive listener,
+   Chromium 144 pin), so the shell now reads the wheel from the X server
+   itself via an XRecord daemon (electron/xwheel-daemon.c) and turns each
+   notch into a SYNTHETIC wheel event through webContents.sendInputEvent —
+   the input route that bypasses Chromium's X11 decode entirely (it is the
+   same route my CDP probes exercised, which always applied deltas). The
+   daemon only exists when the X wheel is broken this way; on other hosts
+   the file is simply absent and nothing changes. */
+let wheelDaemon = null;
+/** resolveDaemonPath — run location of electron/xwheel-daemon. In a packed
+    app the ELF is unpacked (asarUnpack), so remap app.asar → app.asar.unpacked. */
+function resolveDaemonPath() {
+  let p = path.join(__dirname, "xwheel-daemon");
+  try {
+    if (p.includes("app.asar") && !fs.existsSync(p)) {
+      p = p.replace("app.asar", "app.asar.unpacked");
+    }
+  } catch { /* runtime path patching is best-effort */ }
+  return p;
+}
+/** stopWheelDaemons — terminate the X-wheel recorder at shutdown. */
+let wheelDaemonStopping = false;
+let wheelDaemonRestarts = 0;
+function stopWheelDaemons() {
+  wheelDaemonStopping = true;
+  if (wheelDaemon) {
+    try { wheelDaemon.kill(); } catch { /* already gone */ }
+    wheelDaemon = null;
+  }
+}
+/** startWheelDaemon — spawn the XI2-raw wheel recorder for this window and
+    map its notch lines into synthetic wheel events on the renderer.
+    @param {Electron.BrowserWindow} win — the (already created) main window.
+    @returns {void}
+*/
+function startWheelDaemon(win) {
+  wheelDaemonStopping = false;
+  if (!ozoneUsingX11 || !process.env.DISPLAY) {
+    trace("xwheel-daemon: not applicable (non-X11 display route)");
+    return;
+  }
+  const exe = resolveDaemonPath();
+  if (!fs.existsSync(exe)) {
+    trace("xwheel-daemon not present — wheel synthesis off");
+    return;
+  }
+  const native = win.getNativeWindowHandle(); // 8-byte buffer on X11
+  const winId = native.readUInt32LE(0);
+  try {
+    wheelDaemon = spawn(exe, [String(winId)], {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: process.env,
+    });
+    trace("xwheel-daemon spawned (target window " + winId + ")");
+    // Mark the page as rescue-active (src/wheeloverride.js keys its pair
+    // suppression on this). Set now and again after load — the flag must
+    // survive any dev reload; absent, the page behaves 100% natively.
+    win.webContents.executeJavaScript("window.__MD_RESCUE = 1").catch(() => {});
+    win.webContents.once("did-finish-load", () => {
+      win.webContents.executeJavaScript("window.__MD_RESCUE = 1").catch(() => {});
+    });
+  } catch (e) {
+    trace("xwheel-daemon spawn failed: " + e.message);
+    return;
+  }
+  let buffer = "";
+  let lastNotchAt = 0;
+  let lastBtn = 0;
+  wheelDaemon.stdout.setEncoding("utf8");
+  wheelDaemon.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let nl;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      const m = /^btn=(\d+) inside=(\d) x=(-?\d+) y=(-?\d+)(?: t=(\d+) dev=(\d+))?$/.exec(line);
+      trace("xwheel-daemon line: " + line + (m ? " (parsed)" : " (unparsed)"));
+      if (!m) continue;
+      const inside = m[2] === "1";
+      if (!inside) continue;
+      const btn = m[1];
+      // Collapse same-notch duplicate raw reports (the XWayland slave+master
+      // device pair lands within a couple of ms) while keeping genuine fast
+      // ratchet spins (>= ~15-20 ms between detents) intact.
+      const now = Date.now();
+      if (btn === lastBtn && now - lastNotchAt < 12) continue;
+      lastNotchAt = now;
+      lastBtn = btn;
+      if (!win || win.isDestroyed()) continue;
+      const cb = win.getContentBounds();
+      // Content-space CSS px (WSLg runs at devicePixelRatio 1).
+      const x = Math.max(0, Math.round(Number(m[3])) - cb.x);
+      const y = Math.max(0, Math.round(Number(m[4])) - cb.y);
+      // SIGN: Electron's sendInputEvent mouseWheel uses the OPPOSITE delta
+      // convention from DOM WheelEvent.deltaY (verified live: sending +100
+      // arrived at the page as -100). A down-notch (button 5) must reach the
+      // DOM as POSITIVE deltaY — so invert here.
+      const deltaY = btn === "5" ? -100 : 100;
+      try {
+        win.webContents.sendInputEvent({
+          type: "mouseWheel", x, y, deltaX: 0, deltaY,
+        });
+        trace("xwheel-daemon synthetic wheel: dy=" + deltaY + " at " + x + "," + y);
+      } catch (e) {
+        trace("xwheel-daemon sendInputEvent failed: " + e.message);
+      }
+    }
+  });
+  wheelDaemon.on("error", () => { wheelDaemon = null; });
+  /* Keep-alive: the daemon was observed dying silently mid-session (Xlib's
+     default error-exit before the XSetErrorHandler fix; any future crash
+     likewise) — respawn a few times while the app lives, unless we are
+     shutting down. */
+  wheelDaemon.on("exit", (code) => {
+    trace("xwheel-daemon exited (code " + code + ")");
+    const gone = wheelDaemon;
+    wheelDaemon = null;
+    if (gone && !wheelDaemonStopping && wheelDaemonRestarts < 3 &&
+        win && !win.isDestroyed()) {
+      wheelDaemonRestarts++;
+      setTimeout(() => {
+        if (!wheelDaemonStopping && win && !win.isDestroyed()) {
+          trace("xwheel-daemon respawn attempt " + wheelDaemonRestarts);
+          startWheelDaemon(win);
+        }
+      }, 1500);
+    }
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -434,7 +638,37 @@ function createWindow() {
   } else {
     win.loadURL("app://editor/index.html");
   }
-  win.once("ready-to-show", () => win.show());
+  /* ready-to-show can NEVER fire when the first frame cannot be presented
+     (the wayland buffer manager without /dev/dri — see the boot note). The
+     window would then sit invisible forever ("nothing launches"): (a) a
+     grace timer force-shows the window, and (b) under wayland, if even the
+     grace period produced no ready-to-show, fall back ONCE to the proven
+     x11 path (argv, because env vars don't survive Electron startup). */
+  let readyShown = false;
+  win.once("ready-to-show", () => {
+    readyShown = true;
+    trace("ready-to-show");
+    win.show();
+  });
+  setTimeout(() => {
+    if (!win.isDestroyed() && !win.isVisible()) {
+      trace("ready-to-show did not arrive — force-showing the window");
+      win.show();
+    }
+  }, 2500);
+  setTimeout(() => {
+    if (!readyShown && !win.isDestroyed() &&
+        process.env.WAYLAND_DISPLAY && !mdArgv.includes("--md-x11")) {
+      trace("no first frame under wayland — relaunching once on x11");
+      app.relaunch({ args: [".", "--md-x11"] });
+      app.exit(0);
+    }
+  }, 8000);
+
+  // The X-record wheel rescue (see startWheelDaemon's comment above): with
+  // the real window alive, its X id is passed to the daemon and every notch
+  // the X server delivers inside it comes back as a synthetic wheel event.
+  startWheelDaemon(win);
 
   // Dev-only nicety: F12 toggles devtools (the old Tauri dev build had logs).
   if (!app.isPackaged) {
@@ -499,7 +733,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("will-quit", () => trace("will-quit"));
+app.on("will-quit", () => {
+  stopWheelDaemons();
+  trace("will-quit");
+});
 app.on("quit", () => trace("quit"));
 
 app.on("activate", () => {

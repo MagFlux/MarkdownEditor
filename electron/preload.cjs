@@ -85,6 +85,17 @@ try {
   };
 } catch { /* webUtils unavailable — drop handler falls back to file.text() */ }
 
+/* Platform facts the renderer cannot see about itself (the wheel diagnostics
+   panel reports which compositor session the app is attached to). Absent in
+   a plain browser — the panel then shows "browser-fallback". */
+try {
+  window.__SHELL_ENV = {
+    waylandDisplay: process.env.WAYLAND_DISPLAY || null,
+    ozoneHint: process.env.ELECTRON_OZONE_PLATFORM_HINT || null,
+    nativeWheel: !!process.env.MD_NATIVE_WHEEL, // wheeloverride.js A/B hatch
+  };
+} catch { /* sandboxed preload — the panel falls back to its browser line */ }
+
 window.__TAURI_INTERNALS__ = internals;
 window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
   unregisterListener(event, eventId) { listeners.delete(eventId); },
