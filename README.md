@@ -91,7 +91,7 @@ Everything cross-file is a **static import**; further splitting is safe as long 
 
 ```bash
 npm install
-npm run electron:dev   # native dev window: starts vite, then Electron loads http://127.0.0.1:5173
+npm run electron:dev   # native dev window: starts vite, then Electron loads http://127.0.0.1:5173 (X11-preferred so it paints instantly)
 npm run dev            # browser-only UI at http://127.0.0.1:5173
 ```
 

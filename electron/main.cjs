@@ -81,23 +81,37 @@ protocol.registerSchemesAsPrivileged([
    `--ozone-platform=x11` force the XWayland path back for A/B. */
 const mdArgv = process.argv.slice(1);
 let ozoneUsingX11 = true; // set false below when native Wayland is chosen
+let ozoneNote = "auto (no WAYLAND_DISPLAY — x11-first)";
 if (!process.env.WAYLAND_DISPLAY) {
   // X11-only (or headless CI/probes): behave like "auto" (x11 first).
   app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 } else if (mdArgv.includes("--md-x11")) {
   app.commandLine.appendSwitch("ozone-platform", "x11");
+  ozoneNote = "x11 (argv override)";
+} else if (DEV_URL && !mdArgv.some((a) => a.startsWith("--ozone-platform"))) {
+  // DEV runs prefer the proven-painting X11 route (vite + HMR are identical
+  // over XWayland). On hosts where the Wayland surface can never paint
+  // (WSLg) this skips the doomed attempt AND its paint-watchdog relaunch —
+  // which used to hand the window to a process the dev orchestrator no
+  // longer owned, so vite died with the first instance and the relaunched
+  // dev window loaded a dead server (blank). An explicit
+  // --ozone-platform=wayland still wins (handled below).
+  app.commandLine.appendSwitch("ozone-platform", "x11");
+  ozoneUsingX11 = true;
+  ozoneNote = "x11 (dev preference — avoids the wayland-relaunch handoff)";
 } else if (!mdArgv.some((a) => a.startsWith("--ozone-platform"))) {
   ozoneUsingX11 = false;
   app.commandLine.appendSwitch("ozone-platform", "wayland");
+  ozoneNote = "wayland (forced; WebKitGTK parity)";
 } else if (!mdArgv.some((a) => a.includes("wayland"))) {
   app.commandLine.appendSwitch("ozone-platform", "x11");
   ozoneUsingX11 = true;
+  ozoneNote = "x11 (explicit ozone arg)";
 } else {
   ozoneUsingX11 = false;
+  ozoneNote = "wayland (explicit ozone arg)";
 }
-trace("ozone decision: " + (process.env.WAYLAND_DISPLAY
-  ? (mdArgv.includes("--md-x11") ? "x11 (argv override)" : "wayland (forced; WebKitGTK parity)")
-  : "auto (no WAYLAND_DISPLAY — x11-first)"));
+trace("ozone decision: " + ozoneNote);
 
 /* Without a GPU render node (/dev/dri missing — WSLg frequently does not
    forward one), the GPU process's WAYLAND buffer manager cannot initialize
@@ -633,6 +647,7 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  trace("load target: " + (DEV_URL || "app://editor/index.html"));
   if (DEV_URL) {
     win.loadURL(DEV_URL);
   } else {
