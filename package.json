@@ -40,8 +40,7 @@
     "electron": "electron .",
     "electron:dev": "node scripts/before-build.cjs && node scripts/electron-dev.cjs",
     "electron:start": "node scripts/before-build.cjs && npm run build && electron .",
-    "electron:build": "npm run build && electron-builder --publish never",
-    "wheel-trace": "node scripts/wheel-trace.cjs"
+    "electron:build": "npm run build && electron-builder --publish never"
   },
   "devDependencies": {
     "electron": "^40.10.6",
