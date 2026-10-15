@@ -10,25 +10,24 @@
  * static-imported modules and are re-exported below so this file's public shape
  * is unchanged.
  *
- * IMPORTANT (invariants 2 & 8 in AGENTS.md): every @tauri-apps/* import below
- * and the static export imports in export.js must stay static — they have to
- * hoist into the single bundle the GTK webview can load. Never convert them to
- * a dynamic import(); a failed runtime chunk fetch silently disables
- * save/open, export, and the window-close guard.
+ * IMPORTANT (invariants 2 & 8 in AGENTS.md): every shell-IPC import below
+ * (shellapi.js) and the static export imports in export.js must stay static —
+ * they have to hoist into the single bundle. Never convert them to a dynamic
+ * import(); a failed runtime chunk fetch silently disables save/open, export,
+ * and the window-close guard.
  */
 import * as icons from "./icons.js";
 import { marked } from "marked";
 
-/* Tauri integrations are imported STATICALLY (not dynamic import()).
-   In the Tauri webview, code-split relative chunks loaded at runtime are
-   unreliable under the custom protocol; a failed dynamic import would silently
-   disable save/open AND the window-close guard. Static imports hoist these into
-   the main bundle so they are always available. They are pure JS in a plain
-   browser (they only touch window.__TAURI_INTERNALS__ when called), so importing
-   them here is browser-safe. All uses below stay guarded by isTauri(). */
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists } from "@tauri-apps/plugin-fs";
-import { homeDir as tauriHomeDir } from "@tauri-apps/api/path";
+/* Shell IPC (Electron; see electron/preload.cjs) is imported STATICALLY (not
+   dynamic import()). A failed dynamic import would silently disable save/open
+   AND the window-close guard, so static imports hoist shellapi.js into the
+   main bundle where it is always available. It is pure JS in a plain browser
+   (it only touches window.__TAURI_INTERNALS__ when called), so importing it
+   here is browser-safe. All uses below stay guarded by isTauri(). The aliases
+   keep the historic "tauri" naming of the wire contract (the same contract the
+   Playwright harnesses stub — test/verifyTauriClose.mjs). */
+import { getCurrentWindow, readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists, homeDir as tauriHomeDir, pathForFile } from "./shellapi.js";
 
 /* Export libraries — STATIC imports, same invariant as the Tauri plugins above:
    they must hoist into the single main bundle (no runtime code-split chunks),
@@ -1647,8 +1646,11 @@ export function createApp(root) {
       let path = null, text;
       if (isTauri()) {
         try {
-          path = f.path || (f[0] && f[0].path) || null;
-       if (path) text = await tauriReadTextFile(path);
+          // Electron removed File.path; the preload exposes webUtils'
+          // getPathForFile (shellapi.pathForFile). Fake files (tests, drops of
+          // in-memory blobs) have no path — fall through to f.text() below.
+          path = pathForFile(f);
+          if (path) text = await tauriReadTextFile(path);
         } catch { /* ignore */ }
       }
       if (text === undefined && f.text) { try { text = await f.text(); } catch { continue; } }

@@ -1,5 +1,5 @@
 /**
- * verifyRecent.mjs — Recent files menu regression (native path, stubbed IPC).
+ * verifyRecent.mjs — Recent files menu regression (native shell path, stubbed IPC).
  *
  * Pins the contracts of the hamburger menu's Recent files section: a native
  * open (openFile with a path) and a native save record entries, dedupe by

@@ -1,13 +1,13 @@
 /**
  * verifyExport.mjs — Export (HTML/PDF) verification (Playwright, Chromium).
  *
- * Drives the hamburger menu + in-app picker, stubs the Tauri fs IPC, and
+ * Drives the hamburger menu + in-app picker, stubs the shell-IPC bridge, and
  * asserts menu open/close/outside-click/Escape, HTML and PDF save paths
  * (including cancel and browser Blob-download fallbacks), and that menu items
  * don't leak into the default toolbar focus flow. Run with `npm run verify-export`.
  */
 // Export (HTML/PDF) verification — drives the hamburger menu + in-app picker,
-// stubs the Tauri fs IPC the same way verifyTauriClose.mjs does, and asserts:
+// stubs the shell-IPC bridge the same way verifyTauriClose.mjs does, and asserts:
 //   - Menu open / close / outside-click / Escape keyboard
 //   - HTML export → write_text_file with valid standalone HTML
 //   - PDF  export → write_file with non-empty byte payload
@@ -15,7 +15,7 @@
 //   - Browser  → Blob download (no IPC)
 //   - Menu items don't leak into the default toolbar focus flow
 //
-// Real plugin command shapes (node_modules/@tauri-apps/plugin-fs):
+// Command shapes (the shell wire contract; src/shellapi.js + electron/main.cjs):
 //   plugin:fs|write_text_file : content = 1st positional arg, path = options.headers.path
 //   plugin:fs|write_file      : data    = 1st positional arg, path = options.headers.path
 //   plugin:path|resolve_directory : { directory } → string (homeDir)
@@ -114,7 +114,7 @@ function installInternals() {
 }
 
 /**
- * scenario — run one test case in a fresh browser context with Tauri stubs.
+ * scenario — run one test case in a fresh browser context with shell-IPC stubs.
  * @param {string} name — the scenario label printed as a section header.
  * @param {(env: {page: any, st: any, ok: any, wait: any, errors: any}) => Promise<void>} run — the case body.
  */

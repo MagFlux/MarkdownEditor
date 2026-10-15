@@ -2,15 +2,17 @@
  * links.js — link detection and opening actions for the Markdown editor.
  *
  * The factory receives app state and environment callbacks so Ctrl+click and
- * keyboard opening keep the browser fallback alongside the Tauri path.
+ * keyboard opening keep the browser fallback alongside the shell (Electron)
+ * path. URL opening goes through shellapi.js's openUrl (the shell opener
+ * command → shell.openExternal in the Electron main process).
  */
-import { openUrl as tauriOpenUrlApi } from "@tauri-apps/plugin-opener";
+import { openUrl as tauriOpenUrlApi } from "./shellapi.js";
 
 /**
  * createLinkHandlers — build link detection and opening actions.
  * @param {object} deps Link dependencies supplied by createApp.
  * @param {Function} deps.getActiveDoc Return the active tab document.
- * @param {Function} deps.isTauri Return whether Tauri is available.
+ * @param {Function} deps.isTauri Return whether the shell bridge is available.
  * @param {Function} [deps.openUrl] Open a URL in the browser fallback.
  * @returns {{findLinkToken: Function, tauriOpenUrl: Function, openAtCaret: Function}}
  */
@@ -58,7 +60,7 @@ export function createLinkHandlers({ getActiveDoc, isTauri, openUrl = (url, targ
   }
 
   /**
-   * tauriOpenUrl — open a URL through Tauri's opener plugin when available.
+   * tauriOpenUrl — open a URL through the shell opener when available.
    * @param {string} url Absolute URL to open.
    * @returns {Promise<boolean>} true on success, false on fallback or error.
    */

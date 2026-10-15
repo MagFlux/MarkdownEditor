@@ -54,7 +54,7 @@ const sample = [
   "- **Rich paste** — paste HTML from Excel / Word (tables, bold spans) and it converts to Markdown in one undoable step",
   "- **Recent files** — the hamburger menu remembers the last files you open or save",
   "- **Diagrams** — any ` ```mermaid ` fence renders live, here and in your PDF/HTML export",
-  "- **Multi-tab** — **Ctrl+click** anywhere for a new tab; open/save real files on Tauri",
+  "- **Multi-tab** — **Ctrl+click** anywhere for a new tab; open/save real files in the desktop app",
   "- **Export** from the hamburger menu (Export… → As PDF / As HTML) — the preview you see is the file you get",
   "",
   "## Your first tasks",
@@ -104,12 +104,12 @@ const sample = [
   "| **Ctrl+F / Ctrl+H** | Find / find & replace (Enter = next, Esc = close) |",
   "| **Ctrl+Arrow** | Word-wise caret move (formatted spans count as one word) |",
   "| **Ctrl+Z / Ctrl+Y** | Undo / redo |",
-  "| **Ctrl+S** | Save (native on Tauri; download in browser) |",
+  "| **Ctrl+S** | Save (writes to disk in the desktop app; download in browser) |",
   "| **Ctrl+click** | New tab |",
   "",
   "> Select a word and click a toolbar button — or just start typing `**` to bold.",
   "",
-  "That's it — a single-file, cross-platform editor built with Tauri.",
+  "That's it — a single-file, cross-platform editor, running in Electron.",
 ].join("\n");
 
 if (app.getDocumentText() === "") {

@@ -49,15 +49,27 @@ A single-window, multi-tab Markdown editor. Blank tabs are numbered `Untitled 1`
 `Untitled 2`, … within each application run; the counter resets on restart. Plain JS
 (no framework), one DOM, one
 source of truth (the textarea). A color/highlight overlay sits under the textarea;
-the editor stays a `.md` file with no lock-in. Native shell is Tauri on GTK on Linux
-(WebKitGTK), with a browser fallback so the same code runs under `vite preview`.
+the editor stays a `.md` file with no lock-in. Native shell is **Electron**
+(`electron/main.cjs` + `electron/preload.cjs`; the frontend is served over the
+privileged `app://` protocol in production and the vite dev server in dev), with a
+browser fallback so the same code runs under `vite preview`.
+
+> **Historical note**: the shell was originally Tauri (Rust + WebKitGTK on Linux).
+> The Electron conversion kept the frontend untouched by moving the *wire
+> contract* to Electron: the preload installs the same
+> `window.__TAURI_INTERNALS__.invoke` surface the Playwright harnesses stub
+> (`test/verifyTauriClose.mjs`), the `plugin:*` commands are answered by
+> main-process IPC routers in `electron/main.cjs`, and `src/shellapi.js` vendors
+> the wrapper semantics of the old `@tauri-apps/*` packages (which are no longer
+> dependencies — only their command names and byte-level semantics survive).
+> Mentions of "Tauri-shaped" contracts in this file describe that wire contract.
 
 ## Keep the docs current (mandatory for every change)
 
 `AGENTS.md` and `README.md` are the source of truth for how to build, test, and run
 this project. **After you make any change** — a new file, a renamed file, a new/changed
-script in `package.json`, a new/changed permission or scope in
-`src-tauri/capabilities/default.json`, an invariant, a keybind, a limitation, or a
+script in `package.json`, a new/changed IPC command or permission in
+`electron/main.cjs` / `electron-builder.yml`, an invariant, a keybind, a limitation, or a
 behavior the user sees — **update both `AGENTS.md` and `README.md` in the same
 change** so they stay accurate. Do not leave a doc describing the state before your
 edit. If a change doesn't affect the documented surface, a quick check that neither
@@ -76,7 +88,7 @@ documenting a change: the exhaustive WHY/history goes in `AGENTS.md`, and
 **`LICENSE.md` and `NOTICE.md` must also stay current** (this is a mandatory todo for
 every change, not optional). Whenever a dependency is **added, removed, or changes
 version or license** — a new `dependencies`/`devDependencies`/`peerDependencies` entry,
-a new Rust crate in `src-tauri/Cargo.toml`, or an upgrade that swaps one license for
+or an upgrade that swaps one license for
 another — **update `NOTICE.md` in the same change** (add/remove/re-license the line,
 keep it in the right bucket: MIT, MIT/Apache dual, Apache-2.0-only, other copyleft,
 or runtime-only), and
@@ -115,19 +127,20 @@ dependencies:
   user explicitly approves the exception (and then log it in `NOTICE.md` in its own
   "non-permissive (user-approved exception)" bucket).
 
-**Before you install or import any new library** — any `npm install <pkg>`, a new
-`dependencies`/`devDependencies`/`peerDependencies` entry, or a new Rust crate in
-`src-tauri/Cargo.toml` — **check its license first, before you use it:**
+**Before you install or import any new library** — any `npm install <pkg>` or a new
+`dependencies`/`devDependencies`/`peerDependencies` entry — **check its license
+first, before you use it:**
 - JS: `npm info <pkg> license` (or read `node_modules/<pkg>/package.json` → `license`),
   and also scan *nested* dependencies for anything non-permissive that ships inside.
-- Rust: the crate's `Cargo.toml`/crates.io page → `license` field (many are
-  `MIT OR Apache-2.0`).
 
 > Two distinctions that still matter:
-> - **A shared *system* runtime we merely link to** (WebKitGTK on Linux, LGPL) is
->   allowed by AGPL-3.0 because it's a System Library we do **not** bundle — the app is
->   "the work" and the runtime merely hosts it. An LGPL/GPL **library we bundle as code**
->   (pulled into `node_modules` or compiled in) falls under the copyleft rule above.
+> - **A shared *system* runtime we merely link to** (e.g. the OS GTK/KDE/X11
+>   libraries the packaged Electron uses on Linux) is allowed by AGPL-3.0 because
+>   it's a System Library we do **not** bundle — the app is "the work" and the
+>   runtime merely hosts it. (Electron itself — Chromium/Node — IS bundled, so it
+>   must be permissive or AGPL-compatible; it is MIT. Debian-the-.deb additionally
+>   pulls standard system libs as dependencies; that is package management, not
+>   redistribution of a copyleft work of ours.)
 > - **AGPL §13 (Remote Network Interaction):** if this ever runs as a *network service*
 >   other users touch over a server, we must offer that service's **Corresponding Source**
 >   to those users at no charge. Right now this is a local desktop editor (the browser
@@ -285,16 +298,17 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
     # themeVariables:{useGradient:false,dropShadow:"none"}; checked in BOTH
     # themes (16 cases: solid stroke + no drop-shadow filter — the Windows
     # "fuzzy borders" report).
-   npm run verify-tauri   # NATIVE Tauri path: stubs __TAURI_INTERNALS__, drives the
-                         # real api/IPC (55 cases) — save→in-app picker→write+close,
-                        # overwrite-confirmation→write, overwrite-cancel→stays,
+   npm run verify-tauri   # SHELL-IPC native path (script name kept from the Tauri era):
+                         # stubs __TAURI_INTERNALS__ and drives the real wire contract the
+                         # Electron preload implements — the same install the app ships
+                         # (55 cases) — overwrite-confirmation→write, overwrite-cancel→stays,
                         # picker-cancel→stays, save-discard-cancel→stays,
                         # known-path→direct write, open→picker→new tab, open-cancel,
                         # navigate-into-forbidden-dir→crumb stays on last readable,
                         # Home button always present in the picker pathbar and jumps
                         # back to the home dir even after navigating deep, and the
                         # a caret ENTERS a hidden (dot) folder (read_dir on the dot-path) —
-                        # the UI-level guard for the fs requireLiteralLeadingDot:false fix —
+                        # the UI-level guard that nothing filters dot-entries (invariant 7) —
                         # and scenario I: EVERY directory entry (folder click, Up,
                         # Home, crumb click) pins the picker list's scrollTop back to 0 —
                         # the <ul> is long-lived, so a stale offset survived the
@@ -362,14 +376,14 @@ npm run verify-codecolor # Fenced-code highlighting (7 cases): a registered-lang
                         # overlay never contains hljs markup (round-trip stays
                         # render.js's domain).
 
-# Native app (needs Rust + WebKitGTK; make sure `cargo` is on PATH,
-# e.g. `export PATH="$HOME/.cargo/bin:$PATH"` in your shell profile)
-npx tauri dev          # dev window
-npx tauri build        # release binary + bundle artifacts
+# Electron shell (Chromium bundled; no Rust/toolchain — Node is enough)
+npm run electron:dev   # dev window: vite dev server + Electron loading http://127.0.0.1:5173
+npm run electron:start # build dist/ then run the app (app:// protocol)
+npm run electron:build # build dist/ + electron-builder for THIS platform's targets
 ```
 
 After any edit to `src/`, **run `npm run build`** and confirm the production bundle
-still emits a single `dist/assets/index-*.js` (no code-split Tauri-plugin chunks) —
+still emits a single `dist/assets/index-*.js` (no code-split chunks) —
 see the invariant below.
 
 **Run the tests your change can actually affect (targeted testing), not the whole
@@ -388,8 +402,10 @@ release tag or a broad refactor). The complete roster, cheap → expensive
 `verify-mermaidstyle`, `verify-mermaidfade`, `verify-tauri`, `verify-caret`,
 `verify-find`, `verify-tasks`, `verify-recent`, `verify-codecolor`, and
 `npm test`) — all must be green in CI.
-For Tauri-native changes also run `npm run verify-tauri` (targeted, since it needs
-the built dist).
+For shell-IPC changes (src/shellapi.js, electron/preload.cjs, electron/main.cjs)
+also run `npm run verify-tauri` (targeted, since it needs the built dist) — plus a
+real-shell smoke check (`npm run electron:start` under a display / xvfb) when the
+main-process side changed.
 
 ## CI/CD (GitHub Actions)
 
@@ -405,50 +421,58 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
 
  1. **`test`** (ubuntu-latest) — the full Node/Playwright verification suite,
       cheap → expensive: `npm test` → `verify` → `verify-undo` → `verify-save` →
-       `verify-toolbar` → `verify-paste` → `verify-export` → `verify-scroll` →
-       `verify-dialogscroll` → `verify-scrollsync` → `verify-modescroll` → `verify-modefocus` → `verify-tabclick` → `verify-tabscroll` → `verify-mermaidfade` → `verify-caret` →
-       `verify-find` → `verify-tasks` → `verify-recent` → `verify-codecolor` → `verify-tauri`. No Rust.
+       `verify-toolbar` → `verify-paste` → `verify-export` → `verify-math` →
+       `verify-scroll` → `verify-dialogscroll` → `verify-scrollsync` →
+       `verify-modescroll` → `verify-modefocus` → `verify-tabclick` →
+       `verify-tabscroll` → `verify-themescroll` → `verify-mermaidflicker` →
+       `verify-mermaidstyle` → `verify-mermaidfade` → `verify-caret` →
+       `verify-find` → `verify-tasks` → `verify-recent` → `verify-codecolor` →
+       `verify-tauri`. No Electron binary needed (the suites drive the bundle and
+       stub the shell bridge), so the job sets `ELECTRON_SKIP_BINARY_DOWNLOAD=1`
+       during `npm ci` to skip that download.
     Runs on PR and on release. This is the safety net for local development:
     agents are expected to run only the TARGETED suites for their change locally
     (see the "Run the tests your change can actually affect" note above); the
     full roster runs here on every PR.
 
-2. **`build`** (3-OS matrix) — the expensive one: compiles the Rust shell +
-   packages installers via `tauri-apps/tauri-action@v0`, then re-packages a
-   portable standalone archive per OS from the already-built output (no extra
-   compile) and uploads it to the same release via `gh release upload`:
-   - `windows-latest`: `--bundles nsis,msi` (NSIS via `choco`) + `*-windows-x64-portable.zip` (raw `markdown-editor.exe` zipped via `Compress-Archive`)
-   - `macos-14`: `--bundles dmg` + `*-macos-aarch64-portable.zip` (the `.app` is extracted from the `.dmg` via `hdiutil attach` + `ditto -c -k --keepParent` — `dmg` alone leaves no loose `.app` on disk, so the step mounts the dmg and copies whatever `*.app` it contains)
-   - `ubuntu-22.04`: `--bundles appimage,deb` (WebKitGTK 4.1, GTK3, appindicator, rsvg) + `*-linux-x86_64-portable.tar.gz` (raw `markdown-editor` binary; NOT fully self-contained — Tauri links WebKitGTK dynamically, so the target machine must provide the runtime libs `libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 librsvg2-2` — the AppImage remains the most portable Linux option, the `.deb` pulls these in automatically)
+2. **`build`** (3-OS matrix) — the expensive one: `npm ci` (Electron included),
+   injects the tag version into `package.json`, then runs
+   `npx electron-builder --publish never` — every installer and portable comes
+   straight out of electron-builder's `release/` output dir (targets configured in
+   `electron-builder.yml`, no separate re-packaging step — the old Tauri pipeline's
+   dmg-mounting/tar/zip hops are gone) — and uploads it to the same release via
+   `gh release upload`:
+   - `windows-latest`: NSIS `markdown-editor-<v>-x64-setup.exe`, WiX MSI `markdown-editor-<v>-x64.msi` (a stable `upgradeCode` in the config so upgrades replace the old install) + portable `markdown-editor-<v>-windows-x64-portable.exe` (electron-builder's portable target). electron-builder downloads NSIS/WiX itself — no choco step.
+   - `macos-14` (Apple Silicon): `markdown-editor-<v>-macos-arm64.dmg` + `markdown-editor-<v>-macos-arm64-portable.zip` (the `zip` target = the portable `.app`)
+   - `ubuntu-22.04`: `markdown-editor-<v>-x86_64.AppImage`, `markdown-editor-<v>-amd64.deb` (+ a generated `markdown-editor.desktop` with `StartupWMClass=markdown-editor`, maintained via `desktopName` + `linux.syncDesktopName`) + `markdown-editor-<v>-linux-x86_64-portable.tar.gz` (the `linux-unpacked` dir — needs the standard desktop libs like every unpacked Electron; the AppImage/deb ship the full runtime). NO apt package installs — Electron bundles Chromium/Node; only the usual shared desktop libs matter at runtime.
+
+   The blockmap sidecars (`*.blockmap`) and `builder-effective-config.yaml` are
+   intentionally NOT uploaded (updater internals/config dump).
 
    Gated on `validate-tag` + `test` passing **and** `github.event_name == 'release'` (so it
    never runs on PRs or plain pushes). Installers + portables attach to the exact
    release tag that was just created. The tag (`vX.Y.Z`) is the version: the
-   build job strips the `v` and injects it into `src-tauri/tauri.conf.json`
-   and `src-tauri/Cargo.toml` (both keep a `0.0.0` placeholder in the repo)
-   before `tauri build`, so the bundled app/installers carry the tag.
-   Never bump a version file by hand — just cut the release.
+   build job strips the `v` and injects it into `package.json` (`0.0.0`
+   placeholder in the repo) before electron-builder runs, so the bundled
+   app/installers carry the tag. Never bump a version file by hand — just cut
+   the release.
 
-### `tauri-action` inputs (what actually works)
+### electron-builder specifics (what actually works)
 
-| Input | Value | Why |
+| Key | Value | Why |
 |---|---|---|
-| `projectPath` | `.` (repo root) | The action uses this as the **cwd** for both `tauri build` and `beforeBuildCommand: npm run build`. It also auto-discovers `src-tauri/` by globbing for `tauri.conf.json` (glob: `**/tauri.conf.json`). Setting it to `src-tauri` would make both commands run inside `src-tauri/` where there is no `package.json` → instant failure. |
-| `tauriScript` | `npx tauri` | Bare `tauri` is not on PATH. `npx` resolves `@tauri-apps/cli` from the root `node_modules/`. The action's auto-detect would work too, but being explicit avoids the `install -g` fallback. |
-| `args` | `--bundles <list>` | Passes through to `tauri build`. Without it, all platforms would attempt `targets: "all"`. |
-| `tagName` | `${{ github.event.release.tag_name }}` | The release tag itself (e.g. `v0.1.1`) — the tag is the version, no `__VERSION__` lookup. |
-| `releaseDraft` | `true` | Keeps the release hidden until you manually publish. |
-
-**Do NOT add**: `project` (rejected — use `projectPath`), `artifactName` (rejected),
-`releaseCommitish`, or any input not in the action's `action.yml`. The action validates
-inputs strictly; an unrecognised key fails the step immediately.
+| `files` | `dist/**/*`, `electron/**/*`, `!node_modules/**` | Only the built bundle + the shell scripts get packed. The editor's runtime libs (marked/katex/mermaid/…) live in **devDependencies** — they are inlined into the single Vite bundle, so there is nothing to ship from `node_modules` (verified: the packed `app.asar` contains zero `node_modules` entries and yet is fully self-contained). |
+| `electronDist` | `node_modules/electron/dist` | electron-builder reuses the Electron already installed by `npm ci` instead of re-downloading its own copy (saves ~150 MB per CI run). npm's Electron postinstall must have run (it is skipped when `ELECTRON_SKIP_BINARY_DOWNLOAD=1` — the test job sets that; the build job must NOT). |
+| `npmRebuild` | `false` | No native modules — skip the rebuild pass entirely. |
+| `executableName` | `markdown-editor` | The raw binary name inside AppImage/deb/tar.gz and the Windows exe (the old Tauri binary name, kept for release-artifact parity). |
+| `desktopName` + `linux.syncDesktopName` | `markdown-editor.desktop` / `true` | Syncs the generated `.desktop`'s `StartupWMClass` with Electron's app_id so GNOME/KDE taskbars associate the running window (electron-builder warns loudly without it; the old Tauri shell had the same via `StartupWMClass={{exec}}`). |
+| artifact names | per-target in the yml | lowercase kebab names (`markdown-editor-<v>-<platform>-…`); `${arch}` is electron-builder's (`x64` win, `arm64` mac, `x86_64` linux AppImage; the deb uses `amd64` by hand). |
 
 ### Optional signing secrets (not set)
 
 Without these the build produces **unsigned** installers:
-- `TAURI_SIGNING_PRIVATE_KEY` — for the updater JSON (auto-update)
-- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_CERTIFICATES`, `APPLE_SIGNING_PASSWORD` — macOS Developer ID
-- `CSC_LINK`, `CSC_KEY_PASSWORD` — Windows SmartCard cert
+- macOS Developer ID / notary (mac `identity` is forced to `null` in the config; remove that + set the secrets to sign)
+- `CSC_LINK`, `CSC_KEY_PASSWORD` — Windows code-signing cert
 
 Set them in **Settings → Secrets and variables → Actions** (repo level) or
 **Organization → Secrets** (org level). They are available to the `build` job only.
@@ -457,13 +481,17 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 
 | Path | Role |
 |---|---|
-| `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence, plus the **scroll-holding dialog helpers** (`capturePaneScroll` / `restorePaneScroll` / `focusKeepScroll` / `pickPathKeepScroll` — every in-app picker runs through the wrapper so open/save/export never move the document, and the save/open trailing toolbar focus is preventScroll + backdrop-gated; see the invariant "Opening the Save/Open/Export picker…") and the **menu structure**: a "Recent files…" toggle (hover sub-menu — `setSubmenuOpen`/`closeSubmenus`, a 250ms close grace period so the diagonal move toggle→submenu doesn't kill it, radio behavior between the two submenus, entries rebuilt on every open; shows the last `RECENT_MAX` = 5 files from localStorage `me.recentPaths`, or a disabled "(No recent files)" placeholder; record on native open/save, `openRecent` → new tab, stale entries dropped after the in-app "Open failed" modal) and an "Export…" toggle whose submenu holds the existing PDF/HTML items — there is deliberately NO Find menu item (Ctrl+F/Ctrl+H are the find entry points). Keeps the STATIC Tauri imports and wires the extracted export handlers; it re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here). |
+| `src/markdown.js` | The app: `createApp()` — tabs, undo/redo, keybinds, save/open, DnD, window-close guard, modals, toolbar actions, session persistence, plus the **scroll-holding dialog helpers** (`capturePaneScroll` / `restorePaneScroll` / `focusKeepScroll` / `pickPathKeepScroll` — every in-app picker runs through the wrapper so open/save/export never move the document, and the save/open trailing toolbar focus is preventScroll + backdrop-gated; see the invariant "Opening the Save/Open/Export picker…") and the **menu structure**: a "Recent files…" toggle (hover sub-menu — `setSubmenuOpen`/`closeSubmenus`, a 250ms close grace period so the diagonal move toggle→submenu doesn't kill it, radio behavior between the two submenus, entries rebuilt on every open; shows the last `RECENT_MAX` = 5 files from localStorage `me.recentPaths`, or a disabled "(No recent files)" placeholder; record on native open/save, `openRecent` → new tab, stale entries dropped after the in-app "Open failed" modal) and an "Export…" toggle whose submenu holds the existing PDF/HTML items — there is deliberately NO Find menu item (Ctrl+F/Ctrl+H are the find entry points). Keeps the STATIC shell imports (via `src/shellapi.js`) and wires the extracted export handlers; it re-exports the pure-helper modules below so its public shape is unchanged (`test/test.mjs` imports `highlightToHtml` from here); the DnD drop handler resolves a dropped File's disk path through `shellapi.pathForFile` (Electron removed `File.path`; see shellapi.js). |
+| `src/shellapi.js` | The shell-IPC layer (Electron; vendored replacement for the old `@tauri-apps/*` wrappers). Implements the EXACT wire contract the Playwright harnesses stub: `invoke` over `window.__TAURI_INTERNALS__` + the `plugin:fs|*` (read_text_file → BYTES; write_text_file/write_file with the destination path URL-encoded in `options.headers.path`; read_dir; exists), `plugin:path|resolve_directory` (homeDir, ordinal 21), `plugin:opener|open_url/open_path`, `plugin:event|listen/unlisten`, and the `getCurrentWindow()` facade with the `onCloseRequested` wrapper contract (`await handler(evt); if (!evt.isPreventDefault()) await this.destroy()`) + `pathForFile` (drag-drop File→path via the preload's `webUtils.getPathForFile`). Node-importable (no top-level `window` access); static import (invariants 2 & 8). |
+| `electron/main.cjs` | The Electron main process (the desktop shell): BrowserWindow (1200×780, min 720×400 — the old tauri.conf.json values; no menu on Windows/Linux, standard app/edit menus on macOS), the privileged **`app://` protocol** that serves `dist/` with correct MIME + CSP (file:// would CORS-break the ES-module bundle), the `shell:invoke` IPC router answering every `plugin:*` command (fs read/write/list/exists, home dir, opener, window destroy/close, event listen/unlisten registry), the window-close intercept (block OS close → deliver `tauri://close-requested` to the renderer when a listener is registered; close directly when the app hasn't registered yet), `plugin:window|destroy` = **force close** (`win.destroy()` — skips beforeunload, exactly the old shell's destroy semantics; the walk has already saved the session via `closeApp()`'s own `saveSession()`), navigation hardening (will-navigate/setWindowOpenHandler → external URLs go to `shell.openExternal`), and the error-return protocol (`{ok, data}` / `{ok:false, shellError}`) that keeps picker error messages verbatim. Debug aid: `ELECTRON_TRACE=1` journals the whole close chain to stderr. |
+| `electron/preload.cjs` | The renderer bridge: installs the `window.__TAURI_INTERNALS__`-shaped shell global (`invoke`, `transformCallback`/callback registry, `metadata.currentWindow.label`, event dispatcher for main-delivered `shell:event` messages, `__TAURI_EVENT_PLUGIN_INTERNALS__`) and the `__shellGetPathForFile` helper (`webUtils.getPathForFile` — Electron removed `File.path`). Listens are intercepted renderer-side to key callbacks by event name, mirroring the test stubs (which ignore target kinds). Runs with `contextIsolation: false` + `nodeIntegration: false` + `sandbox: false` so bridge callbacks live in the page's realm (no bridge serialization of Uint8Array payloads); the page itself still gets no Node. |
+| `electron-builder.yml` | Packaging config: `appId` com.mssok.markdowneditor, `productName` "Markdown Editor", `executableName` markdown-editor, `electronDist: node_modules/electron/dist`, `npmRebuild: false`, `files` (dist + electron only), output `release/`, and the per-OS targets (win nsis/msi/portable with stable MSI `upgradeCode`; mac dmg/zip + `identity: null` under no signing secrets; linux appimage/deb/tar.gz, `desktopName` + `syncDesktopName`). |
 | `src/export.js` | Static PDF/HTML export pipeline: standalone HTML rendering, Mermaid capture, A4 PDF pagination, browser downloads, and native writes through callbacks supplied by `createApp()`. Markdown→HTML goes through `renderMarkdown()` (math.js) so exported documents are typeset AND code-highlighted; the HTML export embeds the self-contained KaTeX stylesheet (fonts as data: URIs) ONLY when `containsMath()` says the document has math. Owns `EXPORT_PREVIEW_CSS` (exported for the Node test chain) — a fixed LIGHT palette that includes the `.hljs-*` token rules so exported HTML keeps code colors. |
 | `src/session.js` | Versioned localStorage session persistence and debounced saves, using callbacks for the active tab and serializable tab records. |
 | `src/dialogs.js` | Centered in-app modal primitives, unsaved-changes prompts, and overwrite confirmation, with native filesystem checks supplied by callbacks. |
 | `src/picker.js` | In-app Save/Open filesystem picker: directory navigation, breadcrumbs, Home/Up controls, extension filtering, selection, and injected filesystem/modal callbacks. Detects the platform path separator from the initial cwd (`\` on Windows, `/` elsewhere) and uses it consistently for all path joining, crumb reconstruction, and go-up navigation — without this, Windows paths like `C:\Users\…` get joined with `/` producing `/C:\Users\…` which the OS rejects (os error 123). **Every directory render pins the list's `scrollTop` to 0** (do not regress): the `.picker-list` `<ul>` is created once per picker and only its content is rebuilt per directory, and browsers retain a scrollable's `scrollTop` across an innerHTML swap (the offset is only clamped against the NEW content at the next layout) — so a directory entered after scrolling the previous one down opened mid-list. `render()` resets before the swap; the Playwright repro in `test/verifyTauriClose.mjs` scenario I fails with the pin removed. |
 | `src/editing.js` | Formatting mutation factory: inline toggles (incl. the inline-math `$…$` toggle with its `dollarClash` guards — currency spans are never wrapped, display `$$…$$` is a hard no-op) and the INSERT-ONLY block actions — table scaffold, codeblock/mermaid fence wrap, math `$$` block (never removes; every click inserts) — plus the historical h1–h3/quote/list toggles and indent/outdent, using injected active-doc, commit, and pure-helper callbacks. |
-| `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, Tauri gate, and browser fallback. |
+| `src/links.js` | Link-token detection and Ctrl+click/caret opening factory, with injected active-doc, shell gate (`shellapi.openUrl` → Electron `shell.openExternal`), and browser fallback. |
 | `src/history.js` | Undo/redo history factory, with injected active-doc, typing-flush, input-suppression, and refresh callbacks. |
 | `src/render.js` | Pure overlay-highlight renderer: `esc`, `matchTok`, `renderInline`, `isTableSep`, `computeBlocks`, `lineToHtml`, `highlightToHtml` (round-trip invariant enforced by `test/test.mjs`). Also paints the GFM task marker (`- [ ]`/`- [x]` right after a list bullet → a `.task` mark span, accent-colored; the span strips back to the literal `[ ]`, and slicing it out of the inline content stops `matchTok` seeing a false link-token `[`). |
 | `src/mermaid.js` | Mermaid SVG rendering: `renderMermaidSvg`, `renderMermaidInNode`, `renderMermaidInHtml`, `restoreMermaid`, `scheduleMermaidRender`. Owns the STATIC `mermaid` import (invariant 2). Also owns the **anti-flicker SVG cache**: `_svgCache` (source → rendered `{svg, bindFunctions}`), `_inflight` (concurrent-render dedup), `restoreMermaid(node)` (synchronous cache-restore after `syncDom` rewrites the preview so an already-seen diagram NEVER flashes raw code), and `mermaidSourceKey(md)` (per-doc "did any fence change" fingerprint that `scheduleMermaidRender` uses to skip render when the source didn't change). Also owns the **blank-fence guard**: `renderMermaidInNode` and `renderMermaidInHtml` skip whitespace-only fence source — mermaid cannot parse an empty fence, so the freshly inserted toolbar ` ```mermaid ` scaffold previews (and exports) as a plain code block instead of a "Mermaid render failed" error box. Also owns the **stylesheet-failure fallback**: `installMermaidStyles(holder)` (head-mirror + stamp) and `stampSvgStyles(holder)` (CSSOM-parse Mermaid's own sheet → presentation attributes on matching shapes; see invariant § Mermaid stylesheet-failure fallback), plus `stripSequenceShadows(holder)` (strips the sequence diagram's inline `url(#…-drop-shadow)` filter attributes — see invariant § Mermaid drop shadow). `renderMermaidSvg`'s `mermaid.initialize` also pins `themeVariables:{useGradient:false,dropShadow:"none"}` (see invariants § Mermaid dark-theme gradient outlines / § Mermaid drop shadow). |
@@ -480,18 +508,15 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 | `src/main.js` | Bootstrap: `createApp('#app')` + sample content — the first-run welcome document doubles as a feature tour: an interactive GFM checklist (click a box in the preview → the source flips), a `Ctrl+F`/`Ctrl+H` find hint, a highlighted `js` fence, mermaid + math blocks, and a shortcut table (the seeding is empty-document-only, so restored sessions are never clobbered). Also the ONLY place allowed to import the katex `.css` / `?raw` / `?url` asset specs (see katexExportAssets.js) — it imports the stylesheet for the live preview and injects the export assets into math.js. |
 | `test/test.mjs` | Round-trip invariant (strip `<span>` from overlay HTML must reproduce source) + the math-pipeline cases (delimiter rules, code-region guards, blank-scaffold guard, error styling), the task-list mapping cases (lexer ordinal→line agreement incl. prose-mention and indented-code guards, toggle round-trip, desync-stay-inert), and the code-highlighting cases (hljs spans, no raw-`<` leak, marked byte-shape for unknown/mermaid, export palette) — Node, no browser. |
   | `test/verifyCaret.mjs` `test/verify.mjs` `test/verifyUndo.mjs` `test/verifySaveOpen.mjs` `test/verifyToolbar.mjs` `test/verifyPaste.mjs` `test/verifyExport.mjs` `test/verifyMath.mjs` `test/verifyScroll.mjs` `test/verifyDialogScroll.mjs` `test/verifyModeScroll.mjs` `test/verifyModeFocus.mjs` `test/verifyTabClick.mjs` `test/verifyTabScroll.mjs` `test/verifyMermaidFlicker.mjs` `test/verifyMermaidStyle.mjs` `test/verifyMermaidFade.mjs`| Headless Chromium Playwright tests (all live in the `test/` dir). `verifyCaret.mjs` is the caret-placement regression (Enter list-continuation keeps indentation + collapsed caret; Tab/Shift+Tab incl. blank lines commit collapsed with the column following the text; inline formats (and the inline-math `$…$` toggle: wrap/toggle-off/empty-pair incl. the display-math no-op and currency no-wrap pins) collapse at the inner-span end before the closing marker; code-fence AND ```mermaid fence wrap caret inside the fence - `` ```\n|\n``` `` / `` ```mermaid\n|\n``` ``; math-block insert caret ON the blank middle line of "$$\n\n$$"; INSERT-ONLY pins — a table/math click inside an existing table/math block inserts a second scaffold and never removes, a non-empty caret line keeps its prose with the scaffold pushed below, a fence click on a fence line re-wraps instead of unwrapping; table caret in first body cell; h1 caret at block end; Markdown-aware Ctrl+Arrow word moves treat a whole formatted span as one word while plain moves fall through native - 92 cases). `verifyExport.mjs` covers the PDF/HTML export menu + save/cancel paths (30 cases) plus the menu shrink-to-fit width (2 cases, M1c/M1d — the dropdown hugs the widest entry, no 190px floor). `verifyScroll.mjs` is the split-view scroll-sync regression (a real follow-pane scroll inside the ECHO window is accepted immediately; the follow assertions now check CONTENT-matched block parity via the live DOM + the app's `getActiveScrollSyncDebug()` hook — 5 cases). `verifyDialogScroll.mjs` is the dialog scroll-preservation regression on the NATIVE path (self-contained `__TAURI_INTERNALS__` stub, real mouse presses): opening the in-app picker through both toolbar buttons (caret-at-end 5% and caret-above-viewport 50%), Ctrl+S/Ctrl+O, and the Export… menu must not move EITHER pane while up or after close; cancel returns typing focus AND the held position (preventScroll — the close-flicker fix); open-confirm opens the new tab at top with the old tab's ratio preserved on return; Save-As fresh + overwrite-modal paths hold position; a format-button control keeps its causative focus (30 cases). `verifyScrollSync.mjs` is the block-anchored scroll-sync regression (anchor map builds for a feature-dense doc — lists per item, tables per row — with monotone curve/pair tops; editor-lead puts a deep heading's source line at the preview's top edge; preview-lead lands the editor exactly on the mermaid fence line; wrap-heavy docs stay block-aligned at several fractions; a count-desync doc degrades to the ratio fallback which still drives the follower; at the ends the anchored curve + clamp converge (no snap/blend overshoot — the exhausted follower parks at its own end); large mapped deltas GLIDE over several frames and settle at block parity while tiny sub-line deltas stay instant, and the end-region re-correction lands as a slow pan — 16 cases). `verifyModeScroll.mjs` is the mode-switch scroll-PRESERVING regression (setMode records the leaving-mode ratio and re-asserts it on the entering panes so the mode button never jumps the view to the document end — 8 cases). `verifyModeFocus.mjs` is the mode-click focus regression (the mode button must causatively skip its trailing textarea focus ONLY when entering preview — the hidden textarea's scroll-into-view ratchets the preview to the bottom; for the preview target the mode action does `if (next === "preview") return;` while split/edit targets keep the normal caret-follow focus — 13 cases). `verifyTabClick.mjs` is the tab-click regression (the already-active tab no-op: activate() short-circuits when `doc === activeTab` so re-clicking it neither moves the scroll nor rewrites the preview DOM / re-renders mermaid; PLUS the whole-tab click target — a click on the tab's PADDING, not just the .tname span, activates the tab, the × close button still wins via stopPropagation, and the redundant-click no-op holds through a padding click too — 10 cases). `verifyTabScroll.mjs` is the cross-tab scroll-persistence regression (a tab's editor + preview scroll survive hiding and returning — 7 cases). `verifyMermaidFlicker.mjs` is the mermaid anti-flicker regression (a keystroke in prose OUTSIDE a fence must NOT flash raw code — the already-rendered holder is present in the same synchronous tick as the keystroke; a keystroke INSIDE a fence still re-renders — 7 cases; the diagram source must be valid mermaid or it never renders and there is nothing to cache). `verifyMermaidStyle.mjs` is the mermaid stylesheet-failure regression (stamped attrs exist, messageLine placeholders overwritten, computed styles survive removing EVERY `<style>` element, and the sheet's font stack + oversized-FO flex centering + text-label re-anchoring + WebKitGTK center-snap — which never touches a MULTI-LINE label, the `<br/>` note jumble fix — + oversized-edge-label FO normalization + sequence markup-shadow strip — 38 cases). `verifyMermaidFade.mjs` is the mermaid dark-theme gradient-outline regression (no linearGradient in the defs, sheet + computed + stamped node stroke all SOLID in both themes, and no drop-shadow filter — 16 cases). `verifyMath.mjs` is the KaTeX math regression (live preview renders `$$` display + `$` inline math synchronously and survives a preview rewrite; code regions / prose dollars / the blank `$$\n\n$$` scaffold stay literal; invalid LaTeX paints red; HTML export embeds the self-contained font-inlined katex stylesheet ONLY when math is present; PDF export rasterizes math — 21 cases). `verifyFind.mjs` is the Find & Replace bar regression (38 cases: Ctrl+F/H opens the floating bar with focus in the find/replace field, Esc closes with the STAY-PUT rule (a current match keeps the view AND the found word selected exactly where the search left it — Esc must never jump the page back to the pre-search position; a 0-match close restores the pre-open selection), and the GLOBAL Escape handler (markdown.js, window-capture, registered before the bar's listeners so bar Escs are consumed by find.js and stand down via find.isOpen()) clears any selected text when the bar is CLOSED — press Esc again after closing to deselect — standing down for centered modals (checked BEFORE the modal's own handler removes the backdrop) and the open hamburger menu, the live i/n count tracks edits and every user-driven query change immediately SELECTS the current match (revealCurrent; editor typing keeps the count live WITHOUT yanking the selection), Enter/F3 next · Shift+Enter/Shift+F3 prev with wrap-around ([0,5)→[110,115) pins), the Aa case toggle, the .* regex toggle with inline red on an invalid pattern, Replace = select-then-replace as ONE undo step with advance, Replace-all = ONE undo step for the whole batch (and 0/0 after), regex $1 substitutions (lo(r)em → $1X), literal-mode special chars, single-line selection prefill, recompute across tab switches, and the split-view PREVIEW-FOLLOW (case 9: jumping to a far match scrolls BOTH panes — the bar's reveal calls the injected `followFromEditor` hook so `followScroll` drives the preview through the block-anchored map; an already-visible match leaves both panes alone) — 38 cases). `verifyTasks.mjs` is the GFM task-list regression (live checkboxes in the preview; clicking flips the source line and commits ONE undo-able edit, re-render rebuilds the checkbox from source, a checkbox inside a fenced code block stays inert, the overlay paints a .task marker span — 12 cases). `verifyRecent.mjs` is the recent-files menu regression on the native path with a self-contained __TAURI_INTERNALS__ stub (record on open/save, dedupe + most-recent-first, cap 5, click opens a NEW tab and reads through the fs stub — which must serve BYTES because plugin-fs readTextFile does Uint8Array.from + TextDecoder, stale entries show the in-app Open failed modal and are dropped, entries persist across reload via localStorage, and the browser fallback hides the section — 12 cases). `verifyCodeColor.mjs` is the fenced-code highlighting regression (registered-language fences carry hljs-* spans and paint the palette color in the preview, unknown-language fences stay plain escaped code, the mermaid fence renders as a diagram holder and is never highlighted, output stays HTML-escaped, the editor overlay never contains hljs markup — 7 cases).|
-| `test/verifyTauriClose.mjs` | **Native-path** harness: injects a `__TAURI_INTERNALS__` stub, drives the real `@tauri-apps` api/IPC (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Rust needed. |
+| `test/verifyTauriClose.mjs` | **Shell-IPC native-path** harness (name kept from the Tauri era): injects a `__TAURI_INTERNALS__` stub with the same `plugin:*` command set the Electron preload implements, and drives the real wire contract (`onCloseRequested` → save/cancel → `fs/write_text_file` / `window/destroy`). No Electron install needed. |
 | `index.html` | Entry. Loads the single Vite bundle. |
 | `vite.config.js` | Dev/preview server pinned to `127.0.0.1` (avoids IPv6 `localhost` mismatch). Also `build.rollupOptions.output.codeSplitting: false` — prevents jsPDF's internal `await import("dompurify")` from emitting a second chunk so the bundle stays a single `index-*.js` (see invariant 8). |
-| `src-tauri/tauri.conf.json` | Window, CSP, `frontendDist: ../dist`, `beforeBuildCommand: npm run build`, identifier `com.mssok.markdowneditor`, `bundle.publisher: "MagFlux"` — the Windows NSIS/WiX installers get their "Publisher" field from it (without it both read "Unknown publisher"); on Linux it only surfaces as the .deb control file's Maintainer, and even there Cargo.toml `authors` takes precedence (both are set to MagFlux); macOS (.app/.dmg), RPM and AppImage bundles carry NO publisher metadata (the macOS "who published this" signal is the Developer ID signature, not this key). Also `plugins.fs.requireLiteralLeadingDot: false` — lets the fs scope `**` match hidden (dot) path segments on Unix so the picker can open `~/.config` etc. (see invariant 7). `bundle.icon` must keep BOTH the PNGs (Linux/AppImage/dev-mode window icon) and `icons/icon.ico` + `icons/icon.icns` (the `.ico` feeds the Windows exe resource embed + NSIS/WiX installers; the `.icns` is copied verbatim as the macOS `CFBundleIconFile`) — tauri-build requires the `.ico` entry to EXIST on the Windows build or it fails. |
- | `src-tauri/capabilities/default.json` | Permissions: `dialog:default`, `fs:allow-read-text-file`, `fs:allow-exists`, `fs:allow-write-text-file`, `fs:allow-write-file` (PDF/HTML export), `fs:allow-read-dir`, `core:path:default`, `core:window:allow-destroy`, `opener:default`, scope `["**"]`. |
- | `src-tauri/src/main.rs` | Registers `plugin_fs`, `plugin_dialog`, `plugin_opener` on the Tauri builder and wires `keymap::install()` (Linux). |
- | `src-tauri/icons/` + `icon.svg` | **App icon set.** `icon.svg` is the source art; everything in `icons/` is GENERATED — edit the SVG and run `npx tauri icon icon.svg` from the repo root (idempotent; regenerates the `*.png`s, the Windows `Square*/StoreLogo` set, `icon.ico`, `icon.icns`, and the android/ios subdirs; sizes are pure derived data). Consumers, confirmed in tauri-build/tauri-bundler 2.x source: (a) *bare binaries/AppImage dev-mode window icon* — `bundle.icon` PNGs, embedded at Rust **build time** via `tauri-build` → `tauri-winres` (`set_icon_with_id(…, "32512")`), which is also WHY the portable zips carry the icon with zero extra packaging work; (b) *the Windows `.exe`/installers specifically need `icons/icon.ico`* to be a REAL layered `.ico` — the last `4423e62` icon redesign only refreshed the PNGs and left the ico with 6 layers but without 32×32/256×256 coverage, which tauri-winres cannot use for the resource-group icon; the set regenerated with `tauri icon` (16/24/32/48/64/128/256, 256 PNG-encoded) is the supported shape; (c) *macOS* — the bundler copies `icons/icon.icns` from `bundle.icon` as `CFBundleIconFile` (it can also synthesize one from the PNGs); (d) *NSIS/WiX* — default to `icons/icon.ico` for installer/exe icons; (e) *Linux DEB/AppImage* — the PNGs go to `hicolor` dirs and the desktop entry's `StartupWMClass` = `{{exec}}` (the bare binary name `markdown-editor`) matches the running process, so GNOME/KDE titlebar + taskbar resolve the icon. Robustness check if the icon ever regresses: `git show <sha>:src-tauri/icons/icon.ico | head -c6 | xxd` must show type=1 icon with ≥6 entries incl. 32×32 and 256×256, and pixel-history checks against `icon.png` colors catch a stale (old-art) regen. Explorer icon cache on Windows may show a stale glyph for the rebuilt exe — `ie4uinit.exe -show` or reboot before blaming the artifact. |
- | `src-tauri/src/keymap.rs` | GTK-level Shift+Tab keysym fix: X reports Shift+Tab as `GDK_KEY_ISO_Left_Tab` (0xFE20) and WebKitGTK turns that into a DOM key of "Unidentified", so the JS outdent never ran and GTK moved focus away; this rewrites the keysym to `Tab` (+Shift) on the raw WebKit widget and swallows the original. See invariant "Tab / Shift+Tab are captured…". |
-| `src-tauri/Cargo.toml` | Rust deps + tauri plugins. |
+| `package.json` | `main: electron/main.cjs` (the Electron app entry), `desktopName: markdown-editor.desktop` (drives the Linux desktop-entry WMClass sync via `linux.syncDesktopName`), `author: MagFlux` (the .deb Maintainer), `version: "0.0.0"` placeholder (CI injects the release tag). Scripts: `electron:dev` / `electron:start` / `electron:build` (+ the test roster). **All runtime libraries (marked, katex, mermaid, highlight.js, …) live in `devDependencies`** — Vite inlines them into the single bundle, and electron-builder packs only `dist/` + `electron/` (see the electron-builder specifics table), so NOTHING is copied from `node_modules` into the installers. |
+ | `build/` + `icon.svg` | **Electron build resources + app icon set.** `icon.svg` (repo root) is the source art; `build/` holds the derived icons — `build/icon.png` (512×512; consumed by electron-builder's Linux targets — it derives the hicolor sizes), `build/icons/icon.ico` (Windows NSIS/MSI + the exe resource), `build/icons/icon.icns` (macOS), plus 32/64/128/256 PNGs. They were carried over 1:1 from the old `src-tauri/icons/` set at the Electron conversion; if the source art changes, regenerate the derived set with any rasterizer into `build/` (sizes are pure derived data — there is no `tauri icon` step any more). Windows Explorer can cache a stale `.exe` glyph — `ie4uinit.exe -show` or reboot before blaming the artifact. |
+ | `scripts/electron-dev.cjs` | `npm run electron:dev` orchestrator: spawns vite (port 5173, strict), polls until the port answers, then launches Electron with `VITE_DEV_SERVER_URL` set and kills vite on exit. Plain Node built-ins only. |
 | `.github/workflows/ci.yml` | CI: `test` job (full Playwright suite) + `build` job (3-OS matrix → installers + portable archives → draft release). See § CI/CD. |
 | `LICENSE.md` | **AGPL-3.0** — the license for *this* project's code. |
-| `NOTICE.md` | Third-party dependency notices: which bundled deps are permissive (MIT vs. Apache-2.0 vs. BSD-3-Clause — `highlight.js` — incl. the dual-licensed Tauri stack and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0), the test-only `playwright` (Apache-2.0), and the Linux runtime-only WebKitGTK (LGPL, not bundled). |
+| `NOTICE.md` | Third-party dependency notices: which bundled deps are permissive (MIT vs. Apache-2.0 vs. BSD-3-Clause — `highlight.js` — incl. Electron itself, MIT, and `mermaid`) vs. the user-approved copyleft exception (`elkjs`, EPL-2.0), and the test-only `playwright` (Apache-2.0). |
 
 ## Hard invariants (do not regress)
 
@@ -506,45 +531,54 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   may change color/background, but their rendered width must remain identical
   to the textarea text or later words will visibly drift under the overlay.
 
-2. **Static Tauri imports.** All `@tauri-apps/*` imports are **static top-level
-   imports** in `src/markdown.js` (lines 11-14). They must NOT be changed to
-   `await import(...)`. In the real Tauri GTK webview, Vite code-split relative
-   chunks loaded at runtime fail to resolve, which silently:
-   - made `save()` fall through to a `Blob`-download `.click()` that WebKitGTK
-     ignores — the tab closed believing it saved (data lost);
+2. **Static shell imports.** All shell-IPC imports (`src/shellapi.js`) are **static
+   top-level imports** in `src/markdown.js` / `src/links.js`. They must NOT be
+   changed to `await import(...)`. A failed dynamic import silently:
+   - made `save()` fall through to a `Blob`-download `.click()` that a non-browser
+     shell ignores — the tab closed believing it saved (data lost);
    - made `win.onCloseRequested` never wire up — the window closed with unsaved tabs.
    These imports are pure JS in a browser (they only touch `window.__TAURI_INTERNALS__`
    when *called*), so static import is browser-safe. Keep them at the top; keep every
    call wrapped in `isTauri()`.
 
-   **The REAL gate is `isTauri()` (line ~248): it must detect the bundler global
-   `__TAURI_INTERNALS__`, not `__TAURI__`.** This is a Vite/bundler build (no
-   `withGlobalTauri` in `tauri.conf.json`), so Tauri injects only
-   `window.__TAURI_INTERNALS__` — `window.__TAURI__` is absent. If `isTauri()`
+   **The REAL gate is `isTauri()` (line ~248): it must detect the shell global
+   `__TAURI_INTERNALS__`, not `__TAURI__`.** Electron's preload
+   (`electron/preload.cjs`) installs exactly `window.__TAURI_INTERNALS__`
+   (there is no `window.__TAURI__`). If `isTauri()`
    checks only `__TAURI__` it returns false in the real app and every native branch
    silently falls through to the browser no-op (save → dropped Blob download;
    `onCloseRequested` never registers). Keep it as
    `!!(window.__TAURI_INTERNALS__ || window.__TAURI__)`.
 
- 3. **Close-requested must NOT self-close — AND must be allowed to `destroy()`.**
-    `onCloseRequested` (~line 1749) relies on the Tauri wrapper contract: the
-    wrapper runs
-    `await handler(evt); if (!evt.isPreventDefault()) await this.destroy()`.
-    Correct handler: on **cancel** → `event.preventDefault()` (window stays); on
-    **success** → do *nothing* (wrapper auto-`destroy`s). It must be `async` and
-    `await closeApp()`. It must NOT call `win.close()` and must NOT
-    `preventDefault()` unconditionally — that re-emit/prevent loop deadlocks the
-    window open.
+  3. **Close-requested must NOT self-close — AND must be allowed to `destroy()`.**
+     `onCloseRequested` (~line 1749) relies on the shell wrapper contract (vendored
+     in `src/shellapi.js`): the wrapper runs
+     `await handler(evt); if (!evt.isPreventDefault()) await this.destroy()`.
+     Correct handler: on **cancel** → `event.preventDefault()` (window stays); on
+     **success** → do *nothing* (wrapper auto-`destroy`s). It must be `async` and
+     `await closeApp()`. It must NOT call `win.close()` and must NOT
+     `preventDefault()` unconditionally — that re-emit/prevent loop deadlocks the
+     window open.
 
-    **The wrapper's `destroy()` → `invoke('plugin:window|destroy')`, so the ACL must
-    permit it.** `core:window:default` (via `core:default`) grants
-    `allow-is-closable` etc. but **NOT** `allow-destroy`. Without the explicit
-    `core:window:allow-destroy` in `src-tauri/capabilities/default.json`, the
-    wrapper's `destroy()` is ACL-denied, the promise rejects unhandled, and the
-    window never closes after a clean save/discard walk (re-click is a no-op). The
-    Playwright harness in `test/verifyTauriClose.mjs` **stubs** `plugin:window|destroy`,
-    so it does not enforce this ACL and will not catch the regression — only the
-    real app does. Keep `core:window:allow-destroy` in capabilities.
+     **The wrapper's `destroy()` → `invoke('plugin:window|destroy')` must reach the
+     shell's force-close.** In `electron/main.cjs` the destroy handler sets
+     `win.__forceClose` and calls `win.destroy()` — a FORCE close that skips the
+     renderer's `beforeunload` (exactly the old shell's `destroy()` semantics; the
+     walk has already persisted the session via `closeApp()`'s own `saveSession()`,
+     so skipping `beforeunload` is safe). The main process also intercepts the OS
+     close (`win.on('close')`): it `preventDefault()`s and delivers
+     `tauri://close-requested` to the renderer when a listener registered;
+     with NO listener registered yet (close during startup) it closes directly,
+     mirroring the old shell. NEVER route a sanctioned close through a plain
+     `win.close()`: the app's unconditional `beforeunload` guard would cancel
+     closes with dirty tabs (e.g. the Discard walk leaves dirty tabs) and wedge
+     the window open. The `closed` handler must use the webContents id captured
+     at CREATION — reading `win.webContents` inside `closed` throws "Object has
+     been destroyed" (an uncaught main-process exception dialog that blocks the
+     quit — surfaced exactly that way during the conversion). The
+     Playwright harness in `test/verifyTauriClose.mjs` **stubs** `plugin:window|destroy`,
+     so it does not exercise the main-process wiring; a real-shell smoke run
+     (e.g. `ELECTRON_TRACE=1 xvfb-run npx electron .` + a window.close() probe) does.
 
 4. **Single close-walk source of truth.** `closeApp()` (in `src/markdown.js`) is the
    only function that walks dirty tabs and prompts (Save / Discard / Keep editing)
@@ -552,8 +586,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `onCloseRequested` handler all funnel through it, and prompt order = tab DOM order.
    Don't add a second prompt path.
 
-5. **Save returns a boolean.** `save(tab)` returns `true` only on a real write (Tauri
-   `writeTextFile`) or a browser download; it returns `false` on user-cancel or error.
+5. **Save returns a boolean.** `save(tab)` returns `true` only on a real write (shell
+   `writeTextFile` via `src/shellapi.js` → Electron fs) or a browser download; it
+   returns `false` on user-cancel or error.
    `closeTab`/`closeApp` must gate removal on that value — a `false` means the tab
    stays.
 
@@ -562,26 +597,29 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   Clearing the last tab in place also allocates the next per-run `Untitled N` name,
   as if a fresh blank tab had been opened.
 
-7. **fs scope must reach hidden (dot) paths.** The in-app picker lists whatever
-   `read_dir` returns — that includes dot-dirs like `~/.config`. On Unix the Tauri
-   fs-plugin scope defaults to `requireLiteralLeadingDot: true`, whose glob rule
-   makes `*`/`**` *not* match path segments that begin with `.`, so navigating into
-   a dot-dir is scope-denied (`forbidden path: … allow-read-dir …`) while the very
-   dir that *listed* it was allowed. We set `plugins.fs.requireLiteralLeadingDot: false`
-   in `src-tauri/tauri.conf.json` so the `fs:scope: ["**"]` pattern matches dot
-   segments. The Playwright harness in `test/verifyTauriClose.mjs` scenario H
-   asserts the *UI* drives `read_dir` into a dot-path; it **stubs** the fs IPC and
-   does not enforce the real scope, so only the actual app enforces the ACL.
-    Trade-off: the picker can now reach sensitive dot-dirs (`~/.ssh`, `~/.aws`, …) —
-    an intentional, documented choice. Do not re-add a leading-dot filter to the
-    picker's `render()`/`goToDir()` without also revisiting this config.
+7. **Hidden (dot) paths stay reachable.** The in-app picker lists whatever
+   `read_dir` (shellapi → Electron main fs) returns — that includes dot-dirs like
+   `~/.config`, and nothing in either layer filters them: node's `readdir` shows
+   dot entries naturally, and the deliberate choice to allow reaching sensitive
+   dot-dirs carries over from the shell conversion (the old Tauri shell needed
+   `requireLiteralLeadingDot: false` for the same guarantee; Electron has no
+   equivalent knob to accidentally regress). Keep it that way: do NOT add a
+   leading-dot filter to the picker's `render()`/`goToDir()`. The Playwright
+   harness in `test/verifyTauriClose.mjs` scenario H asserts the *UI* drives
+   `read_dir` into a dot-path; it **stubs** the fs IPC and
+   does not enforce any real scope — in the real Electron app the scenario was
+   smoke-verified against the actual `readdir` handler (see the ELECTRON_TRACE
+   probe note in the `electron/main.cjs` table row).
+   Trade-off (intentional, documented): the picker can reach sensitive dot-dirs
+   (`~/.ssh`, `~/.aws`, …).
 
- 8. **The bundle must stay a single JS file.** The GTK webview cannot reliably
-    resolve a second code-split chunk at runtime (same class of failure as
-    invariant 2), so the production build MUST emit exactly one
-    `dist/assets/index-*.js`. jsPDF ships a lazy `await import("dompurify")`
-    internally that would normally produce a separate chunk; we force it inline
-    with `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
+8. **The bundle must stay a single JS file.** A runtime code-split chunk is the
+    one failure class no shell can recover from (a failed chunk fetch silently
+    disables save/open/the close guard, invariant 2), so the production build
+    MUST emit exactly one `dist/assets/index-*.js`. jsPDF ships a lazy
+    `await import("dompurify")` that Rollup would otherwise code-split into a
+    second runtime chunk; we force it inline with
+    `build.rollupOptions.output.codeSplitting: false` in `vite.config.js`.
     After every `npm run build`, confirm the dist has a single `.js` asset.
     `jspdf` and `html2canvas` are static top-level imports in `src/export.js`,
      `mermaid` is a static top-level import in `src/mermaid.js`, and `katex` +
@@ -590,7 +628,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
       ASSET files (woff2, emitted to dist/assets by Vite from the katex CSS
       url() refs), not JS chunks — they do not violate this invariant.
 
- 9. **Scrollbars must blend with the active theme (do not regress — Windows
+9. **Scrollbars must blend with the active theme (do not regress — Windows
     scrollbar mismatch).** On Windows the app runs in WebView2, where the OS can
     paint its *own* themed scrollbars over ours — leaving them DARK in a light
     app or LIGHT in a dark app. The fix (in `src/style.css`): (a) `color-scheme`
@@ -853,9 +891,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   smaller one. Measure SLOC (not raw line count) with `cloc src/` or `tokei` — both
   report source lines excluding blanks and comments.
 - No build tooling beyond Vite + a single bundle. Do not add a framework (React,
-  Vue, etc.). Do NOT introduce dynamic `import()` (code-splitting) of any Tauri
-  plugin or module — `src/markdown.js` currently has zero `import(...)` calls and
-  must stay that way, so the bundle remains one file that loads in the GTK webview.
+  Vue, etc.). Do NOT introduce dynamic `import()` (code-splitting) of any shell-IPC
+  or export module — `src/markdown.js` currently has zero `import(...)` calls and
+  must stay that way, so the bundle remains one file that loads everywhere.
  - Comments: keep the WHY (especially the invariants above) in-line; they encode
    hard-won debugging history.
  - **JSDoc is mandatory and must stay current (do not let it go stale).** Every
@@ -869,7 +907,7 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    signature. The inline WHY comments above remain the authoritative record of the
    debugging history; JSDoc is the quick "what does this do / what does it take /
    what does it return" layer on top.
-- Tauri calls are guarded by `isTauri()` so the same file works in a browser. When
+- Shell calls are guarded by `isTauri()` so the same file works in a browser. When
   adding a new native feature, add a browser fallback branch.
 - Test-first: when adding editor behavior, extend the relevant `test/verify*.mjs` or
   `test/test.mjs` and confirm it stays green before considering the task done.
@@ -1064,8 +1102,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     causative focus.
   - All dialogs (save/cancel prompts, open, and any error/info feedback) render
    **in-app** via `showModalBase`/`messageModal`/`pickPath` — NOT `alert`/`confirm`/
-   `prompt` (unreliable in WebKitGTK) and NOT the native `tauri-plugin-dialog`
-   rfd GTK picker (never parents/centers its dialogs, so it drifts off-window).
+   `prompt` (unreliable in the WebKitGTK-era shells) and NOT any native OS dialog
+   (an OS picker neither parents to our window nor matches the app theme).
    The in-app modals are centered by construction inside the single webview.
 - **Export-as-PDF/HTML (hamburger menu).** The menu is a `.menu-wrap` dropdown
   toggled by the hamburger (`data-action="menu"`) with TWO hover submenus:
@@ -1080,8 +1118,8 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
   at `fixed; left:-9999px`, `scale:2`, white bg — VISIBLE, because html2canvas must
   rasterize real pixels; `-100000px` risked a WebView2 composite ghost) and slices
   the canvas into A4
-  (595×842 pt) pages into a `jsPDF` doc. Both save through `pickPath` + Tauri
-  `fs.writeFile` (binary) with a browser `Blob`-download fallback — the SAME in-app
+  (595×842 pt) pages into a `jsPDF` doc. Both save through `pickPath` + shell
+  binary fs writes (`writeFile`) with a browser `Blob`-download fallback — the SAME in-app
   picker as save, never a native print dialog. The outside-click close guard must test
   `ev.target.closest(".menu-wrap")` (the toggle button is a *sibling* of the
   `.menu-dropdown`; testing `.menu-dropdown` treats the button's own click as
@@ -1349,42 +1387,27 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
    `var(--sel)` — the opaque rect paints over the overlay text on WebView2 so
    selected text looks blanked out (WebKitGTK composites it underneath, hiding
    the bug on Linux).
- - **No console window on Windows release builds (do not regress).**
-   `src-tauri/src/main.rs` carries
-   `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — without
-   it the bundled exe spawns a console that must stay open (closing it kills the
-    app). Debug builds keep the console for logs.
  - **Tab / Shift+Tab are captured at window level in CAPTURE phase (do not
-    regress).** On WebKitGTK/WebView2 Shift+Tab bound on the textarea alone
-    escaped the editor to browser focus traversal (another GUI control got
-    focus), so the indent/outdent handler now runs on `window` in
-    CAPTURE with `preventDefault()` + `stopPropagation()` (the textarea
+    regress).** The indent/outdent handler runs on `window` in CAPTURE with
+    `preventDefault()` + `stopPropagation()` (the textarea
     `keydown` handler in `onKeyDown` no longer handles Tab — that would
-    double-indent). The capture handler stands down while a centered modal
+    double-indent). Under Electron (Chromium) the plain browser focus traversal
+    still exists — the capture handler is what makes Tab indent/outdent INSIDE
+    the document at all. The handler stands down while a centered modal
     (`.savedlg-backdrop`) is open so the modal's own focus trap owns Tab.
-    Two extra defenses the REAL GTK shell needs (Chromium does not reproduce
-    the quirk): (a) `isEditorTabKey()` also accepts the legacy X keysym
-    `ISO_Left_Tab` — some WebKitGTK builds report Shift+Tab under that name;
-    (b) a blur-refocus fallback in `makeTab` — the capture handler stamps
+    Two defense layers (kept from the WebKitGTK-era shell; harmless in Chromium):
+    (a) `isEditorTabKey()` also accepts the legacy X keysym
+    `ISO_Left_Tab` (defensive against engines reporting it);
+    (b) a blur-refocus fallback in `makeTab`: the capture handler stamps
     `doc.__sTabAt`, and if the engine performs the focus traversal DESPITE
     preventDefault, a `blur` listener fires within 250 ms and pulls focus (and
     the stored caret via `__sSel`) back into the textarea on the next
     macrotask, also standing down for modals. Do not remove either layer.
-    (c) the REAL shell root cause, fixed on the RUST side: X maps Shift+Tab
-    to the legacy keysym `GDK_KEY_ISO_Left_Tab` (0xFE20), which WebKitGTK
-    forwards to the DOM as `KeyboardEvent.key = "Unidentified"` (NOT "Tab")
-    — so NO JS handler can ever preventDefault it, GTK's window move-focus
-    binding runs, and focus escapes to another GUI control (Chromium does
-    not reproduce this; `npx tauri dev` in this tree did, verified with a
-    GTK key-injection probe). `src-tauri/src/keymap.rs` connects a
-    key-press handler ON THE RAW WEBKIT widget that copies the event, sets
-    keyval `GDK_KEY_Tab` (state keeps SHIFT), delivers it directly to the
-    webview, and STOPS propagation of the original — the DOM then sees a
-    normal `Tab` keydown with shiftKey and everything above works. Keep
-    `keymap::install()` wired in `main.rs` setup; do not delete it without
-    re-testing shift+tab in the real GTK app. New direct Rust deps
-    `gtk` 0.18 + `webkit2gtk` 2 (MIT bindings; lockfile-pinned versions so
-    no duplicate crates compile — see src-tauri/Cargo.toml).
+    (Historical note: the WebKitGTK shell ALSO needed a Rust-side keysym fix —
+    X remaps Shift+Tab to `GDK_KEY_ISO_Left_Tab`, which WebKitGTK delivered as
+    `KeyboardEvent.key = "Unidentified"` — implemented in `src-tauri/src/keymap.rs`,
+    deleted with the Electron conversion: Chromium receives a normal `Tab`
+    keydown with shiftKey from the OS.)
  - **Selections ending at COLUMN 0 of a line do not include that line (do not
     regress).** A WebKitGTK double-click on the last word of a line selects
     `word\n`, leaving selectionEnd at column 0 of the NEXT line; without the
@@ -1437,8 +1460,9 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
 ## Known limitations (browser fallback)
 
 - In a plain browser (`vite preview` / `npm run dev`), Save uses a file download
-  (WebKitGTK-style no-op aside) and there is no window-close interceptor (the
-  `beforeunload` guard is the only guard). All the Tauri-native paths (real
-  `save`/`open` dialogs, `onCloseRequested`) must be validated in the actual app —
-  the Playwright tests exercise the shared code paths and assert the browser
-  fallbacks, not the native ones.
+  and there is no window-close interceptor (the `beforeunload` guard is the only
+  guard). All the shell-native paths (real fs writes, the `onCloseRequested` walk)
+  must be validated in the actual Electron app — the Playwright tests exercise the
+  shared code paths and assert the browser fallbacks, not the native ones; a
+  real-shell smoke run (xvfb + a window.close() probe, `ELECTRON_TRACE=1`) covers
+  the bridge and the close walk end-to-end (see the `electron/main.cjs` row).
