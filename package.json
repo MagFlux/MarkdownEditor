@@ -38,8 +38,8 @@
     "verify-dialogscroll": "node test/verifyDialogScroll.mjs",
     "verify-codecolor": "node test/verifyCodeColor.mjs",
     "electron": "electron .",
-    "electron:dev": "node scripts/before-build.cjs && node scripts/electron-dev.cjs",
-    "electron:start": "node scripts/before-build.cjs && npm run build && electron .",
+    "electron:dev": "node scripts/before-pack.cjs && node scripts/electron-dev.cjs",
+    "electron:start": "node scripts/before-pack.cjs && npm run build && electron .",
     "electron:build": "npm run build && electron-builder --publish never"
   },
   "devDependencies": {

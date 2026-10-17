@@ -469,12 +469,22 @@ function requestClose(win) {
    the file is simply absent and nothing changes. */
 let wheelDaemon = null;
 /** resolveDaemonPath — run location of electron/xwheel-daemon. In a packed
-    app the ELF is unpacked (asarUnpack), so remap app.asar → app.asar.unpacked. */
+    app the ELF is unpacked (asarUnpack) next to the asar — and `__dirname`
+    is INSIDE app.asar, so the path must be remapped. WHY unconditionally:
+    an asarUnpack'd file is STILL listed inside the asar (the fs shim
+    resolves it), so `fs.existsSync(<asar>/electron/xwheel-daemon)` is TRUE
+    in packaged builds — the old "remap only when the asar path is missing"
+    test never fired, spawn() got an asar-internal path and died with
+    "spawn ENOTDIR" (verified with a packaged xvfb smoke run): the wheel
+    rescue was silently OFF in every packaged build that did include the
+    daemon. The existsSync at the call site now reports the true binary
+    presence. */
 function resolveDaemonPath() {
   let p = path.join(__dirname, "xwheel-daemon");
   try {
-    if (p.includes("app.asar") && !fs.existsSync(p)) {
-      p = p.replace("app.asar", "app.asar.unpacked");
+    const asarSegment = "app.asar" + path.sep;
+    if (p.includes(asarSegment)) {
+      p = p.replace(asarSegment, "app.asar.unpacked" + path.sep);
     }
   } catch { /* runtime path patching is best-effort */ }
   return p;
@@ -512,13 +522,23 @@ function startWheelDaemon(win) {
       stdio: ["ignore", "pipe", "ignore"],
       env: process.env,
     });
-    trace("xwheel-daemon spawned (target window " + winId + ")");
+    trace("xwheel-daemon spawn requested (target window " + winId + ")");
     // Mark the page as rescue-active (src/wheeloverride.js keys its pair
-    // suppression on this). Set now and again after load — the flag must
-    // survive any dev reload; absent, the page behaves 100% natively.
-    win.webContents.executeJavaScript("window.__MD_RESCUE = 1").catch(() => {});
-    win.webContents.once("did-finish-load", () => {
+    // suppression on this). Set on the child's 'spawn' event — spawn()
+    // reports a bad path ONLY asynchronously ('error'), so marking the page
+    // up-front would leave the suppression half-armed with no synthetic
+    // wheels to pair with (real notches arriving as the "synth" signature —
+    // deltaMode 0, |deltaY| 100 — could then be swallowed as a phantom pair
+    // half). And again after load: the flag must survive any dev reload;
+    // absent, the page behaves 100% natively.
+    const markRescue = () => {
+      if (!win || win.isDestroyed()) return;
+      trace("wheel rescue active on page");
       win.webContents.executeJavaScript("window.__MD_RESCUE = 1").catch(() => {});
+    };
+    wheelDaemon.on("spawn", markRescue);
+    win.webContents.once("did-finish-load", () => {
+      if (wheelDaemon) markRescue();
     });
   } catch (e) {
     trace("xwheel-daemon spawn failed: " + e.message);

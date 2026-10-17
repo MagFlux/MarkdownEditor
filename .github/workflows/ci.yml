@@ -19,6 +19,14 @@
 #              event (i.e. when you actually cut a release). Skipped on PRs
 #              and plain pushes to main.
 #
+#              Runs `npm run electron:build` — the SAME script a local
+#              release build uses (vite build → electron-builder). Calling
+#              electron-builder directly is what shipped the v1.0.0
+#              installers without a frontend bundle (dist/ is gitignored):
+#              they booted to "The built frontend (dist/index.html) was not
+#              found." The electron-builder `beforePack` hook
+#              (scripts/before-pack.cjs) now hard-fails packaging without it.
+#
 #              Per-OS targets (electron-builder.yml): Windows NSIS installer +
 #              MSI (WiX) + portable stand-alone .exe; macOS .dmg + .zip (the
 #              .app portable, Apple Silicon); Linux AppImage + .deb + tar.gz
@@ -224,17 +232,26 @@ jobs:
           echo "APP_VERSION=$VER" >> "$GITHUB_ENV"
           grep '"version"' package.json
 
-      # Builds the current platform's targets from electron-builder.yml:
+      # Builds the frontend bundle (vite → dist/) and THEN the current
+      # platform's targets from electron-builder.yml:
       #   windows-latest → NSIS installer, MSI (WiX), portable .exe
       #   macos-14       → .dmg + .zip (portable .app, Apple Silicon)
       #   ubuntu-22.04   → AppImage, .deb, tar.gz portable
+      # `npm run electron:build` is the SAME script a local release build
+      # uses: `vite build && electron-builder --publish never`. NEVER replace
+      # it with a direct `npx electron-builder` call: dist/ is gitignored, so
+      # a fresh checkout has no frontend bundle, and the package would boot
+      # to "The built frontend (dist/index.html) was not found." — exactly
+      # what the v1.0.0 artifacts did. Belt-and-braces: the electron-builder
+      # `beforePack` hook (scripts/before-pack.cjs) hard-fails the packaging
+      # when dist/ is missing or incomplete.
       # No OS-level package installs are needed: electron-builder fetches
       # NSIS/WiX on Windows itself, and Electron ships its own runtime.
       # electronDist in the config reuses node_modules/electron/dist (already
       # installed by npm ci) instead of re-downloading Electron.
-      - name: Build installers + portables (electron-builder)
+      - name: Build frontend + installers + portables (npm run electron:build)
         shell: bash
-        run: npx electron-builder --publish never
+        run: npm run electron:build
 
       # Upload the artifacts straight from electron-builder's output dir
       # (release/) to the release this job was triggered by — the tag already

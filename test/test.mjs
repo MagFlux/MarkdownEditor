@@ -8,6 +8,14 @@
  * `<u>text</u>` must produce a `.u` span (the underline actually paints) —
  * an escaped-plain-text fallback would still round-trip, so the span check
  * is what catches a broken token match. Run with `npm test`.
+ *
+ * The file's later sections pin (all Node, no browser): the math pipeline
+ * (src/math.js delimiter/guard rules), the task-list ordinal→line mapping
+ * (src/tasks.js), fenced-code highlighting (src/codecolor.js), and the
+ * PACKAGING GUARD (scripts/before-pack.cjs — the electron-builder
+ * `beforePack` hook that hard-fails packaging without a built dist/; the
+ * v1.0.0 installers shipped dist-less and died at boot, see the hook's
+ * header and AGENTS.md).
  */
 globalThis.document = {
   createElement: () => ({
@@ -296,5 +304,60 @@ if (ccFails === 0) {
   console.log("OK code-highlighting cases");
 } else {
   console.error(`${ccFails} code case(s) FAILED`);
+  process.exit(1);
+}
+
+/* ---------------------------------------------------------------------------
+ * Packaging guard (scripts/before-pack.cjs — the electron-builder
+ * `beforePack` hook). WHY it exists: dist/ is gitignored, and the v1.0.0 CI
+ * build job called electron-builder without building the frontend, so the
+ * asar shipped WITHOUT dist/ and every installer booted to "The built
+ * frontend (dist/index.html) was not found." The hook now refuses to package
+ * an unbootable app. These cases run against temp fixtures (never the real
+ * dist/, which does not exist yet when `npm test` is the first CI step).
+ * ------------------------------------------------------------------------- */
+const { createRequire } = await import("node:module");
+const guardFs = await import("node:fs");
+const guardOs = await import("node:os");
+const guardPath = await import("node:path");
+const { assertDist, beforePack } = createRequire(import.meta.url)("../scripts/before-pack.cjs");
+
+let pkFails = 0;
+/** pok — record a packaging-guard assertion. */
+const pok = (label, cond, extra) => {
+  if (cond) console.log("ok  ", label);
+  else { pkFails++; console.error("PACK FAIL", label, extra !== undefined ? "→ " + JSON.stringify(extra) : ""); }
+};
+/** throwsMatching — run fn; true only when it throws an Error containing needle. */
+const throwsMatching = (fn, needle) => {
+  try { fn(); return false; } catch (e) { return String(e && e.message).includes(needle); }
+};
+/** doesNotThrow — run fn; true when it completes without throwing. */
+const doesNotThrow = (fn) => { try { fn(); return true; } catch { return false; } };
+
+pok("the hook exports the function electron-builder resolves as beforePack",
+    typeof beforePack === "function");
+{
+  const dir = guardFs.mkdtempSync(guardPath.join(guardOs.tmpdir(), "md-pack-guard-"));
+  try {
+    pok("an empty dist/ is rejected, naming the fix",
+        throwsMatching(() => assertDist(dir), "npm run build"),
+        "missing bundle must fail the packaging");
+    guardFs.writeFileSync(guardPath.join(dir, "index.html"), "<script src=\"/assets/index-abc.js\"></script>");
+    pok("index.html without its entry chunk is rejected (blank-window dist)",
+        throwsMatching(() => assertDist(dir), "incomplete"));
+    guardFs.mkdirSync(guardPath.join(dir, "assets"));
+    guardFs.writeFileSync(guardPath.join(dir, "assets", "index-abc.js"), "//\n");
+    pok("a complete vite dist/ passes the guard",
+        doesNotThrow(() => assertDist(dir)));
+  } finally {
+    guardFs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+if (pkFails === 0) {
+  console.log("OK packaging-guard cases");
+} else {
+  console.error(`${pkFails} packaging-guard case(s) FAILED`);
   process.exit(1);
 }

@@ -104,7 +104,7 @@ npm run electron:start   # build dist/ and run the packaged-style app locally
 npm run electron:build   # build dist/ + electron-builder for THIS platform's targets
 ```
 
-Artifacts land in `release/` — Windows: `markdown-editor-<v>-x64-setup.exe` (NSIS), `markdown-editor-<v>-x64.msi` (WiX) and `markdown-editor-<v>-windows-x64-portable.exe`; macOS: `markdown-editor-<v>-macos-arm64.dmg` + `markdown-editor-<v>-macos-arm64-portable.zip` (the `.app`, Apple Silicon); Linux: `markdown-editor-<v>-x86_64.AppImage`, `markdown-editor-<v>-amd64.deb` and `markdown-editor-<v>-linux-x86_64-portable.tar.gz` (the linux-unpacked dir; needs the standard desktop libs — the AppImage/deb ship their own Electron runtime). Set `npm run build` outputs first — `electron-builder` packs `dist/` + `electron/` via `electron-builder.yml`.
+Artifacts land in `release/` — Windows: `markdown-editor-<v>-x64-setup.exe` (NSIS), `markdown-editor-<v>-x64.msi` (WiX) and `markdown-editor-<v>-windows-x64-portable.exe`; macOS: `markdown-editor-<v>-macos-arm64.dmg` + `markdown-editor-<v>-macos-arm64-portable.zip` (the `.app`, Apple Silicon); Linux: `markdown-editor-<v>-x86_64.AppImage`, `markdown-editor-<v>-amd64.deb` and `markdown-editor-<v>-linux-x86_64-portable.tar.gz` (the linux-unpacked dir; needs the standard desktop libs — the AppImage/deb ship their own Electron runtime). Always package through `npm run electron:build`: electron-builder only packs `dist/` + `electron/` (`electron-builder.yml`) and **builds nothing itself** — a bare `npx electron-builder` packs a dist-less app that dies at boot ("The built frontend (dist/index.html) was not found."), and the `beforePack` hook (`scripts/before-pack.cjs`) now refuses to package without a built `dist/`.
 
 App icons live in `build/` (`build/icon.png` is what Linux deb/appimage use; `build/icons/` holds the ico/icns and extra sizes). Edit `icon.svg` at the repo root (source art), then regenerate the PNG/ICO/ICNS set into `build/` with any rasterizer. Windows Explorer can cache the old `.exe` glyph — `ie4uinit.exe -show` refreshes it.
 
@@ -129,7 +129,7 @@ Every guard is a standalone Playwright (or Node) script; all exit non-zero on an
 
 ```bash
 npx playwright install chromium   # one-time
-npm test                          # round-trip invariant + math pipeline (Node, instant)
+npm test                          # round-trip invariant + math pipeline + packaging guard (Node, instant)
 npm run verify                    # UI smoke test (tabs, undo, tables)
 ```
 
@@ -175,7 +175,7 @@ The pipeline (`.github/workflows/ci.yml`) does **not** run on every push (saves 
 | PR (`opened/synchronize/reopened/ready_for_review`) | the full Playwright `test` job |
 | Release created | `validate-tag` → `test` → three parallel build jobs (Windows/macOS/Linux installers + portables) attached to the release |
 
-**Cutting a release**: the git tag is the version — there are no version files to bump. Draft/publish a release with tag `vX.Y.Z` (numeric prerelease suffix `-N`, `N ≤ 65535`, is allowed; text like `-rc.1` is rejected by the Windows MSI bundler). CI injects the tag into `package.json` before electron-builder runs. Installers + portables built per OS: **Windows** NSIS `.exe` + `.msi` + portable `.exe`; **macOS** `.dmg` + `.zip` portable (Apple Silicon); **Linux** AppImage + `.deb` + `tar.gz` portable.
+**Cutting a release**: the git tag is the version — there are no version files to bump. Draft/publish a release with tag `vX.Y.Z` (numeric prerelease suffix `-N`, `N ≤ 65535`, is allowed; text like `-rc.1` is rejected by the Windows MSI bundler). CI injects the tag into `package.json` and packages with the same `npm run electron:build` you use locally (vite build → electron-builder), so the frontend bundle is always included — a bare electron-builder call packs an empty app (that shipped the dist-less v1.0.0 installers), and the `beforePack` guard now hard-fails such a package. Installers + portables built per OS: **Windows** NSIS `.exe` + `.msi` + portable `.exe`; **macOS** `.dmg` + `.zip` portable (Apple Silicon); **Linux** AppImage + `.deb` + `tar.gz` portable.
 
 **Signing**: with no secrets set, installers are unsigned (Gatekeeper/SmartScreen warn on first run). To sign/notarize, set `CSC_LINK`/`CSC_KEY_PASSWORD` (Windows), the macOS identity/notary credentials (or `APPLE_ID`/`APPLE_TEAM_ID`/`APPLE_CERTIFICATES`) as Actions secrets and remove the `mac.identity: null` override in `electron-builder.yml`.
 

@@ -16,8 +16,17 @@ productName: Markdown Editor
 # name): the Windows exe, the Linux binary inside AppImage/deb/tar.gz, and
 # macOS keeps the productName .app ("Markdown Editor.app").
 executableName: markdown-editor
-# Compiles electron/xwheel-daemon (the X-record wheel rescue) before packing.
-beforeBuild: scripts/before-build.cjs
+# Pack-time hook (scripts/before-pack.cjs), emitted for every platform pack
+# BEFORE the app-file walk. It (a) hard-FAILS the packaging when the Vite
+# bundle is missing (dist/index.html + dist/assets/index-*.js) — a dist-less
+# package boots to "The built frontend (dist/index.html) was not found.",
+# which is what the v1.0.0 installers did (CI called electron-builder without
+# building the frontend) — and (b) compiles electron/xwheel-daemon, so
+# asarUnpack can lift the ELF out of the asar. NOT `beforeBuild`: that hook is
+# only consulted inside installAppDependencies, which RETURNS EARLY under
+# `npmRebuild: false` — the previous `beforeBuild:` entry never ran at all
+# (CI's Linux artifacts shipped without the wheel rescue).
+beforePack: ./scripts/before-pack.cjs
 electronDist: node_modules/electron/dist
 npmRebuild: false
 asar: true

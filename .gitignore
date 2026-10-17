@@ -14,7 +14,7 @@ dist-ssr
 .env
 release
 
-# Compiled wheel-rescue daemon (rebuilt by scripts/before-build.cjs)
+# Compiled wheel-rescue daemon (rebuilt by scripts/before-pack.cjs)
 electron/xwheel-daemon
 
 test/verify/
