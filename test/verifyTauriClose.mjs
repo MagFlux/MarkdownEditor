@@ -1,22 +1,27 @@
 /**
- * verifyTauriClose.mjs — native Tauri path verification.
+ * verifyTauriClose.mjs — shell-IPC native-path verification.
  *
- * Injects the exact `window.__TAURI_INTERNALS__` a bundler app receives and
- * drives the real @tauri-apps api/IPC: save→picker→write+close, picker-cancel,
+ * Injects the exact `window.__TAURI_INTERNALS__` the Electron preload installs
+ * and drives the real shell-IPC wire contract (the `plugin:*` commands also
+ * answered by electron/main.cjs): save→picker→write+close, picker-cancel,
  * save-discard-cancel, known-path direct write, open→picker→new tab, navigate
  * into forbidden dir, Home button, the hidden (dot) folder picker entry, and
  * the picker list's scroll reset on every directory entry (top-pinned).
+ * (Script name kept from the Tauri era — the wire contract it stubs is the
+ * one the shipl shares; see src/shellapi.js + electron/preload.cjs.)
  * Run with `npm run verify-tauri` (needs the built dist).
  */
-// Native (Tauri) path verification — injects the exact `window.__TAURI_INTERNALS__`
-// a bundler app receives, driving the REAL @tauri-apps api + IPC code.
+// Shell-IPC native-path verification — injects the exact
+// `window.__TAURI_INTERNALS__` the Electron preload installs, driving the REAL
+// shell wire contract (src/shellapi.js wrappers over that global).
 //
-// Real plugin command shapes (node_modules/@tauri-apps/*):
+// Command shapes (see src/shellapi.js + electron/main.cjs):
 //   plugin:fs|write_text_file : content = 1st positional arg (bytes),
 //                               path    = options.headers.path (URL-encoded)
-//   plugin:fs|read_text_file  : { path, options }
+//   plugin:fs|read_text_file  : { path, options }               → BYTES
 //   plugin:fs|read_dir        : { path, options }   → [DirEntry]
-//   plugin:path|resolve_directory : { directory }   (homeDir())   → path string
+//   plugin:path|resolve_directory : { directory }   (homeDir(), ordinal 21)
+//                               → path string
 //   plugin:window|destroy     : the onCloseRequested *wrapper* issues this only when
 //                               the handler did NOT preventDefault() → the close.
 //   plugin:window|close       : re-emits close-requested (NOT what we want to close).

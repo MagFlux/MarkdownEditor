@@ -1,0 +1,87 @@
+# electron-builder configuration — the packaging side of the Electron shell.
+#
+# Targets (one installer + one portable per OS, mirroring the old Tauri bundles):
+#   Windows   NSIS installer + MSI (WiX) + portable stand-alone .exe
+#   macOS     .dmg (Apple Silicon) + .zip (the .app — the portable)
+#   Linux     AppImage + .deb + tar.gz of linux-unpacked (the portable)
+#
+# The version comes from package.json ("0.0.0" placeholder in the repo — CI
+# injects the release tag's version before building, never bump by hand).
+#
+# electronDist: reuse the already-installed node_modules/electron runtime
+# (same platform as the runner) instead of electron-builder re-downloading it.
+appId: com.mssok.markdowneditor
+productName: Markdown Editor
+# The raw executable name ("markdown-editor", matching the old Tauri binary
+# name): the Windows exe, the Linux binary inside AppImage/deb/tar.gz, and
+# macOS keeps the productName .app ("Markdown Editor.app").
+executableName: markdown-editor
+# Compiles electron/xwheel-daemon (the X-record wheel rescue) before packing.
+beforeBuild: scripts/before-build.cjs
+electronDist: node_modules/electron/dist
+npmRebuild: false
+asar: true
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - electron/**/*
+  - "!node_modules/**"
+# The X-wheel daemon (electron/xwheel-daemon, compiled at build time on
+# Linux) must be EXECUTABLE — spawn-in-from-asar won't run ELF files, so it
+# is unpacked next to the app and the shell resolves app.asar → app.asar.unpacked.
+asarUnpack:
+  - electron/xwheel-daemon
+
+win:
+  icon: build/icons/icon.ico
+  target:
+    - nsis
+    - msi
+    - portable
+nsis:
+  artifactName: markdown-editor-${version}-x64-setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+msi:
+  artifactName: markdown-editor-${version}-x64.msi
+  # Stable upgrade code so an MSI upgrade replaces the previous install.
+  upgradeCode: "{8B661A42-9D50-456E-A140-94AD8C60A07B}"
+portable:
+  artifactName: markdown-editor-${version}-windows-x64-portable.exe
+
+mac:
+  icon: build/icons/icon.icns
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  # No signing secrets are configured — build unsigned (Gatekeeper warns, as
+  # documented in the release notes); `identity: null` skips the identity hunt.
+  identity: null
+  gatekeeperAssess: false
+  # Used by the zip target (the portable .app archive); dmg sets its own name.
+  artifactName: markdown-editor-${version}-macos-${arch}-portable.${ext}
+dmg:
+  artifactName: markdown-editor-${version}-macos-arm64.dmg
+
+linux:
+  # Single 512px source; electron-builder derives the hicolor sizes from it.
+  icon: build/icon.png
+  category: Utility
+  maintainer: MagFlux
+  # Sync the .desktop's StartupWMClass with Electron's app_id (= desktopName)
+  # so desktop environments link running windows to this entry (the old Tauri
+  # shell set StartupWMClass = exec, i.e. markdown-editor — this restores that).
+  syncDesktopName: true
+  target:
+    - appimage
+    - deb
+    - tar.gz
+  # Used by the tar.gz portable (appimage/deb set their own names).
+  artifactName: markdown-editor-${version}-linux-x86_64-portable.${ext}
+appImage:
+  artifactName: markdown-editor-${version}-x86_64.AppImage
+deb:
+  artifactName: markdown-editor-${version}-amd64.deb

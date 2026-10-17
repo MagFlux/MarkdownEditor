@@ -12,7 +12,10 @@ dist
 dist-ssr
 *.local
 .env
-target
+release
+
+# Compiled wheel-rescue daemon (rebuilt by scripts/before-build.cjs)
+electron/xwheel-daemon
 
 test/verify/
 

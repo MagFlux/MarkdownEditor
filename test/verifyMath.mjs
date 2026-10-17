@@ -35,7 +35,7 @@ const browser = await chromium.launch();
 setTimeout(() => { console.error("\nWATCHDOG: run stalled (>75s)"); process.exit(3); }, 75000);
 
 /**
- * installInternals — minimal Tauri `__TAURI_INTERNALS__` stub (same shape as
+ * installInternals — minimal `__TAURI_INTERNALS__` stub (same shape as
  * verifyExport.mjs): records text/binary writes on `window.__state` and
  * auto-answers the picker's IPC so export flows complete headlessly.
  */

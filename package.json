@@ -4,6 +4,10 @@
   "private": true,
   "license": "AGPL-3.0",
   "type": "module",
+  "author": "MagFlux",
+  "description": "Multi-tab Markdown editor with live preview (Electron shell)",
+  "desktopName": "markdown-editor.desktop",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -33,25 +37,21 @@
     "verify-recent": "node test/verifyRecent.mjs",
     "verify-dialogscroll": "node test/verifyDialogScroll.mjs",
     "verify-codecolor": "node test/verifyCodeColor.mjs",
-    "tauri": "tauri",
-    "app": "tauri dev",
-    "app:build": "tauri build"
+    "electron": "electron .",
+    "electron:dev": "node scripts/before-build.cjs && node scripts/electron-dev.cjs",
+    "electron:start": "node scripts/before-build.cjs && npm run build && electron .",
+    "electron:build": "npm run build && electron-builder --publish never"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/cli": "^2.11.4",
-    "@tauri-apps/plugin-dialog": "^2.7.3",
-    "@tauri-apps/plugin-fs": "^2.5.2",
-    "@tauri-apps/plugin-opener": "^2.5.5",
-    "playwright": "^1.63.0",
-    "vite": "^8.3.0"
-  },
-  "dependencies": {
+    "electron": "^40.10.6",
+    "electron-builder": "^26.15.3",
     "highlight.js": "^11.12.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "katex": "^0.18.7",
     "marked": "^18.0.12",
-    "mermaid": "^12.0.0"
+    "mermaid": "^12.0.0",
+    "playwright": "^1.63.0",
+    "vite": "^8.3.0"
   }
 }

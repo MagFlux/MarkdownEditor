@@ -6,7 +6,9 @@ software. License grants apply to the use, reproduction, and
 distribution of each component. The source of each is available
 from its upstream project and, for the bundled JavaScript, is
 shipped inside `node_modules/` (and inlined into the built
-`dist/` bundle) along with its own license text.
+`dist/` bundle) along with its own license text. Electron and its
+bundled Chromium/Node runtime ship inside the installers with
+their own license files.
 
 MIT components
 --------------
@@ -17,31 +19,20 @@ html2canvas   — HTML-to-canvas renderer (js)    MIT   (Copyright 2012+ Niklas 
 jspdf         — PDF generator (js)              MIT   (Copyright 2010-2025 James Hall / yWorks GmbH)
 vite          — build tooling (js)              MIT   (Copyright 2019-2026 the Vite team)
 mermaid       — diagram renderer (js)           MIT   (Copyright 2014-2026 knsv / mermaid.js authors)
-@tauri-apps/api
-@tauri-apps/cli
-@tauri-apps/plugin-fs
-@tauri-apps/plugin-dialog
-@tauri-apps/plugin-opener
-                            — Tauri frontend    MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
-tauri         — Rust core (tauri crate)         MIT / Apache-2.0   (Copyright 2017+ Tauri Program)
-tao           — Rust windowing layer (transitive of tauri)  MIT / Apache-2.0   (Copyright 2014+ tao contributors)
-wry           — Rust webview wrapper            MIT / Apache-2.0   (Copyright 2020+ Tauri Program)
-gtk           — GTK3 bindings (tauri Linux shell; direct dep)   MIT   (Copyright 2015+ The gtk-rs Project)
-webkit2gtk    — WebKitGTK bindings (tauri Linux shell; see the Runtime note below)  MIT   (Copyright 2020+ Tauri Program)
+lodash-es     — utility library (js, transitive dep of mermaid — chevrotain / dagre-d3-es)
+              MIT   (Copyright JS Foundation and other contributors)
+electron      — desktop shell runtime (bundles Chromium + Node; MIT)   MIT
+              (Copyright 2013-2026 OpenJS Foundation and Electron contributors)
+electron-builder — app packaging tooling (js; build-time only, not shipped
+                inside the installers)      MIT   (Copyright 2016+ Vladimir Krstić / electron-builder contributors)
 
-For the MIT/Apache dual-licensed Tauri stack the project may use
-the MIT grant. If the Apache-2.0 grant is relied on, the Apache
-Software Foundation's Apache License, Version 2.0 applies, and the
-following statement is incorporated by reference:
-
-  Copyright 2017-2026 Tauri Program
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Apache-2.0-only component
+Apache-2.0 components
 -------------------------
+chevrotain    — tokenizer/parser toolkit (js, transitive dep of mermaid — its
+              flowchart parser runs in the bundle)   Apache-2.0   (Copyright 2014+ Robert Einhorn / chevrotain contributors)
+dompurify     — HTML sanitizer (js; bundled via jspdf and mermaid, dual
+              MPL-2.0 OR Apache-2.0 — the Apache-2.0 side is taken per this
+              project's dual-license policy)   Apache-2.0   (Copyright 2015-2026 Mario Heiderich / Cure53 and DOMPurify contributors)
 playwright    — browser automation (test-only)  Apache-2.0   (Copyright 2020-2026 Microsoft Corporation)
 
   Copyright 2020-2026 Microsoft Corporation
@@ -81,12 +72,8 @@ elkjs       — ELK layout engine (js)   EPL-2.0   (Copyright 2018-2026 Eclipse 
     https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt
 
   (No other bundled dependency is non-permissive; the rest of the
-  mermaid runtime is MIT / Apache-2.0 / ISC / BSD-3-Clause.)
-
-Runtime (not bundled) — Linux only
-----------------------------------
-The Linux build dynamically links the system-provided WebKitGTK
-library (`libwebkit2gtk-4.1`, LGPL-2.1 with exception / GPL-2.0+).
-It is a system runtime dependency, not redistributed here. This
-product does not copy or modify that library and permits the user
-to replace it with their own compatible build, as LGPL requires.
+  mermaid runtime is MIT / Apache-2.0 / ISC / BSD-3-Clause — chevrotain
+  is Apache-2.0, and dompurify (arriving via both jspdf and mermaid 12.2)
+  is dual MPL-2.0 OR Apache-2.0 with the Apache-2.0 side taken. Mermaid
+  12.2 no longer bundles its own katex copy; it reuses the top-level
+  katex listed above.)

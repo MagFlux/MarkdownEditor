@@ -11,6 +11,8 @@
 import { createApp } from "./markdown.js";
 import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
 import "./style.css";
+import { createWheelDiag } from "./wheeldiag.js";
+import { installWheelOverride } from "./wheeloverride.js";
 // KaTeX styles for the live preview + PDF export. The stylesheet import AND
 // the export-asset imports live HERE (main.js-only), never inside the
 // src/markdown.js graph: test/test.mjs loads that graph under plain Node,
@@ -54,7 +56,7 @@ const sample = [
   "- **Rich paste** — paste HTML from Excel / Word (tables, bold spans) and it converts to Markdown in one undoable step",
   "- **Recent files** — the hamburger menu remembers the last files you open or save",
   "- **Diagrams** — any ` ```mermaid ` fence renders live, here and in your PDF/HTML export",
-  "- **Multi-tab** — **Ctrl+click** anywhere for a new tab; open/save real files on Tauri",
+  "- **Multi-tab** — **Ctrl+click** anywhere for a new tab; open/save real files in the desktop app",
   "- **Export** from the hamburger menu (Export… → As PDF / As HTML) — the preview you see is the file you get",
   "",
   "## Your first tasks",
@@ -104,12 +106,12 @@ const sample = [
   "| **Ctrl+F / Ctrl+H** | Find / find & replace (Enter = next, Esc = close) |",
   "| **Ctrl+Arrow** | Word-wise caret move (formatted spans count as one word) |",
   "| **Ctrl+Z / Ctrl+Y** | Undo / redo |",
-  "| **Ctrl+S** | Save (native on Tauri; download in browser) |",
+  "| **Ctrl+S** | Save (writes to disk in the desktop app; download in browser) |",
   "| **Ctrl+click** | New tab |",
   "",
   "> Select a word and click a toolbar button — or just start typing `**` to bold.",
   "",
-  "That's it — a single-file, cross-platform editor built with Tauri.",
+  "That's it — a single-file, cross-platform editor, running in Electron.",
 ].join("\n");
 
 if (app.getDocumentText() === "") {
@@ -117,6 +119,9 @@ if (app.getDocumentText() === "") {
 }
 app.refresh();
 window.editor = app;
+/* Claim the wheel stream on the pane scrollers (see wheeloverride.js — the
+   WSLg wheel saga). Must run once; idempotent listener, no other wiring. */
+installWheelOverride();
 // Expose the mermaid style-stampers for the diagnostics hook + tests.
 window.editor.stampSvgStyles = stampSvgStyles;
 window.editor.installMermaidStyles = installMermaidStyles;
@@ -279,3 +284,23 @@ document.addEventListener("keydown", async (ev) => {
   document.body.appendChild(backdrop);
   btn.focus();
 });
+
+/* ---- Wheel diagnostics hook (Ctrl+Shift+D) ------------------------------------
+   Same diagnostics family as Ctrl+Shift+M just above. The Linux "2-4 wheel
+   notches dead, then scrolling catches up" report could not be reproduced
+   with any synthetic input (CDP mouseWheel and XTest button presses both
+   scroll from notch 1 — synthetic devices lack the XI2 smooth-scroll
+   valuator real mice report, so they exercise different Chromium input
+   paths). This opens a live NON-MODAL floating panel (src/wheeldiag.js):
+   NOT the centered-modal convention, deliberately — the user must wheel the
+   panes while it is open. It logs every wheel event that reaches the page
+   (deltas, mode, target, time gap) plus each pane's actual displacement
+   32 ms / 300 ms later, and a Copy button turns it into a bug-report text.
+   Passive (capture+passive listener, no preventDefault); no text mutation. */
+const wheelDiag = createWheelDiag(() => app.activeTab || null);
+document.addEventListener("keydown", (ev) => {
+  if (!(ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey)) return;
+  if (ev.key !== "D" && ev.key !== "d") return;
+  ev.preventDefault();
+  wheelDiag.toggle();
+}, true);
