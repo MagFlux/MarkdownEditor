@@ -23,7 +23,16 @@
  * `filter: none` (no drop-shadow — the Windows "fuzzy borders" report),
  * and the dark-theme stroke luminance stays high (>0.5).
  *
- * Run with `npm run verify-mermaidfade` (16 cases).
+ * Also pins the THEME PREWARM: both palettes are rendered at load
+ * (`scheduleMermaidPrewarm` → `prewarmMermaidThemes`), so the FIRST theme
+ * toggle is a synchronous cache restore — no raw mermaid fence appears and
+ * the preview is not reflowed asynchronously after `toggleTheme`'s
+ * scroll-ratio restore (the "first theme change jumps around" report). The
+ * prewarm is NOT open-only: a fence edited in one theme is asserted to warm
+ * the new source in the other theme too, with the next toggle still
+ * synchronous.
+ *
+ * Run with `npm run verify-mermaidfade` (21 cases).
  */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
@@ -103,11 +112,43 @@ const assertNoFade = (tag, s) => {
 assertNoFade("light", await readFadeState());
 
 // ---------------------------------------------------------------------------
-// DARK theme — the regression itself. The toolbar theme button re-keys the
-// mermaid cache on theme (mmCacheKey) and re-renders, so the second render
-// is fresh (no stale light-theme SVG).
+// PREWARM — both themes must be rendered at load, so the FIRST toggle is a
+// synchronous cache restore. Without it the toggle misses the (theme+source)
+// cache, shows raw `<pre><code class="language-mermaid">` for the 120 ms
+// debounce, then REPLACES the SVG asynchronously — changing the preview's
+// height AFTER toggleTheme's scroll-ratio restore ran (the "preview jumps
+// around the first time I change themes" report).
 // ---------------------------------------------------------------------------
-await p.click('[data-action="theme"]'); await sleep(S * 2);
+await p.waitForFunction(() => {
+  const s = window.editor.mermaidCacheStats && window.editor.mermaidCacheStats();
+  return !!s && s.default >= 1 && s.dark >= 1;
+}, null, { timeout: 15000 });
+const warmStats = await p.evaluate(() => window.editor.mermaidCacheStats());
+ok("prewarm: inactive theme already cached before the first toggle",
+   warmStats.default >= 1 && warmStats.dark >= 1, JSON.stringify(warmStats));
+
+const instantToggle = await p.evaluate(() => {
+  document.querySelector('[data-action="theme"]').click();
+  const d = window.editor.activeTab;
+  const svg = d.preview.querySelector(".mermaid-diagram svg");
+  const rect = svg && svg.querySelector(".node rect");
+  return {
+    theme: document.documentElement.dataset.theme || "light",
+    raw: d.preview.querySelectorAll("pre > code.language-mermaid").length,
+    rendered: d.preview.querySelectorAll(".mermaid-diagram").length,
+    stroke: rect ? getComputedStyle(rect).stroke : "",
+  };
+});
+ok("prewarm: first toggle restores the new theme SYNCHRONOUSLY (no raw fence)",
+   instantToggle.theme === "dark" && instantToggle.raw === 0 && instantToggle.rendered >= 1,
+   JSON.stringify(instantToggle));
+
+// ---------------------------------------------------------------------------
+// DARK theme — the regression itself. The toolbar theme button re-keys the
+// mermaid cache on theme (mmCacheKey) and the prewarmed entry restores in the
+// toggle's own tick; the assertions below pin the fresh dark-theme sheet.
+// ---------------------------------------------------------------------------
+await sleep(S * 2);
 assertNoFade("dark", await readFadeState());
 
 // The theme really switched (guard against the toggle silently failing).
@@ -131,6 +172,52 @@ const lum = await p.evaluate(() => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
 });
 ok("dark: outline stroke luminance is high (visible on dark bg)", lum !== null && lum > 0.5, `lum=${lum && lum.toFixed(2)} stroke=${lum}`);
+
+// ---------------------------------------------------------------------------
+// PREWARM IS NOT OPEN-ONLY — a fence edited while in DARK must get the NEW
+// source rendered in dark (the visible preview) AND warmed for light, so the
+// next toggle is still a synchronous cache restore. `refresh()` (every
+// keystroke/commit/toggle) schedules the pass; the render debounce lands
+// first, then the background pass fills the inactive theme.
+// ---------------------------------------------------------------------------
+const beforeEdit = await p.evaluate(() => window.editor.mermaidCacheStats());
+const edited = await p.evaluate(() => {
+  const ta = window.editor.activeTab.input;
+  const v = ta.value;
+  const from = "D[PDF / HTML]";
+  const to = "D[PDF / HTML2]";
+  const i = v.indexOf(from);
+  if (i < 0) return { ok: false, why: "fence label not found" };
+  ta.focus();
+  ta.value = v.slice(0, i) + to + v.slice(i + from.length);
+  ta.dispatchEvent(new Event("input", { bubbles: true, cancelable: false }));
+  return { ok: true };
+});
+ok("prewarm: in-fence edit applied while in the dark theme", edited.ok, JSON.stringify(edited));
+await p.waitForFunction(([darkBefore, lightBefore]) => {
+  const s = window.editor.mermaidCacheStats && window.editor.mermaidCacheStats();
+  return !!s && s.dark > darkBefore && s.default > lightBefore;
+}, [beforeEdit.dark, beforeEdit.default], { timeout: 15000 });
+const afterEdit = await p.evaluate(() => window.editor.mermaidCacheStats());
+ok("prewarm: edited diagram is warmed in BOTH themes (dark render + light prewarm)",
+   afterEdit.dark > beforeEdit.dark && afterEdit.default > beforeEdit.default,
+   JSON.stringify({ before: beforeEdit, after: afterEdit }));
+
+const toggleAfterEdit = await p.evaluate(() => {
+  document.querySelector('[data-action="theme"]').click();
+  const d = window.editor.activeTab;
+  const holder = d.preview.querySelector(".mermaid-diagram");
+  return {
+    theme: document.documentElement.dataset.theme || "light",
+    raw: d.preview.querySelectorAll("pre > code.language-mermaid").length,
+    rendered: d.preview.querySelectorAll(".mermaid-diagram").length,
+    hasNewLabel: !!(holder && /HTML2/.test(holder.textContent)),
+  };
+});
+ok("prewarm: toggle after the edit restores the NEW source synchronously (no raw fence)",
+   toggleAfterEdit.theme === "light" && toggleAfterEdit.raw === 0 &&
+     toggleAfterEdit.rendered >= 1 && toggleAfterEdit.hasNewLabel,
+   JSON.stringify(toggleAfterEdit));
 
 if (errors.length) { fail++; console.log("FAIL page errors", errors.join(" | ")); }
 console.log(`\n${pass} pass, ${fail} fail`);

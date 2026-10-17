@@ -9,7 +9,7 @@
  * Exposes: `window.editor` — the live `createApp` result (for Playwright).
  */
 import { createApp } from "./markdown.js";
-import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows } from "./mermaid.js";
+import { stampSvgStyles, installMermaidStyles, centerForeignObjectLabels, stripSequenceShadows, mermaidCacheStats } from "./mermaid.js";
 import "./style.css";
 import { createWheelDiag } from "./wheeldiag.js";
 import { installWheelOverride } from "./wheeloverride.js";
@@ -127,6 +127,9 @@ window.editor.stampSvgStyles = stampSvgStyles;
 window.editor.installMermaidStyles = installMermaidStyles;
 window.editor.centerForeignObjectLabels = centerForeignObjectLabels;
 window.editor.stripSequenceShadows = stripSequenceShadows;
+/* Theme-prewarm diagnostics: per-theme entry counts in the mermaid SVG cache
+   (tests assert the inactive palette was warmed before the first toggle). */
+window.editor.mermaidCacheStats = mermaidCacheStats;
 
 /* ---- Mermaid diagnostics hook (Ctrl+Shift+M) ---------------------------------
    The Windows WebView2 "black nodes" bug is invisible from Linux: we can only

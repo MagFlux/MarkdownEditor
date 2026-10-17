@@ -40,7 +40,7 @@ import { getCurrentWindow, readTextFile as tauriReadTextFile, writeTextFile as t
    hoist into the same single bundle, same invariant as the Tauri imports above).
   src/markdown.js keeps the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
-import { scheduleMermaidRender, restoreMermaid } from "./mermaid.js";
+import { scheduleMermaidRender, scheduleMermaidPrewarm, restoreMermaid } from "./mermaid.js";
 import { renderMarkdown } from "./math.js";
 import { lineBounds, wordAt, wordJump, detectFormat, trimmedSpan, wrapFor } from "./format.js";
 import { mdFromHtml, mdTableFromHtml, mdCellText, mdInlineMd, mdStyleOf } from "./paste.js";
@@ -883,6 +883,11 @@ export function createApp(root) {
     // funnel every text mutation passes through (typing, commit, undo/redo,
     // tab switch), so the bar recomputes here. No-op while the bar is closed.
     find.noteTextChanged();
+    // Pre-render the INACTIVE theme's mermaid SVGs in the background so the
+    // first theme toggle is a synchronous cache restore (no raw-fence flash,
+    // no post-restore height jump). Debounced + idempotent once warm; see
+    // prewarmMermaidThemes (src/mermaid.js).
+    scheduleMermaidPrewarm();
   }
   /** scheduleRefresh — coalesce refresh() calls into one per animation frame. */
   function scheduleRefresh() {

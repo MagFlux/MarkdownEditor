@@ -24,7 +24,7 @@ Built with **Electron** (native shell) + **Vite** (web frontend). No framework �
 - **Export** — hamburger → "Export…" → "As PDF…" / "As HTML…"; renders your live preview into a self-contained `.html` (math fonts embedded) or multi-page A4 `.pdf`
 - **Drag-and-drop** `.md` files onto the window; **Ctrl+click** a link in the source to open it
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
-- **Light / Dark** theme (persisted, restored on start); scroll positions are preserved across tab/mode/theme switches and while the Save/Open/Export dialog is open (and on its close — no flicker); scrollbar colors follow the theme
+- **Light / Dark** theme (persisted, restored on start); both mermaid palettes are pre-rendered at load so the first switch is instant; scroll positions are preserved across tab/mode/theme switches and while the Save/Open/Export dialog is open (and on its close — no flicker); scrollbar colors follow the theme
 - **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; end-of-document positions snap together
 - **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; every directory you enter opens with its list at the top; browser fallback throughout
 
@@ -71,7 +71,7 @@ MarkdownEditor/
 │   ├── scrollsync.js           # block-anchored split-view scroll sync (marked-lexer anchors + measured overlay geometry)
 │   ├── codecolor.js            # fenced-code syntax highlighting (highlight.js core + ~16 grammars)
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
-│   ├── mermaid.js              # mermaid SVG rendering + anti-flicker cache + stylesheet-failure fallback
+│   ├── mermaid.js              # mermaid SVG rendering + theme-keyed anti-flicker cache (both palettes prewarmed) + stylesheet-failure fallback
 │   ├── format.js               # selection + format detect/wrap helpers (lineBounds, wordAt, detectFormat, …)
 │   ├── paste.js                # rich-paste HTML→Markdown (mdFromHtml, mdTableFromHtml, …)
 │   ├── math.js                 # LaTeX math ($$ block + $ inline, KaTeX): renderMarkdown pipeline + export-CSS builder
@@ -156,7 +156,7 @@ full local run for release-grade milestones.
 | `verify-themescroll` | 10 | theme switch preserves scroll; scrollbars flip with the theme |
 | `verify-mermaidflicker` | 7 | no raw-code flash on prose keystrokes outside a fence |
 | `verify-mermaidstyle` | 38 | mermaid stylesheet-failure fallback + label centering |
-| `verify-mermaidfade` | 16 | dark-theme gradient outlines off, no drop shadow |
+| `verify-mermaidfade` | 21 | dark-theme gradient outlines off, no drop shadow; both theme palettes prewarmed at load, and edits re-warm the changed diagram — the next theme toggle always restores synchronously |
 | `verify-tauri` | 55 | shell-IPC native path (stubs `__TAURI_INTERNALS__`, drives the real wire contract the Electron preload implements); the picker list re-opens at the TOP on every directory entry |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
 | `verify-find` | 38 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal |

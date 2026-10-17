@@ -41,10 +41,12 @@ const _SVG_CACHE_MAX = 200;
  * makes every lookup miss and `scheduleMermaidRender` (whose fingerprint also
  * mixes the theme) re-arms, so diagrams re-render in the new theme.
  * @param {string} text — the mermaid fence source.
+ * @param {"dark"|"default"} [theme] — explicit theme (prewarm renders the
+ *   INACTIVE theme off-screen; omit to use the live app theme).
  * @returns {string} `<theme>\x00<source>`.
  */
-function mmCacheKey(text) {
-  return mermaidTheme() + "\x00" + text;
+function mmCacheKey(text, theme) {
+  return (theme === "dark" || theme === "default" ? theme : mermaidTheme()) + "\x00" + text;
 }
 
 /**
@@ -550,6 +552,32 @@ function mermaidTheme() {
   return theme;
 }
 
+/* Serialize REAL mermaid.render calls (cache hits and in-flight sharing stay
+   lock-free). Mermaid's `initialize` writes a GLOBAL config and its renderer
+   keeps a global diagram-config scope that `render` clears in a finally, so
+   two renders in DIFFERENT themes must never interleave: the second
+   initialize could repaint the first mid-flight (mixed-theme diagrams).
+   Theme PREWARMING (below) makes that scenario routine — a background render
+   of the inactive theme while the user edits in the active one — so every
+   mermaid.render goes through this chain. */
+let _renderChain = Promise.resolve();
+
+/**
+ * withRenderLock — queue `fn` after every previously queued mermaid render.
+ * The chain cell always resolves (each `fn`'s own rejection is handed to its
+ * caller through the returned promise), so one failed diagram never wedges
+ * later renders.
+ * @template T
+ * @param {() => Promise<T>} fn — the critical section (initialize + render).
+ * @returns {Promise<T>} `fn`'s result (or rejection).
+ */
+function withRenderLock(fn) {
+  const prev = _renderChain;
+  let release;
+  _renderChain = new Promise((res) => { release = res; });
+  return prev.then(fn).finally(() => release());
+}
+
 /**
  * renderMermaidSvg — ask mermaid for the rendered SVG of one diagram source.
  *
@@ -557,19 +585,24 @@ function mermaidTheme() {
  * happens at all — the stored `{svg, bindFunctions}` is returned directly.
  * CONCURRENT: while a render is in flight for the same source, callers share
  * the same promise so N concurrent callers collapse into one mermaid.render.
- * Safe under Node (returns `{svg:"",bindFunctions:null}` when `document.body`
- * is absent) — never invokes mermaid.render in that case.
+ * Different sources/themes are SERIALIZED through `withRenderLock` (mermaid's
+ * theme config is global). Safe under Node (returns `{svg:"",bindFunctions:null}`
+ * when `document.body` is absent) — never invokes mermaid.render in that case.
  *
  * @param {string} text — the mermaid source (e.g. `flowchart LR\n A --> B`).
+ * @param {"dark"|"default"} [themeOverride] — render for this theme instead of
+ *   the live `data-theme`; used by `prewarmMermaidThemes` to cache the
+ *   inactive palette without touching the visible page.
  * @returns {Promise<{svg:string, bindFunctions:Function|null}>} the rendered
  *   SVG and the optional interactive-bindings callback (or an empty string
  *   under Node / if rendering failed in a way we chose to swallow).
  */
-async function renderMermaidSvg(text) {
+async function renderMermaidSvg(text, themeOverride) {
   if (typeof document === "undefined" || !document.body) { return { svg: "", bindFunctions: null }; } // Node/headless: never render
   // Composite (theme + source) key: a diagram rendered in the other theme is
   // NOT a hit — its baked-in sheet (and stamped attributes) are theme-specific.
-  const key = mmCacheKey(text);
+  const theme = themeOverride === "dark" || themeOverride === "default" ? themeOverride : mermaidTheme();
+  const key = mmCacheKey(text, theme);
   // Cache hit — no render, no DOM, no timer. This is the fast path behind the
   // flicker fix: `restoreMermaid` walks the DOM and finds the holder already
   // in place with a cached SVG, so mermaid.render is never consulted again.
@@ -579,8 +612,7 @@ async function renderMermaidSvg(text) {
   // asking for the same source) collapse into one mermaid.render.
   const shared = _inflight.get(key);
   if (shared) return shared;
-  const p = (async () => {
-    const theme = mermaidTheme();
+  const p = withRenderLock(async () => {
     // FONT CONSISTENCY (Windows label-centering fix): Mermaid v12 measures
     // label text with the DIAGRAM config's fontFamily default — flowchart/
     // sequence use '"trebuchet ms", verdana, arial, sans-serif' — but paints
@@ -656,10 +688,121 @@ async function renderMermaidSvg(text) {
       const leftover = (typeof document !== "undefined" && document.getElementById) ? document.getElementById(id) : null;
       if (leftover && leftover.parentNode) leftover.parentNode.removeChild(leftover);
     }
-  })();
+  });
   _inflight.set(key, p);
   try { return await p; }
   finally { _inflight.delete(key); }
+}
+
+/**
+ * prewarmMermaidThemes — pre-render every diagram the user has already seen in
+ * the INACTIVE app theme, off-screen.
+ *
+ * WHY: mermaid SVGs bake the theme's stylesheet into the markup, so the cache
+ * is keyed by (theme + source) and a theme toggle used to miss every entry.
+ * `toggleTheme` then had to re-render every diagram through the 120 ms
+ * debounce: the preview briefly showed raw mermaid fences, the rendered SVGs
+ * changed the preview's height after the scroll-ratio restore had already
+ * run, and the first light→dark swap visibly jumped around. Warming both
+ * palettes at load makes the first (and every later) toggle a SYNCHRONOUS
+ * `restoreMermaid` cache hit, so no raw fence and no height reflow race.
+ *
+ * Scope: sources already cached in the CURRENT theme — i.e. exactly the
+ * diagrams the user has actually rendered (including hidden open tabs).
+ * Nothing is parsed from Markdown, so the keys match `code.textContent`
+ * byte-for-byte. Renders are serialized by `withRenderLock` (mermaid config
+ * is global) and each one yields a macrotask before the next so a render the
+ * user just triggered (a keystroke) jumps the queue instead of waiting for
+ * the whole warm pass. Errors are swallowed: a diagram that cannot render in
+ * the other theme simply stays cold and renders on demand (with its error
+ * box) if the user toggles.
+ *
+ * @returns {Promise<number>} how many diagrams were rendered for the inactive
+ *   theme (0 when everything was already warm / under Node).
+ */
+async function prewarmMermaidThemes() {
+  if (typeof document === "undefined" || !document.body) return 0;
+  // Wait for the CURRENT theme's in-flight renders: their sources are the
+  // ones we warm, and draining them first avoids warming a diagram before it
+  // has ever been displayed. (New renders queued during the wait are also
+  // awaited — the loop re-checks the map.)
+  while (_inflight.size) {
+    await Promise.allSettled(Array.from(_inflight.values()));
+  }
+  const theme = mermaidTheme();
+  const other = theme === "dark" ? "default" : "dark";
+  // Snapshot the sources cached in the active theme (copy first: rendering
+  // appends to the Map, and we must not iterate while mutating). A multi-
+  // diagram render can still be finishing while we drain, so LOOP until no
+  // new current-theme source appears (failed attempts are not retried within
+  // one pass — a later refresh schedules a fresh one).
+  const attempted = new Set();
+  let warmed = 0;
+  for (;;) {
+    const sources = [];
+    const seen = new Set();
+    for (const key of Array.from(_svgCache.keys())) {
+      const i = key.indexOf("\x00");
+      if (i < 0 || key.slice(0, i) !== theme) continue;
+      const src = key.slice(i + 1);
+      if (!src.trim() || seen.has(src) || attempted.has(src)) continue;
+      seen.add(src);
+      sources.push(src);
+    }
+    if (!sources.length) break;
+    for (const src of sources) {
+      attempted.add(src);
+      if (_svgCache.has(mmCacheKey(src, other))) continue;
+      try { await renderMermaidSvg(src, other); warmed++; } catch { /* stays cold; renders on demand */ }
+      // Yield so a user-triggered current-theme render (input → debounce) does
+      // not sit behind the entire background pass.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return warmed;
+}
+
+/* Prewarm scheduling: refresh() (markdown.js) calls scheduleMermaidPrewarm()
+   on open / tab activation / edits. Debounced so a typing burst does not run
+   a scan per keystroke; a run is a cheap no-op once both themes are warm. */
+let _prewarmTimer = 0;
+let _prewarmBusy = false;
+let _prewarmAgain = false;
+
+/**
+ * scheduleMermaidPrewarm — debounce a background `prewarmMermaidThemes` pass.
+ * Safe to call on every refresh: coalesces bursts, never overlaps passes, and
+ * re-runs once if another request arrived while a pass was in progress (so
+ * diagrams added mid-pass still get warmed).
+ */
+function scheduleMermaidPrewarm() {
+  if (typeof document === "undefined" || !document.body) return;
+  if (_prewarmTimer) clearTimeout(_prewarmTimer);
+  _prewarmTimer = setTimeout(() => {
+    _prewarmTimer = 0;
+    if (_prewarmBusy) { _prewarmAgain = true; return; }
+    _prewarmBusy = true;
+    prewarmMermaidThemes().catch(() => {}).finally(() => {
+      _prewarmBusy = false;
+      if (_prewarmAgain) { _prewarmAgain = false; scheduleMermaidPrewarm(); }
+    });
+  }, 400);
+}
+
+/**
+ * mermaidCacheStats — diagnostic snapshot of the theme-keyed SVG cache.
+ * Reports per-theme entry counts so tests (and the Ctrl+Shift+M family of
+ * diagnostics) can assert that the inactive theme really was prewarmed.
+ * @returns {{size:number, default:number, dark:number}} cache size + per-theme counts.
+ */
+function mermaidCacheStats() {
+  const stats = { size: _svgCache.size, default: 0, dark: 0 };
+  for (const key of _svgCache.keys()) {
+    const i = key.indexOf("\x00");
+    const theme = i < 0 ? "" : key.slice(0, i);
+    if (theme === "dark" || theme === "default") stats[theme]++;
+  }
+  return stats;
 }
 
 /**
@@ -862,4 +1005,4 @@ function scheduleMermaidRender(d) {
   d.__mmTimer = setTimeout(() => { d.__mmTimer = 0; renderMermaidInNode(d.preview).catch(() => {}); }, 120);
 }
 
-export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels, stripSequenceShadows };
+export { mermaidTheme, renderMermaidSvg, renderMermaidInNode, renderMermaidInHtml, restoreMermaid, scheduleMermaidRender, scheduleMermaidPrewarm, mermaidCacheStats, installMermaidStyles, stampSvgStyles, centerForeignObjectLabels, stripSequenceShadows };
