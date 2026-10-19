@@ -160,7 +160,7 @@ full local run for release-grade milestones.
 | `verify-mermaidfade` | 21 | dark-theme gradient outlines off, no drop shadow; both theme palettes prewarmed at load, and edits re-warm the changed diagram — the next theme toggle always restores synchronously |
 | `verify-tauri` | 55 | shell-IPC native path (stubs `__TAURI_INTERNALS__`, drives the real wire contract the Electron preload implements); the picker list re-opens at the TOP on every directory entry |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
-| `verify-find` | 47 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal, preview-mode disable |
+| `verify-find` | 48 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal, highlight line-box height matches the native selection, preview-mode disable |
 | `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |
 | `verify-recent` | 12 | recent-files menu: record on open/save, dedupe, cap 10, click opens a new tab, stale entries drop |
 | `verify-codecolor` | 7 | fenced-code tokens highlight in the preview, unknown/mermaid stay plain, token colors paint |

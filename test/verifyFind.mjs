@@ -249,6 +249,34 @@ ok("7a2 the current match is HIGHLIGHTED on the overlay (engine-independent)",
    caretOn && caretOn.match.display === "block" && caretOn.match.inEditorCol && caretOn.match.rects >= 1,
    JSON.stringify(caretOn && caretOn.match));
 
+// The synthetic highlight must paint the SAME line-box height as the
+// textarea's native ::selection wash, not Range.getClientRects()'s tighter
+// glyph box — otherwise the highlight visibly SHRINKS when Ctrl+F steals
+// focus (and grows back when the bar closes and the native selection paints).
+// Every fragment of a wrapped/multi-line match must align to the line grid.
+const matchGeom = await p.evaluate(() => {
+  const d = window.editor.activeTab;
+  const ed = d.editor;
+  const cs = getComputedStyle(ed);
+  const lineH = parseFloat(cs.lineHeight);
+  const padTop = parseFloat(cs.paddingTop);
+  const edTop = ed.getBoundingClientRect().top;
+  return {
+    lineH, padTop, edTop,
+    rects: Array.from(document.querySelectorAll(".find-match")).map((el) => {
+      const r = el.getBoundingClientRect();
+      return { h: r.height, top: r.top };
+    }),
+  };
+});
+const heightOk = matchGeom.rects.length > 0 && matchGeom.rects.every((r) => Math.abs(r.h - matchGeom.lineH) < 0.5);
+const gridOk = matchGeom.rects.every((r) => {
+  const off = ((r.top - matchGeom.edTop - matchGeom.padTop) % matchGeom.lineH + matchGeom.lineH) % matchGeom.lineH;
+  return off < 0.6 || off > matchGeom.lineH - 0.6;
+});
+ok("7a3 the match highlight uses the native-selection LINE-BOX height (not the glyph box)",
+   heightOk && gridOk, JSON.stringify(matchGeom));
+
 // Clicking into the editor hides the synthetic caret (the real caret shows).
 await p.evaluate(() => { window.editor.activeTab.input.focus(); });
 await sleep(120);

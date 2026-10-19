@@ -413,6 +413,15 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, fo
    * more than a couple of line fragments), moves the wrapper between tabs
    * (one bar, one highlight), and hides it on: bar closed, no current match,
    * regex error, or the editor textarea holding focus.
+   *
+   * HEIGHT: each fragment is EXPANDED to the editor's computed line-height
+   * (centered on the Range rect's glyph box). `Range.getClientRects()` returns
+   * the tight glyph box (~17px for the 15px font), while the textarea's native
+   * `::selection` wash paints the full 23px line box — painting the raw range
+   * height made the highlight visibly SHRINK the moment Ctrl+F stole focus
+   * from the editor (the reported inconsistency). Expanding to the line box
+   * makes the synthetic highlight exactly as tall as the native selection it
+   * replaces, for every line fragment of a wrapped/multi-line match.
    */
   function updateMatch() {
     const d = getActiveDoc();
@@ -423,18 +432,23 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, fo
     const rects = spanRects(d, m.start, m.end);
     if (!col || !rects.length) { hideMatch(); return; }
     const colRect = col.getBoundingClientRect();
+    // The overlay's computed line-height is the line-box height the textarea's
+    // native selection paints (`normal`/unparseable → keep the raw rect).
+    const lineH = parseFloat(getComputedStyle(d.editor).lineHeight);
     // Rebuild children (a handful of divs — cheap, and handles wrapped
     // matches whose fragment count changes between updates).
     matchWrap.innerHTML = "";
     const MAX_RECTS = 64; // sane cap; a longer multi-line match highlights its head
     for (let i = 0; i < rects.length && i < MAX_RECTS; i++) {
       const r = rects[i];
+      const h = lineH > 0 ? lineH : r.height;
       const el = document.createElement("div");
       el.className = "find-match";
       el.style.left = (r.left - colRect.left) + "px";
-      el.style.top = (r.top - colRect.top) + "px";
+      // Center the line box on the glyph box (half-leading top and bottom).
+      el.style.top = (r.top - (h - r.height) / 2 - colRect.top) + "px";
       el.style.width = r.width + "px";
-      el.style.height = r.height + "px";
+      el.style.height = h + "px";
       matchWrap.appendChild(el);
     }
     matchWrap.style.display = "block";
