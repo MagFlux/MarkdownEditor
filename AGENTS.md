@@ -159,7 +159,9 @@ npm run dev            # http://127.0.0.1:5173
 npm test               # 26 round-trip + overlay-styling cases (no server, instant)
 npm run verify         # UI smoke test (tabs, undo/redo, underline, tables)
 npm run verify-undo    # undo/redo UI test (11 cases)
-npm run verify-save    # save / close-guard UI test (24 cases)
+npm run verify-save    # save / close-guard UI test (26 cases) — includes the first-run
+                       # document and a freshly opened file both starting with the CARET
+                       # at offset 0 (openAtTop runs after activate; see the caret convention)
 npm run verify-toolbar # toolbar active-states track the caret (56 cases) — bold/underline/
                        # code/H2/link/inline-math/italic/strike with and without trailing punctuation,
                        # toggle-OFF comma preservation, multi-word spans, + click, arrow-key,
@@ -259,11 +261,12 @@ npm run verify-modescroll # Mode-switch (split/edit/preview) preserves the scrol
                             # typing focus back preventScroll on a cancel — the close
                             # flicker was the reveal scroll racing the rAF restore).
                             # Native path with a self-contained __TAURI_INTERNALS__ stub
-                            # (30 cases: real-mouse clicks on both buttons, caret-at-end 5%
+                            # (31 cases: real-mouse clicks on both buttons, caret-at-end 5%
                             # and caret-above-viewport 50%, Ctrl+S/Ctrl+O, cancel returns
-                            # focus+position, open-confirm new tab + old-tab position,
-                            # Save-As fresh + overwrite flows, Export… picker, and a
-                            # format-button control that keeps its causative focus).
+                            # focus+position, open-confirm new tab + old-tab position +
+                            # the new file's caret at the beginning, Save-As fresh +
+                            # overwrite flows, Export… picker, and a format-button
+                            # control that keeps its causative focus).
   npm run verify-themescroll # Theme-switch scroll preservation + themed scrollbars: changing
                              # light/dark preserves the current editor and preview scroll ratios
                              # in both directions, AND the scrollbar palette flips with the theme
@@ -1097,6 +1100,21 @@ Set them in **Settings → Secrets and variables → Actions** (repo level) or
     spawn a new tab + activate". Ctrl+clicking the tab-bar background (not on a
     tab) still opens a new tab. Pinned by `test/verifyTabClick.mjs` case 3
     (padding click activates; redundant padding click keeps the no-op contract).
+  - **Opening a file puts the caret at the BEGINNING (do not regress).** Assigning
+    `textarea.value` leaves the selection at the END of the new value per the HTML
+    spec, so any code path that installs a whole document must pin the caret back
+    to offset 0 (`parkCaretStart` in `src/markdown.js`). `openFile` / `newTab` /
+    session restore go through `openAtTop`, which resets both panes' scrollTop AND
+    the caret — and it now runs AFTER `activate()`: `activate`'s `input.focus()`
+    is what can settle the selection at the end (the textarea was assigned while
+    the new tab was still hidden), so the caret pin must land last, and
+    `openAtTop`'s rAF re-assert re-pins it once more after the initial reflow. The
+    programmatic `documentText` setter and `setDocumentText()` also call
+    `parkCaretStart` after assigning — the first-run welcome document is seeded
+    through `setDocumentText`, and before this pin a fresh profile opened with
+    the caret on the document's last line (the "opened a new file and the cursor
+    is at the end" report). Pinned by `verify-save` (first-run document +
+    `openFile`) and `verify-dialogscroll` case 7d (real picker → Open confirm).
   - **The mode button must NOT causatively focus the editor textarea when it
     HIDEs (do not regress).** The toolbar click handler ends with a trailing
     `activeTab.input.focus()` that runs after *every* action. When the mode action

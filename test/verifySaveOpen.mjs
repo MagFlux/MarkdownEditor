@@ -2,8 +2,8 @@
  * verifySaveOpen.mjs — save / close-guard / open UI test.
  *
  * Drives the save (writeTextFile + close), save-cancel (tab stays),
- * save-discard-cancel (tab stays), known-path direct-write, open (new tab),
- * and open-cancel paths. Run with `npm run verify-save`.
+ * save-discard-cancel (tab stays), known-path direct-write, open (new tab,
+ * caret at the beginning), and open-cancel paths. Run with `npm run verify-save`.
  */
 import { chromium } from "playwright";
 import { spawn, execSync } from "node:child_process";
@@ -74,6 +74,15 @@ async function clickDlg(btn) {
  */
 const kick = (fn) => page.evaluate((f) => { f(); }, fn); // run in-page, promise discarded
 
+// ============ TEST 0: the first-run welcome document starts at the beginning ============
+await page.goto(`http://localhost:${PORT}/`);
+await page.waitForTimeout(350);
+const initialCaret = await page.evaluate(() => {
+  const d = window.editor.activeTab;
+  return { sel: d.input.selectionStart, len: d.input.value.length };
+});
+check("first-run document opens with the caret at the beginning", initialCaret.len > 0 && initialCaret.sel === 0, JSON.stringify(initialCaret));
+
 // ============ TEST 1: save() browser download path (no path set) ============
 await fresh();
 const dlP2 = new Promise((res, rej) => { page.once("download", res); setTimeout(() => rej(new Error("no download")), 5000); });
@@ -96,6 +105,8 @@ check("new tab count = before + 1", (await page.locator(".tab").count()) === tab
 check("new tab name = README.md", res2.name === "README.md", res2.name);
 check("new tab path recorded", res2.path === "/tmp/README.md");
 check("new tab is the active tab", await page.evaluate(() => window.editor.activeTab.name === "README.md"));
+const openedCaret = await page.evaluate(() => window.editor.activeTab.input.selectionStart);
+check("opened file puts the caret at the beginning", openedCaret === 0, "sel=" + openedCaret);
 
 // Re-open the SAME name → must STILL create a new tab (no reuse / replace).
 await page.evaluate(() => window.editor.openFile({ name: "README.md", text: "# second copy", path: "/tmp/other.md" }));

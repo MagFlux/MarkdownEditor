@@ -5,7 +5,9 @@
  * Pins: opening the in-app file picker (Save toolbar button, Open toolbar
  * button, Export… menu items, and their Ctrl+S/Ctrl+O keybinds) must NEVER
  * move the open document's vertical position — neither pane, while the dialog
- * is up nor after it closes. The replayed bug: the toolbar buttons' trailing
+ * is up nor after it closes — and confirming an Open must present the new
+ * file with its CARET at the beginning (not the end of the just-assigned
+ * textarea value). The replayed bug: the toolbar buttons' trailing
  * `activeTab.input.focus()` ran after the picker had mounted while the button
  * press had already blurred the textarea, so it was a CAUSATIVE focus move
  * whose engine caret-into-view scroll parked `.editor-scroll` at the caret —
@@ -295,10 +297,12 @@ const opened7b = await page.evaluate(() => ({ tabs: window.editor.tabs.length, a
 ok("7b confirming open creates the new active tab", opened7b.tabs === 2 && /report\.md/.test(opened7b.active), JSON.stringify(opened7b));
 const newTop7 = await readPos();
 ok("7c the opened file reads at the top (openAtTop untouched)", newTop7.e === 0, "e=" + newTop7.e);
+const newCaret7 = await page.evaluate(() => window.editor.activeTab.input.selectionStart);
+ok("7d the opened file puts the caret at the beginning", newCaret7 === 0, "sel=" + newCaret7);
 await page.evaluate(() => { window.editor.tabs[0].tab.querySelector(".tname").click(); });
 await wait(400);
 const backRatio7 = (await readPos()).e;
-ok("7d returning to the old tab restores its pre-dialog position", nearAt(oldRatio7, backRatio7), `${oldRatio7}% → ${backRatio7}%`);
+ok("7e returning to the old tab restores its pre-dialog position", nearAt(oldRatio7, backRatio7), `${oldRatio7}% → ${backRatio7}%`);
 
 // ---- 8: Save-As confirm (fresh file) — write completes, scroll untouched ----
 await page.evaluate(() => { if (window.editor.tabs.length > 1) window.editor.closeTab(window.editor.tabs[window.editor.tabs.length - 1]); });

@@ -585,12 +585,34 @@ export function createApp(root) {
   // the textarea (caret at the end of the restored text) plus the 32vh bottom
   // overlay padding lets the webview park the scroll at the bottom.
   /**
+   * parkCaretStart — place a tab's text caret at offset 0.
+   *
+   * Used wherever a WHOLE document is installed into the textarea (openFile /
+   * newTab via openAtTop, and the programmatic `documentText` / setDocumentText
+   * setters): per the HTML spec assigning textarea.value leaves the selection
+   * at the END of the new value, so without this pin the next keystroke lands
+   * on the document's last line. The first-run welcome document is seeded
+   * through setDocumentText and was the visible "a new file starts editing at
+   * the end" report.
+   * @param {object} doc The tab whose caret moves (no-op without one).
+   */
+  function parkCaretStart(doc) {
+    if (!doc) return;
+    doc.input.setSelectionRange(0, 0);
+  }
+
+  /**
    * openAtTop — park a freshly opened tab at the very top of both panes.
    *
    * Resets both scrollTop values and the caret to 0, stamping the value-based
    * echo guard on each pane so the resulting scroll events read as programmatic
-   * echoes and can't flip the two-pane lead / ratchet sync. Re-asserts once
-   * after rAF so it survives the initial reflow.
+   * echoes and can't flip the two-pane lead / ratchet sync. Re-asserts BOTH the
+   * scroll and the caret once after rAF: a freshly opened tab is activated
+   * (focused) right before this call, and an engine can settle that focus by
+   * moving the text selection to the end of the just-assigned value — the
+   * reported "opening a file puts the cursor at the end". Call it AFTER
+   * activate() so the pin lands last, and keep the rAF re-pin as the safety net
+   * for the initial reflow.
    * @param {object} doc The tab to align to top.
    */
   function openAtTop(doc) {
@@ -600,12 +622,13 @@ export function createApp(root) {
     doc.__suppP = { deadline: performance.now() + ECHO_MS, value: 0 };
     doc.editorScroll.scrollTop = 0;
     doc.previewScroll.scrollTop = 0;
-    doc.input.setSelectionRange(0, 0);
+    parkCaretStart(doc);
     requestAnimationFrame(() => {
       doc.__suppE = { deadline: performance.now() + ECHO_MS, value: 0 };
       doc.__suppP = { deadline: performance.now() + ECHO_MS, value: 0 };
       doc.editorScroll.scrollTop = 0;
       doc.previewScroll.scrollTop = 0;
+      parkCaretStart(doc);
     });
   }
 
@@ -638,8 +661,10 @@ export function createApp(root) {
    */
   function newTab(name, text, focus = true) {
     const doc = makeTab(name || newTabName(TABS), text !== undefined ? text : "");
-    openAtTop(doc);
     activate(doc);
+    // AFTER activate: its focus() can settle the selection at the end of the
+    // value makeTab assigned; openAtTop's caret pin must land last.
+    openAtTop(doc);
     saveSession();
     return doc;
   }
@@ -1450,7 +1475,10 @@ export function createApp(root) {
    * openFile — open {name, text, path} as a brand-new tab, activate it, save.
    *
    * ALWAYS opens a new tab — never reuses a tab of the same name or path
-   * (invariant 6). The new tab is activated via openAtTop + activate + saveSession.
+   * (invariant 6). The new tab is activated, then parked at the top with the
+   * caret at the beginning (openAtTop after activate — see its comment: the
+   * focus must settle before the caret pin, or a freshly opened file edits at
+   * its last line), and the session is persisted.
    * @param {{name: string, text: string, path?: (string|null)}} info File details.
    * @returns {object} The new doc object.
    */
@@ -1458,8 +1486,8 @@ export function createApp(root) {
     const doc = makeTab(name, text);
     doc.path = path || null;
     if (doc.path) rememberRecent(doc.path, doc.name); // native open / drag-drop
-    openAtTop(doc);
     activate(doc);
+    openAtTop(doc); // after activate: focus() must not be able to leave the caret at the end
     saveSession();
     return doc;
   }
@@ -2258,16 +2286,17 @@ export function createApp(root) {
     // already activeTab, so we hand it a distinct doc and let it do the class-
     // toggle + focus + refresh for the restored tab.
     const toActivate = restoreActive || TABS[0];
-    // Ensure a restored long doc opens at the top (Webkit auto-scrolls the
-    // focused textarea to the caret, which sits at the end = bottom).
-    openAtTop(toActivate);
+    // Ensure a restored long doc opens at the top with the caret at its
+    // beginning. openAtTop runs AFTER activate because the focus() must settle
+    // before the caret pin (see openAtTop).
     activate(toActivate);
+    openAtTop(toActivate);
     started = true;
   }
   if (!started) {
     const doc = makeTab(newTabName(TABS), "");
-    openAtTop(doc);
     activate(doc);
+    openAtTop(doc);
     saveSession();
   }
   refresh();
@@ -2281,11 +2310,11 @@ export function createApp(root) {
     get tabBar() { return tabBar; },
     get workspace() { return workspace; },
     get documentText() { return activeTab ? activeTab.input.value : ""; },
-    set documentText(v) { if (activeTab) { suppressInput = true; activeTab.input.value = v; activeTab._typeBase = v; activeTab._lastVal = v; suppressInput = false; activeTab.dirty = false; refresh(); } },
+    set documentText(v) { if (activeTab) { suppressInput = true; activeTab.input.value = v; activeTab._typeBase = v; activeTab._lastVal = v; suppressInput = false; activeTab.dirty = false; refresh(); parkCaretStart(activeTab); } },
     get name() { return activeTab ? activeTab.name : ""; },
     set name(v) { if (activeTab) { activeTab.name = v || "untitled"; syncDom(activeTab); } },
     getDocumentText: () => (activeTab ? activeTab.input.value : ""),
-    setDocumentText: (t) => { if (!activeTab) return; suppressInput = true; activeTab.input.value = t; activeTab._typeBase = t; activeTab._lastVal = t; suppressInput = false; activeTab.dirty = false; refresh(); },
+    setDocumentText: (t) => { if (!activeTab) return; suppressInput = true; activeTab.input.value = t; activeTab._typeBase = t; activeTab._lastVal = t; suppressInput = false; activeTab.dirty = false; refresh(); parkCaretStart(activeTab); },
     refresh, scheduleRefresh,
     newTab, closeTab, closeApp, activate,
     save, open,
