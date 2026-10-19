@@ -54,6 +54,12 @@
  *    the bar is open — the global handler stands down via `find.isOpen()`;
  *    pressing Esc a second time after closing the bar is what deselects).
  *  - The bar never mutates text on its own while closed.
+ *  - Find & Replace is DISABLED in preview-only mode: that mode hides the
+ *    raw Markdown source, so a search either selects invisible text (the old
+ *    behavior) or would have to search the rendered DOM — neither is Find &
+ *    Replace's contract. `isPreviewMode` (injected by markdown.js) makes
+ *    open() a no-op there, and entering preview closes any open bar WITHOUT
+ *    refocusing the hidden textarea (same focus rule as the mode button).
  */
 
 /** MAX_MATCHES — hard cap on tracked matches so a pathological document (or a
@@ -83,9 +89,13 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  *   preview pane follows to the corresponding position (markdown.js drives it
  *   through the block-anchored followScroll machinery, stamping its own echo
  *   guard). A no-op outside split view; absent in tests that don't need it.
+ * @param {Function} [deps.isPreviewMode] Returns true while the app is in
+ *   preview-only mode, where Find & Replace is disabled (the source pane is
+ *   hidden). open() is a no-op there; close() skips refocusing the hidden
+ *   textarea. Absent in tests that don't exercise mode switching.
  * @returns {{open: Function, close: Function, toggle: Function, step: Function, replaceOne: Function, replaceAll: Function, noteTextChanged: Function, isOpen: Function}} Find actions.
  */
-export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, followFromEditor }) {
+export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, followFromEditor, isPreviewMode }) {
   let bar = null;            // lazily built .findbar element
   let visible = false;
   let regexMode = false;
@@ -588,6 +598,10 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, fo
    * @param {{focusReplace?: boolean}} [opts] Focus the replace field (Ctrl+H).
    */
   function open({ focusReplace = false } = {}) {
+    // Preview-only mode hides the raw Markdown source this bar searches — the
+    // whole feature is disabled there (Ctrl+F/Ctrl+H are swallowed upstream;
+    // this gate also covers programmatic opens and any future entry point).
+    if (isPreviewMode && isPreviewMode()) return;
     ensureBar();
     visible = true;
     bar.classList.add("open");
@@ -623,8 +637,13 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, fo
    * somewhere surprising). Clearing the selection is NOT close's job: the
    * GLOBAL Escape handler in markdown.js does that once the bar is closed
    * (Esc a second time = deselect).
+   * @param {{focusEditor?: boolean}} [opts] `focusEditor:false` closes without
+   *   handing focus to the textarea — used when entering preview-only mode,
+   *   where focusing the zero-width hidden textarea can trigger an eager
+   *   scroll-into-view (the same reason the mode action skips its trailing
+   *   focus for the preview target).
    */
-  function close() {
+  function close({ focusEditor = true } = {}) {
     if (!bar) return;
     // Capture BEFORE clearing: a current match at close time means the user
     // navigated to it (or the query auto-selected it) — the view is already
@@ -642,7 +661,9 @@ export function createFindHandlers({ getActiveDoc, commit, workspace, echoMs, fo
       if (!hadMatch && openText !== null && d.input.value === openText && openSel) {
         d.input.setSelectionRange(openSel[0], openSel[1]);
       }
-      d.input.focus();
+      // Preview-only mode hides the textarea; focusing it there would fire the
+      // engine's eager scroll-into-view and ratchet the visible preview pane.
+      if (focusEditor) d.input.focus();
     }
     openText = null;
     openSel = null;

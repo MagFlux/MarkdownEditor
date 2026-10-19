@@ -1224,6 +1224,9 @@ export function createApp(root) {
       doc.__lead = "e"; // the editor is the explicit lead of this reveal
       followScroll(doc);
     },
+    // Preview-only mode hides the raw Markdown source this bar searches, so
+    // Find & Replace is disabled there entirely (see setMode + onGlobalKeyDown).
+    isPreviewMode: () => app.dataset.mode === "preview",
   });
 
   /**
@@ -1259,6 +1262,13 @@ export function createApp(root) {
     // when the caret is at the end. Restore the pre-switch ratio AFTER the
     // class change + the auto-scroll settle (two rAF ticks; mirrors openAtTop).
     const prevMode = app.dataset.mode || "split";
+    // Entering preview-only mode disables Find & Replace (it searches the raw
+    // source, which is now hidden) — close any open bar FIRST. Skip the
+    // editor refocus: the textarea is zero-width in preview, and focusing it
+    // fires the engine's eager scroll-into-view, which the scroll-sync chain
+    // would ratchet onto the preview pane (the same rule that makes the mode
+    // action skip its trailing focus for the preview target).
+    if (m === "preview" && find.isOpen()) find.close({ focusEditor: false });
     let keep = null;
     if (doc) {
       let bestMax = 0;
@@ -1738,8 +1748,12 @@ export function createApp(root) {
     // Ctrl/Meta+H with the replace field focused (Chrome-editor convention).
     // Stands down while a centered modal is open: the modal owns the keyboard,
     // and its Escape/close flow must not have the bar popping over it.
+    // In preview-only mode the whole feature is disabled: the raw source it
+    // searches is hidden, and neither app find nor the engine's native find
+    // should open — swallow the shortcut and do nothing.
     if ((k === "f" || k === "h") && !ev.shiftKey) {
       ev.preventDefault();
+      if (app.dataset.mode === "preview") return;
       if (document.querySelector(".savedlg-backdrop")) return;
       find.open({ focusReplace: k === "h" });
       return;

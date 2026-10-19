@@ -12,7 +12,10 @@
  * switches, typing in the editor updates the count while the bar is open, and
  * in split view a reveal scroll DRIVES the preview pane to the matching
  * position (the preview follows the found match through the block-anchored
- * scroll-sync machinery).
+ * scroll-sync machinery). Also pins that preview-only mode DISABLES Find &
+ * Replace entirely: Ctrl+F/H are swallowed, an open bar closes when preview is
+ * entered (without focusing the hidden textarea), and the feature works again
+ * after returning to split/edit.
  * Run with `npm run verify-find`.
  */
 import { chromium } from "playwright";
@@ -438,6 +441,97 @@ ok("9c stepping back re-follows the preview toward the top",
    back.pvSt < back.pvMax * 0.15 && back.hit, JSON.stringify(back));
 
 await p.keyboard.press("Escape"); // clean state for anything after
+await sleep(120);
+
+// ---------------------------------------------------------------------------
+// CASE 10 — preview-only mode disables Find & Replace completely.
+// The raw Markdown the bar searches is hidden in preview; selecting invisible
+// source (the old behavior) is useless, so every find entry point must stand
+// down there. An open bar must close when preview is entered — WITHOUT
+// focusing the zero-width textarea (the mode-button focus rule).
+// ---------------------------------------------------------------------------
+/** curMode — the app's current view mode. */
+const curMode = () => p.evaluate(() => window.editor.workspace.closest(".app").dataset.mode);
+/** clickModeCausative — blur first, then click the mode button (measures the
+ *  handler's own focus behavior, not focus left over from an earlier action). */
+const clickModeCausative = async () => {
+  await p.evaluate(() => { const ae = document.activeElement; if (ae && ae.blur) ae.blur(); });
+  await p.evaluate(() => document.querySelector('[data-action="mode"]').click());
+  await sleep(350);
+};
+/** modeTo — click the mode button until `target` is active (max 3 clicks). */
+const modeTo = async (target) => {
+  for (let i = 0; i < 3 && await curMode() !== target; i++) await clickModeCausative();
+};
+
+await modeTo("split");
+await p.evaluate(() => { const d = window.editor.activeTab; d.input.focus(); d.input.setSelectionRange(0, 0); });
+await p.keyboard.press("Control+f");
+await setFind("needle");
+st = await barState();
+ok("10-pre split mode: find bar opens and finds both needles", st.open && st.count === "1/2", JSON.stringify(st));
+
+// split -> edit: the bar is still valid there (raw source still visible).
+await clickModeCausative();
+st = await barState();
+ok("10a split→edit keeps the find bar open (Edit searches raw source)", st.open && await curMode() === "edit", JSON.stringify(st));
+
+// edit -> preview: the feature is disabled there — the open bar must close and
+// must NOT hand focus to the hidden textarea.
+await clickModeCausative();
+const previewState = await p.evaluate(() => {
+  const bar = document.querySelector(".findbar");
+  const d = window.editor.activeTab;
+  const caret = document.querySelector(".find-caret");
+  const match = document.querySelector(".find-match-wrap");
+  return {
+    mode: window.editor.workspace.closest(".app").dataset.mode,
+    open: !!(bar && bar.classList.contains("open")),
+    textareaFocused: document.activeElement === d.input,
+    caretHidden: !caret || caret.style.display === "none",
+    matchHidden: !match || match.style.display === "none",
+  };
+});
+ok("10b entering preview CLOSES the open find bar", previewState.mode === "preview" && !previewState.open,
+   JSON.stringify(previewState));
+ok("10c closing for preview does not focus the hidden textarea (no preview jump)",
+   !previewState.textareaFocused, JSON.stringify(previewState));
+ok("10d the synthetic find caret + match highlight are hidden", previewState.caretHidden && previewState.matchHidden,
+   JSON.stringify(previewState));
+
+// The central guard covers programmatic opens too (any future entry point).
+const programmaticOpen = await p.evaluate(() => { window.editor.find.open(); return window.editor.find.isOpen(); });
+ok("10d2 a programmatic find.open() is a no-op in preview", !programmaticOpen, JSON.stringify(programmaticOpen));
+
+// Ctrl+F / Ctrl+H are swallowed in preview: no app bar AND no native find UI.
+await p.evaluate(() => {
+  window.__findDefaultPrevented = { f: null, h: null };
+  window.__findProbe = (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.shiftKey) return;
+    const k = (ev.key || "").toLowerCase();
+    if (k === "f" || k === "h") window.__findDefaultPrevented[k] = ev.defaultPrevented;
+  };
+  window.addEventListener("keydown", window.__findProbe);
+});
+await p.keyboard.press("Control+f");
+await p.keyboard.press("Control+h");
+st = await barState();
+const prevented = await p.evaluate(() => {
+  window.removeEventListener("keydown", window.__findProbe);
+  return window.__findDefaultPrevented;
+});
+ok("10e Ctrl+F in preview opens no bar (shortcut swallowed)", !st.open && prevented.f === true,
+   JSON.stringify({ st, prevented }));
+ok("10f Ctrl+H in preview opens no bar (shortcut swallowed)", !st.open && prevented.h === true,
+   JSON.stringify({ st, prevented }));
+
+// Preview -> split: Find & Replace is available again.
+await modeTo("split");
+await p.keyboard.press("Control+f");
+await sleep(150);
+st = await barState();
+ok("10g preview→split re-enables Find & Replace (query preserved)", st.open && st.count === "1/2", JSON.stringify(st));
+await p.keyboard.press("Escape");
 await sleep(120);
 
 console.log("   (page errors: " + (errors.length ? JSON.stringify(errors) : "none") + ")");
