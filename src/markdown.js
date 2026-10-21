@@ -27,7 +27,7 @@ import { marked } from "marked";
    here is browser-safe. All uses below stay guarded by isTauri(). The aliases
    keep the historic "tauri" naming of the wire contract (the same contract the
    Playwright harnesses stub — test/verifyTauriClose.mjs). */
-import { getCurrentWindow, readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists, homeDir as tauriHomeDir, pathForFile } from "./shellapi.js";
+import { getCurrentWindow, readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists, homeDir as tauriHomeDir, revealItemInDir as tauriRevealItemInDir, pathForFile } from "./shellapi.js";
 
 /* Export libraries — STATIC imports, same invariant as the Tauri plugins above:
    they must hoist into the single main bundle (no runtime code-split chunks),
@@ -52,6 +52,7 @@ import { createEditingHandlers } from "./editing.js";
 import { createLinkHandlers } from "./links.js";
 import { createHistoryHandlers } from "./history.js";
 import { createFindHandlers } from "./find.js";
+import { createTabBarHandlers } from "./tabbar.js";
 import { enhancePreviewTasks, scanTaskItems, toggleTaskAt } from "./tasks.js";
 import { createScrollSync, collectEls } from "./scrollsync.js";
 
@@ -186,6 +187,10 @@ export function createApp(root) {
   const TABS = [];
   let untitledCount = 0;
   let activeTab = null;
+  // Tab-bar interactions (drag-reorder, context menu, Ctrl+Tab cycling) are
+  // wired by src/tabbar.js after the session store exists (they persist the
+  // reordered session). makeTab guards this so the declaration can sit here.
+  let tabBarHandlers = null;
   let raf = 0, suppressInput = false;
   // Deadline (ms) bounding echo detection: realScroll drops a scroll event only
   // while the pane is still within ECHO_MS of the moment we last assigned it AND
@@ -228,8 +233,9 @@ export function createApp(root) {
    *
    * Creates the tab strip entry and the split editor/preview panes, wires the
    * source-of-truth textarea, sets the initial value (if any) and the typing-burst
-   * baselines, then renders + binds it. Returns the doc object (the single source
-   * of truth for that tab).
+   * baselines, then renders + binds it and wires its tab-strip interactions
+   * (drag-to-reorder + context menu via src/tabbar.js). Returns the doc object
+   * (the single source of truth for that tab).
     * @param {string} [name] Tab title; defaults to the next "Untitled N" name.
    * @param {string} [text] Initial Markdown; omitted for a blank tab.
    * @returns {object} The doc object.
@@ -285,6 +291,7 @@ export function createApp(root) {
     doc._lastVal = doc.input.value;  // input handler baseline: detect no-op events
     syncDom(doc);
     bind(doc);
+    if (tabBarHandlers) tabBarHandlers.wireTab(doc);
     TABS.push(doc);
     return doc;
   }
@@ -524,6 +531,9 @@ export function createApp(root) {
    * @param {object} doc The tab to make active.
    */
   function activate(doc) {
+    // A tab switch invalidates any open tab context menu (its target may be
+    // this tab, or may be gone entirely — Ctrl+W on the right-clicked tab).
+    if (tabBarHandlers) tabBarHandlers.closeMenu();
     // Clicking a tab that is ALREADY active is a no-op. The old unconditional
     // input.focus() + refresh() below had two visible side effects on such a
     // click: (1) refocusing the textarea re-ran the browser's scroll-into-view
@@ -851,6 +861,7 @@ export function createApp(root) {
    * @param {object} doc The tab to splice out and destroy.
    */
   function removeTab(doc) {
+    if (tabBarHandlers) tabBarHandlers.closeMenu();
     const idx = TABS.indexOf(doc);
     if (idx === -1) return;
     TABS.splice(idx, 1);
@@ -1712,8 +1723,10 @@ export function createApp(root) {
    * element holds focus — on WebKitGTK focus can slip off the overlay textarea.
    * Handles: Undo/Redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), bold, italic,
    * underline, save (Ctrl+S), link, open (Ctrl+O), close tab (Ctrl+W), new
-   * tab (Ctrl+T), and Find & Replace (Ctrl+F / Ctrl+H — the floating bar in
-   * src/find.js, standing down while a centered modal is open).
+   * tab (Ctrl+T), Ctrl+Tab / Ctrl+Shift+Tab tab cycling (in tab-strip order,
+   * wrapping at both ends — see src/tabbar.js), and Find & Replace
+   * (Ctrl+F / Ctrl+H — the floating bar in src/find.js, standing down while a
+   * centered modal is open).
    * Ctrl/Shift+Arrow word-wise caret moves are NOT bound here —
     * they live in the textarea-local onKeyDown, where wordJump can make them
     * Markdown-aware (a whole formatted span counts as one word) and fall
@@ -1725,6 +1738,23 @@ export function createApp(root) {
     const mod = ev.ctrlKey || ev.metaKey;
     if (!mod) return;
     const k = (ev.key || "").toLowerCase();
+
+    // A modified shortcut takes over from the tab context menu: close it and
+    // hand typing focus back before the shortcut acts (otherwise the menu can
+    // float over a picker/modal it opened, or a hidden button keeps focus).
+    if (tabBarHandlers) tabBarHandlers.closeMenu({ restoreFocus: true });
+
+    // Ctrl+Tab / Ctrl+Shift+Tab cycle through tabs in the CURRENT tab-strip
+    // order (which drag-to-reorder updates), wrapping at both ends. The
+    // capture-phase Tab indent/outdent handler deliberately ignores modified
+    // Tab, so this is the only consumer. Stand down while a centered modal is
+    // open (its focus trap owns the keyboard) but still swallow the shortcut.
+    if ((ev.key === "Tab" || ev.key === "ISO_Left_Tab") && !ev.altKey) {
+      ev.preventDefault();
+      if (document.querySelector(".savedlg-backdrop")) return;
+      if (tabBarHandlers) tabBarHandlers.cycle(ev.shiftKey ? -1 : 1);
+      return;
+    }
 
     if (k === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
     if (k === "y" && !ev.shiftKey) { ev.preventDefault(); redo(); return; }
@@ -2004,6 +2034,21 @@ export function createApp(root) {
     key: "mdeditor.session.v2",
     getActiveTabId: () => activeTab ? activeTab.id : null,
     getTabs: () => TABS,
+  });
+
+  /* Tab-bar interactions: drag-to-reorder, the context menu (Reveal in folder /
+     Copy path) and Ctrl+Tab cycling. Wired here because reordering persists the
+     session; makeTab calls wireTab() for every tab it creates. */
+  tabBarHandlers = createTabBarHandlers({
+    tabBar,
+    getTabs: () => TABS,
+    getActiveTab: () => activeTab,
+    activate,
+    focusEditor: () => { if (activeTab) focusKeepScroll(activeTab); },
+    saveSessionSoon,
+    isTauri,
+    revealItemInDir: tauriRevealItemInDir,
+    messageModal,
   });
 
   /* ---- Tauri window close confirm ----

@@ -8,7 +8,7 @@ Built with **Electron** (native shell) + **Vite** (web frontend). No framework �
 
 ## Features
 
-- **Split / Edit / Preview** view modes, **multi-file tabs** (`Ctrl+T` new, `Ctrl+W` / `×` close)
+- **Split / Edit / Preview** view modes, **multi-file tabs** (`Ctrl+T` new, `Ctrl+W` / `×` close) — drag tabs to reorder, `Ctrl+Tab` / `Ctrl+Shift+Tab` to cycle forward/backward, and right-click a tab for **Reveal in folder** / **Copy path** (both disabled for unsaved files; Reveal is native-only)
 - **Inline formatting** — bold, italic, underline, strikethrough, code, links (`Ctrl+B/I/U/K`); a plain caret inserts an empty marker pair, a mid-word caret wraps that word, a selection wraps exactly
 - **Find & Replace** — floating non-modal bar (`Ctrl+F` find, `Ctrl+H` replace); live match count, the current match is auto-selected and highlighted as you type; `Esc` stays on the hit instead of jumping back (`Enter`/`F3` next, `Shift+Enter`/`Shift+F3` prev, wrap-around), case toggle, regex mode with `$1` substitutions; replace and replace-all each commit as ONE undo step; in split view the preview pane follows the editor to the revealed match; **disabled in Preview-only mode** (it searches the raw Markdown source, which that mode hides)
 - **GFM task lists** — `- [ ]` / `- [x]` render as live checkboxes in the preview; clicking flips the source line in one undo-able step (exports keep them inert)
@@ -26,7 +26,7 @@ Built with **Electron** (native shell) + **Vite** (web frontend). No framework �
 - **Session persistence** (`localStorage`) + an **unsaved-changes guard** on tab/window close
 - **Files open at the beginning** — opening a file (or the first-run welcome document) parks the caret at offset 0 and both panes at the top, ready to type
 - **Light / Dark** theme (persisted, restored on start); both mermaid palettes are pre-rendered at load so the first switch is instant; scroll positions are preserved across tab/mode/theme switches and while the Save/Open/Export dialog is open (and on its close — no flicker); scrollbar colors follow the theme
-- **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; end-of-document positions snap together
+- **Content-anchored scroll sync** — in split view the preview follows the editor by BLOCK, not by scroll fraction: scroll to a heading (even deep in a document full of diagrams/tables/math) and the same heading sits at the top of the preview; either pane can lead; at the ends the anchored mapping converges and an exhausted follower parks at its own end (no snap)
 - **In-app file picker** for save/open (centered, breadcrumbs, Home button, hidden/dot folders reachable) with an overwrite-confirmation prompt; every directory you enter opens with its list at the top; browser fallback throughout
 
 ---
@@ -48,7 +48,7 @@ MarkdownEditor/
 ├── vite.config.js              # dev/preview server on 127.0.0.1 (avoids IPv6 localhost mismatch)
 ├── electron/
 │   ├── main.cjs                # Electron main process: BrowserWindow, app:// protocol (serves dist/),
-│   │                           # shell-IPC router (fs read/write/list/exists + home + opener + events) and
+│   │                           # shell-IPC router (fs read/write/list/exists + home + opener incl. reveal-in-folder + events) and
 │   │                           # the window-close intercept → close-requested walk
 │   └── preload.cjs             # renderer bridge: installs window.__TAURI_INTERNALS__ translating the
 │                               # plugin:* command contract onto Electron IPC (see src/shellapi.js)
@@ -59,7 +59,7 @@ MarkdownEditor/
 ├── src/
 │   ├── main.js                 # bootstrap: createApp(#app) + sample content (feature-tour welcome doc; + katex css/asset imports)
 │   ├── markdown.js             # app shell: createApp() — tabs, undo, keybinds, save/open, DnD, modals, recent-files menu; static shell imports
-│   ├── shellapi.js             # shell-IPC layer (Electron): vendored wrappers over __TAURI_INTERNALS__.invoke — fs/path/opener/window contract
+│   ├── shellapi.js             # shell-IPC layer (Electron): vendored wrappers over __TAURI_INTERNALS__.invoke — fs/path/opener (incl. reveal in folder)/window contract
 │   ├── export.js               # static PDF/HTML export pipeline and native/browser save adapters
 │   ├── session.js              # versioned localStorage persistence and debounced saves
 │   ├── dialogs.js              # centered in-app modals and overwrite confirmation
@@ -69,6 +69,7 @@ MarkdownEditor/
 │   ├── history.js              # undo/redo history factory
 │   ├── find.js                 # floating non-modal Find & Replace bar (literal + regex, one-undo replace-all)
 │   ├── tasks.js                # GFM task lists: preview checkbox enhancement + ordinal→source mapping
+│   ├── tabbar.js               # tab strip: drag-reorder, Ctrl+Tab cycling, right-click menu (Reveal in folder / Copy path)
 │   ├── scrollsync.js           # block-anchored split-view scroll sync (marked-lexer anchors + measured overlay geometry)
 │   ├── codecolor.js            # fenced-code syntax highlighting (highlight.js core + ~16 grammars)
 │   ├── render.js               # overlay-highlight renderer (esc, computeBlocks, lineToHtml, highlightToHtml)
@@ -116,6 +117,7 @@ App icons live in `build/` (`build/icon.png` is what Linux deb/appimage use; `bu
 | Bold / Italic / Underline / Link | `Ctrl+B` / `Ctrl+I` / `Ctrl+U` / `Ctrl+K` |
 | Find / Replace | `Ctrl+F` / `Ctrl+H` (next `Enter`/`F3`, prev `Shift+Enter`/`Shift+F3`, close `Esc`; disabled in Preview-only mode) |
 | Save / New tab / Close tab | `Ctrl+S` / `Ctrl+T` / `Ctrl+W` |
+| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` (wrap-around) |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` |
 | Word-wise caret move / selection | `Ctrl+←` / `Ctrl+→` (+ `Shift`; formatted spans count as one word) |
 | Indent / Outdent | `Tab` / `Shift+Tab` |
@@ -152,7 +154,7 @@ full local run for release-grade milestones.
 | `verify-scrollsync` | 17 | block-anchored sync: deep-heading alignment after mermaid/KaTeX regions, per-row table anchors, preview-lead parity, wrap-heavy docs, ratio fallback on desync, end-of-doc convergence (no snap/blend overshoot), elastic follower glide (instant only for tiny deltas), end-region re-correction pans slowly, and the follower never moves again once the glide lands |
 | `verify-modescroll` | 8 | mode switch preserves the scroll ratio |
 | `verify-modefocus` | 13 | mode click skips its trailing focus only when entering preview |
-| `verify-tabclick` | 10 | a click anywhere in a tab (padding included) activates it; re-clicking the active tab is a no-op |
+| `verify-tabclick` | 46 | tab strip: a click anywhere in a tab (padding included) activates it; re-clicking the active tab is a no-op; Ctrl+Tab/Ctrl+Shift+Tab cycle both ways with wrap; real pointer-drag reorder updates model + DOM + persisted session, never activates a non-active source, still works when DOM pointer capture is unavailable (window-level fallback), and can start on the × close button without closing it (an unmoved × click still closes) while removing the custom ghost, source dim and fixed insertion line synchronously on release (own slot marker included) before the immediate reorder; a WSLg mouse-down/pen-motion relay (different pointerId, isPrimary, buttons 0) still drags; the right-click menu names its target, disables items for unsaved files, copies the exact path (with a focus-restoring execCommand fallback), invokes the native reveal IPC, and closes on Escape/outside-click (a modified shortcut also dismisses it) |
 | `verify-tabscroll` | 7 | a tab's scroll positions survive switching away and back |
 | `verify-themescroll` | 10 | theme switch preserves scroll; scrollbars flip with the theme |
 | `verify-mermaidflicker` | 7 | no raw-code flash on prose keystrokes outside a fence |
@@ -162,7 +164,7 @@ full local run for release-grade milestones.
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
 | `verify-find` | 48 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal, highlight line-box height matches the native selection, preview-mode disable |
 | `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |
-| `verify-recent` | 12 | recent-files menu: record on open/save, dedupe, cap 10, click opens a new tab, stale entries drop |
+| `verify-recent` | 12 | recent-files menu: record on open/save, dedupe, cap 5, click opens a new tab, stale entries drop |
 | `verify-codecolor` | 7 | fenced-code tokens highlight in the preview, unknown/mermaid stay plain, token colors paint |
 
 ---

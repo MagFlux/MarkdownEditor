@@ -170,6 +170,37 @@ body {
   font-size: 15px; line-height: 1; padding: 0; flex: 0 0 auto; }
 .tab .tclose:hover { background: rgba(127,127,127,.2); color: var(--fg); }
 .tab.dirty .tname::after { content: "\25CF"; font-size: 7px; margin-left: 5px; color: var(--accent); vertical-align: 2px; }
+.tab.dragging { opacity: .45; }
+/* Custom pointer-drag preview (tabbar.js). It is a LIVE clone of the source
+   tab, fixed under the cursor and detached synchronously on pointerup — this
+   replaces Chromium's native drag image, whose separate window could remain
+   visible for seconds after the mouse button was released. */
+.tab-drag-ghost { position: fixed; z-index: 90; pointer-events: none;
+  box-sizing: border-box; opacity: .9; cursor: grabbing;
+  background: var(--bg); border-color: var(--border);
+  box-shadow: 0 8px 24px rgba(0,0,0,.22); }
+/* Drag insertion marker: a body-level fixed line (see tabbar.js) so it paints
+   in every inter-tab gap / at either end regardless of tab opacity or the
+   strip's horizontal overflow clipping. */
+.tab-drop-line { position: fixed; z-index: 25; width: 2px; border-radius: 1px;
+  background: var(--accent); pointer-events: none; box-shadow: 0 0 0 1px rgba(47,111,235,.18); }
+.tab-drop-line[hidden] { display: none; }
+
+/* Tab context menu (Reveal in folder / Copy path). Rendered in-app (not a
+   native OS menu) so it follows the active theme and is test-drivable. */
+.tabmenu { position: fixed; z-index: 95; min-width: 190px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.tabmenu[hidden] { display: none; }
+.tabmenu-title { padding: 5px 10px 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+  color: var(--fg-dim); font-size: 12px; max-width: 230px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabmenu-item { appearance: none; border: 0; background: transparent; color: var(--fg);
+  text-align: left; font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 5px;
+  cursor: pointer; white-space: nowrap; }
+.tabmenu-item:hover:not(:disabled), .tabmenu-item:focus-visible { background: var(--bg-hover); }
+.tabmenu-item:disabled { color: var(--fg-dim); opacity: .55; cursor: default; }
 
 /* ===== Workspace ===== */
 .workspace { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; position: relative; }

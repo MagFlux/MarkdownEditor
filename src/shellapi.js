@@ -14,6 +14,7 @@
  *   plugin:path|resolve_directory { directory }                 → home dir string
  *   plugin:opener|open_url     { url, with }                   → null
  *   plugin:opener|open_path    { path, with }                  → null
+ *   plugin:opener|reveal_item_in_dir { paths }                 → null
  *   plugin:event|listen        { event, target, handler }      → event id
  *   plugin:event|unlisten      { event, eventId }              → null
  *   plugin:window|destroy      { label }                       → force-close
@@ -157,6 +158,19 @@ async function openUrl(url, openWith) {
 }
 
 /**
+ * revealItemInDir — show a file in the system file manager (native only).
+ *
+ * The Electron main process answers `plugin:opener|reveal_item_in_dir` with
+ * `shell.showItemInFolder(paths[0])`; the browser fallback has no equivalent
+ * (the tab context menu disables the item when `isTauri()` is false).
+ * @param {string} path Absolute path of the file to reveal.
+ * @returns {Promise<void>} Resolves when the shell accepted the request.
+ */
+async function revealItemInDir(path) {
+  await invoke("plugin:opener|reveal_item_in_dir", { paths: [path] });
+}
+
+/**
  * pathForFile — resolve a File object (drag & drop) to its absolute disk path.
  *
  * The shell injects `window.__shellGetPathForFile` (Electron's webUtils
@@ -266,6 +280,7 @@ export {
   exists,
   homeDir,
   openUrl,
+  revealItemInDir,
   pathForFile,
   getCurrentWindow,
 };
