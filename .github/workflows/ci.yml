@@ -196,7 +196,7 @@ jobs:
         include:
           - os: windows-latest
             platform: win
-          - os: macos-14
+          - os: macos-15
             platform: mac
           - os: ubuntu-22.04
             platform: linux
@@ -234,7 +234,7 @@ jobs:
       # Builds the frontend bundle (vite → dist/) and THEN the current
       # platform's targets from electron-builder.yml:
       #   windows-latest → NSIS installer, MSI (WiX), portable .exe
-      #   macos-14       → .dmg + .zip (portable .app, Apple Silicon)
+      #   macos-15       → .dmg + .zip (portable .app, Apple Silicon)
       #   ubuntu-22.04   → AppImage, .deb, tar.gz portable
       # `npm run electron:build` is the SAME script a local release build
       # uses: `vite build && electron-builder --publish never`. NEVER replace
@@ -270,7 +270,7 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" "${files[@]}" --clobber
 
       - name: Upload installers + portables to release (macOS)
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -473,7 +473,7 @@ The pipeline lives in `.github/workflows/ci.yml`. Two jobs.
    the same release via
    `gh release upload`:
    - `windows-latest`: NSIS `markdown-editor-<v>-x64-setup.exe`, WiX MSI `markdown-editor-<v>-x64.msi` (a stable `upgradeCode` in the config so upgrades replace the old install) + portable `markdown-editor-<v>-windows-x64-portable.exe` (electron-builder's portable target). electron-builder downloads NSIS/WiX itself — no choco step.
-   - `macos-14` (Apple Silicon): `markdown-editor-<v>-macos-arm64.dmg` + `markdown-editor-<v>-macos-arm64-portable.zip` (the `zip` target = the portable `.app`)
+   - `macos-15` (Apple Silicon): `markdown-editor-<v>-macos-arm64.dmg` + `markdown-editor-<v>-macos-arm64-portable.zip` (the `zip` target = the portable `.app`)
    - `ubuntu-22.04`: `markdown-editor-<v>-x86_64.AppImage`, `markdown-editor-<v>-amd64.deb` (+ a generated `markdown-editor.desktop` with `StartupWMClass=markdown-editor`, maintained via `desktopName` + `linux.syncDesktopName`) + `markdown-editor-<v>-linux-x86_64-portable.tar.gz` (the `linux-unpacked` dir — needs the standard desktop libs like every unpacked Electron; the AppImage/deb ship the full runtime). NO apt package installs — Electron bundles Chromium/Node; only the usual shared desktop libs matter at runtime.
 
    The blockmap sidecars (`*.blockmap`) and `builder-effective-config.yaml` are
