@@ -344,7 +344,7 @@ ok("6h an outside click closes the menu", await p.locator(".tabmenu").isHidden()
 await p.evaluate(() => {
   window.__revealCalls = [];
   window.__revealFail = false;
-  window.__TAURI_INTERNALS__ = {
+  window.__SHELL_INTERNALS__ = {
     invoke: async (cmd, args) => {
       window.__revealCalls.push({ cmd, args });
       if (window.__revealFail) throw new Error("showItemInFolder failed");

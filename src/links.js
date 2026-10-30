@@ -6,17 +6,17 @@
  * path. URL opening goes through shellapi.js's openUrl (the shell opener
  * command → shell.openExternal in the Electron main process).
  */
-import { openUrl as tauriOpenUrlApi } from "./shellapi.js";
+import { openUrl as shellOpenUrlApi } from "./shellapi.js";
 
 /**
  * createLinkHandlers — build link detection and opening actions.
  * @param {object} deps Link dependencies supplied by createApp.
  * @param {Function} deps.getActiveDoc Return the active tab document.
- * @param {Function} deps.isTauri Return whether the shell bridge is available.
+ * @param {Function} deps.isShell Return whether the shell bridge is available.
  * @param {Function} [deps.openUrl] Open a URL in the browser fallback.
- * @returns {{findLinkToken: Function, tauriOpenUrl: Function, openAtCaret: Function}}
+ * @returns {{findLinkToken: Function, shellOpenUrl: Function, openAtCaret: Function}}
  */
-export function createLinkHandlers({ getActiveDoc, isTauri, openUrl = (url, target) => window.open(url, target) }) {
+export function createLinkHandlers({ getActiveDoc, isShell, openUrl = (url, target) => window.open(url, target) }) {
   /**
    * findLinkToken — detect a Markdown link or bare URL at a caret position.
    * @param {string} text The full document text.
@@ -60,14 +60,14 @@ export function createLinkHandlers({ getActiveDoc, isTauri, openUrl = (url, targ
   }
 
   /**
-   * tauriOpenUrl — open a URL through the shell opener when available.
+   * shellOpenUrl — open a URL through the shell opener when available.
    * @param {string} url Absolute URL to open.
    * @returns {Promise<boolean>} true on success, false on fallback or error.
    */
-  async function tauriOpenUrl(url) {
-    if (!isTauri()) return false;
+  async function shellOpenUrl(url) {
+    if (!isShell()) return false;
     try {
-      await tauriOpenUrlApi(url);
+      await shellOpenUrlApi(url);
       return true;
     } catch { return false; }
   }
@@ -83,16 +83,16 @@ export function createLinkHandlers({ getActiveDoc, isTauri, openUrl = (url, targ
     if (!tok) return;
     let url = tok.url;
     if (/^mailto:/i.test(url)) {
-      if (await tauriOpenUrl(url)) return;
+      if (await shellOpenUrl(url)) return;
       openUrl(url);
       return;
     }
     if (/^\/\//i.test(url)) url = "https:" + url;
     else if (/^www\./i.test(url)) url = "https://" + url;
     else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = "https://" + url;
-    if (await tauriOpenUrl(url)) return;
+    if (await shellOpenUrl(url)) return;
     openUrl(url, "_blank");
   }
 
-  return { findLinkToken, tauriOpenUrl, openAtCaret };
+  return { findLinkToken, shellOpenUrl, openAtCaret };
 }

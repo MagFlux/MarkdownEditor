@@ -7,7 +7,7 @@
  * don't leak into the default toolbar focus flow. Run with `npm run verify-export`.
  */
 // Export (HTML/PDF) verification — drives the hamburger menu + in-app picker,
-// stubs the shell-IPC bridge the same way verifyTauriClose.mjs does, and asserts:
+// stubs the shell-IPC bridge the same way verifyShellIpc.mjs does, and asserts:
 //   - Menu open / close / outside-click / Escape keyboard
 //   - HTML export → write_text_file with valid standalone HTML
 //   - PDF  export → write_file with non-empty byte payload
@@ -45,7 +45,7 @@ setTimeout(() => {
 }, 75000);
 
 /**
- * installInternals — install a stub `window.__TAURI_INTERNALS__` + `window.__state`.
+ * installInternals — install a stub `window.__SHELL_INTERNALS__` + `window.__state`.
  * Injected via addInitScript so Playwright contextifies it once and it survives
  * across evaluate() calls in the same context. Records IPC, text/binary writes,
  * and read_dir calls on `__state` for assertions.
@@ -62,11 +62,11 @@ function installInternals() {
     readDir: [],
   };
   const internals = {
-    __TAURI_METADATA__: { currentWindow: { label: "main", id: 1 } },
+    __SHELL_METADATA__: { currentWindow: { label: "main", id: 1 } },
     metadata: { currentWindow: { label: "main", id: 1 } },
     transformCallback(fn) { const id = ++cbid; callbacks.set(id, fn); return id; },
     unregisterCallback(id) { callbacks.delete(id); },
-    convertFileSrc() { return "tauri://local/"; },
+    convertFileSrc() { return "asset://localhost/"; },
     async invoke(cmd, args, options) {
       S.ipc.push(cmd);
       switch (cmd) {
@@ -109,7 +109,7 @@ function installInternals() {
       }
     },
   };
-  window.__TAURI_INTERNALS__ = internals;
+  window.__SHELL_INTERNALS__ = internals;
   window.__state = S;
 }
 

@@ -69,7 +69,7 @@ async function copyText(text) {
  * @param {Function} deps.activate Activates a doc (markdown.js activate).
  * @param {Function} deps.focusEditor Restores typing focus without moving panes.
  * @param {Function} deps.saveSessionSoon Persists the tab order (debounced).
- * @param {Function} deps.isTauri Whether the native shell bridge is present.
+ * @param {Function} deps.isShell Whether the native shell bridge is present.
  * @param {Function} deps.revealItemInDir Native "show in file manager" wrapper.
  * @param {Function} deps.messageModal Shows a centered in-app message dialog.
  * @returns {{wireTab: Function, cycle: Function, closeMenu: Function}}
@@ -83,7 +83,7 @@ export function createTabBarHandlers({
   activate,
   focusEditor,
   saveSessionSoon,
-  isTauri,
+  isShell,
   revealItemInDir,
   messageModal,
 }) {
@@ -153,10 +153,10 @@ export function createTabBarHandlers({
     menuDoc = doc;
     const path = doc.path || "";
     titleEl.textContent = doc.name || "untitled";
-    revealBtn.disabled = !path || !isTauri();
+    revealBtn.disabled = !path || !isShell();
     revealBtn.title = !path
       ? "Save this file first"
-      : (!isTauri() ? "Available in the desktop app" : "Show this file in the system file manager");
+      : (!isShell() ? "Available in the desktop app" : "Show this file in the system file manager");
     copyBtn.disabled = !path;
     copyBtn.title = path || "Save this file first";
 

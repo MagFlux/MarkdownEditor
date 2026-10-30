@@ -6,15 +6,15 @@
  */
 
 /**
- * createPathPicker — build a Save/Open picker backed by Tauri fs calls.
+ * createPathPicker — build a Save/Open picker backed by shell fs calls.
  * @param {object} deps Picker dependencies.
  * @param {Function} deps.showModalBase In-app modal factory.
  * @param {Function} deps.readDir Native directory reader.
  * @param {Function} deps.homeDir Native home-directory resolver.
- * @param {Function} deps.isTauri Native-runtime predicate.
+ * @param {Function} deps.isShell Native-runtime predicate.
  * @returns {{pickPath: Function}} The picker operation.
  */
-export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
+export function createPathPicker({ showModalBase, readDir, homeDir, isShell }) {
   /**
    * pickPath — show a centered Save/Open filesystem picker.
    * Detects the platform path separator from the initial cwd (backslash on
@@ -139,7 +139,7 @@ export function createPathPicker({ showModalBase, readDir, homeDir, isTauri }) {
         setStatus("");
       };
       const goHome = async () => {
-        if (!isTauri()) return;
+        if (!isShell()) return;
         let home = null;
         try { home = await homeDir(); } catch (_) { return; }
         if (!home) return;

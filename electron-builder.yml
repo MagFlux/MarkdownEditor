@@ -1,6 +1,6 @@
 # electron-builder configuration — the packaging side of the Electron shell.
 #
-# Targets (one installer + one portable per OS, mirroring the old Tauri bundles):
+# Targets (one installer + one portable per OS):
 #   Windows   NSIS installer + MSI (WiX) + portable stand-alone .exe
 #   macOS     .dmg (Apple Silicon) + .zip (the .app — the portable)
 #   Linux     AppImage + .deb + tar.gz of linux-unpacked (the portable)
@@ -12,9 +12,9 @@
 # (same platform as the runner) instead of electron-builder re-downloading it.
 appId: com.mssok.markdowneditor
 productName: Markdown Editor
-# The raw executable name ("markdown-editor", matching the old Tauri binary
-# name): the Windows exe, the Linux binary inside AppImage/deb/tar.gz, and
-# macOS keeps the productName .app ("Markdown Editor.app").
+# The raw executable name ("markdown-editor"): the Windows exe, the Linux
+# binary inside AppImage/deb/tar.gz, and macOS keeps the productName .app
+# ("Markdown Editor.app").
 executableName: markdown-editor
 # Pack-time hook (scripts/before-pack.cjs), emitted for every platform pack
 # BEFORE the app-file walk. It (a) hard-FAILS the packaging when the Vite
@@ -81,8 +81,7 @@ linux:
   category: Utility
   maintainer: MagFlux
   # Sync the .desktop's StartupWMClass with Electron's app_id (= desktopName)
-  # so desktop environments link running windows to this entry (the old Tauri
-  # shell set StartupWMClass = exec, i.e. markdown-editor — this restores that).
+  # so desktop environments link running windows to this entry.
   syncDesktopName: true
   target:
     - appimage

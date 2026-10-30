@@ -9,11 +9,11 @@
 /**
  * createDialogHandlers — create modal, unsaved-changes, and overwrite dialogs.
  * @param {object} deps Dialog dependencies.
- * @param {Function} deps.isTauri Return whether native filesystem APIs are active.
+ * @param {Function} deps.isShell Return whether native filesystem APIs are active.
  * @param {Function} deps.exists Check whether a native destination exists.
  * @returns {{showSaveDiscardDialog: Function, showModalBase: Function, messageModal: Function, confirmOverwrite: Function, confirmOverwriteIfNeeded: Function}}
  */
-export function createDialogHandlers({ isTauri, exists }) {
+export function createDialogHandlers({ isShell, exists }) {
   /**
    * showModalBase — open a centered, focus-trapping in-app modal.
    * @param {object} [opts] Modal options.
@@ -160,7 +160,7 @@ export function createDialogHandlers({ isTauri, exists }) {
 
   /** Check a native destination and ask before replacing it. */
   async function confirmOverwriteIfNeeded(path) {
-    if (!isTauri()) return true;
+    if (!isShell()) return true;
     if (!(await exists(path))) return true;
     return confirmOverwrite(path);
   }

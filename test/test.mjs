@@ -29,7 +29,7 @@ globalThis.document = {
   addEventListener() {},
   querySelector: () => null,
 };
-globalThis.window = { __TAURI__: false, addEventListener() {}, document: globalThis.document, location: { href: "about:blank" } };
+globalThis.window = { addEventListener() {}, document: globalThis.document, location: { href: "about:blank" } };
 globalThis.localStorage = { getItem: () => null, setItem: () => {} };
 // jsPDF's UMD wrapper resolves its global scope as:
 //   window || global || self || this

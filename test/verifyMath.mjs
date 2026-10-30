@@ -35,18 +35,18 @@ const browser = await chromium.launch();
 setTimeout(() => { console.error("\nWATCHDOG: run stalled (>75s)"); process.exit(3); }, 75000);
 
 /**
- * installInternals — minimal `__TAURI_INTERNALS__` stub (same shape as
+ * installInternals — minimal `__SHELL_INTERNALS__` stub (same shape as
  * verifyExport.mjs): records text/binary writes on `window.__state` and
  * auto-answers the picker's IPC so export flows complete headlessly.
  */
 function installInternals() {
   const S = { textWrites: [], binaryWrites: [] };
   window.__state = S;
-  window.__TAURI_INTERNALS__ = {
-    __TAURI_METADATA__: { currentWindow: { label: "main", id: 1 } },
+  window.__SHELL_INTERNALS__ = {
+    __SHELL_METADATA__: { currentWindow: { label: "main", id: 1 } },
     transformCallback(fn) { return 1; },
     unregisterCallback() {},
-    convertFileSrc() { return "tauri://local/"; },
+    convertFileSrc() { return "asset://localhost/"; },
     async invoke(cmd, args, options) {
       switch (cmd) {
         case "plugin:fs|write_text_file": {
@@ -68,7 +68,7 @@ function installInternals() {
 }
 
 /**
- * scenario — run one case in a fresh context (Tauri stubs installed).
+ * scenario — run one case in a fresh context (shell stubs installed).
  * @param {string} name — the scenario label.
  * @param {Function} run — async ({page}) body.
  */

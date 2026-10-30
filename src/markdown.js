@@ -4,7 +4,7 @@
  *
  * Owns the createApp() closure — tabs, undo/redo, keybinds, save/open, drag
  * & drop, the window-close guard, in-app modals, toolbar actions, and session
- * persistence — plus the Tauri/IPC wiring (save/open/export, on-close, open
+ * persistence — plus the shell/IPC wiring (save/open/export, on-close, open
  * URL). Pure helpers (render, mermaid, format, paste), dialogs, and session
  * persistence live in their own
  * static-imported modules and are re-exported below so this file's public shape
@@ -23,21 +23,19 @@ import { marked } from "marked";
    dynamic import()). A failed dynamic import would silently disable save/open
    AND the window-close guard, so static imports hoist shellapi.js into the
    main bundle where it is always available. It is pure JS in a plain browser
-   (it only touches window.__TAURI_INTERNALS__ when called), so importing it
-   here is browser-safe. All uses below stay guarded by isTauri(). The aliases
-   keep the historic "tauri" naming of the wire contract (the same contract the
-   Playwright harnesses stub — test/verifyTauriClose.mjs). */
-import { getCurrentWindow, readTextFile as tauriReadTextFile, writeTextFile as tauriWriteTextFile, readDir as tauriReadDir, writeFile as tauriWriteFile, exists as tauriExists, homeDir as tauriHomeDir, revealItemInDir as tauriRevealItemInDir, pathForFile } from "./shellapi.js";
+   (it only touches window.__SHELL_INTERNALS__ when called), so importing it
+   here is browser-safe. All uses below stay guarded by isShell(). */
+import { getCurrentWindow, readTextFile as shellReadTextFile, writeTextFile as shellWriteTextFile, readDir as shellReadDir, writeFile as shellWriteFile, exists as shellExists, homeDir as shellHomeDir, revealItemInDir as shellRevealItemInDir, pathForFile } from "./shellapi.js";
 
-/* Export libraries — STATIC imports, same invariant as the Tauri plugins above:
+/* Export libraries — STATIC imports, same invariant as the shell imports above:
    they must hoist into the single main bundle (no runtime code-split chunks),
-   or the Tauri GTK webview fails to load them and export would silently die.
+   or the desktop webview fails to load them and export would silently die.
    Both are pure client-side JS (render to canvas / PDF bytes) with no native
    counterpart, so importing them in a plain browser is safe too. All uses stay
    guarded so the browser fallback (Blob download) still works under `vite preview`. */
 
 /* Modules — pure helpers extracted into their own files (static imports only; they
-   hoist into the same single bundle, same invariant as the Tauri imports above).
+   hoist into the same single bundle, same invariant as the shell imports above).
   src/markdown.js keeps the createApp closure + native/IPC wiring. */
 import { highlightToHtml, isTableSep } from "./render.js";
 import { scheduleMermaidRender, scheduleMermaidPrewarm, restoreMermaid } from "./mermaid.js";
@@ -66,21 +64,16 @@ export { scanTaskItems, enhancePreviewTasks, toggleTaskAt } from "./tasks.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
-/* ================= App factory (multi-tab, undo/redo, tabs, tabs, drag-drop, Tauri opener) ================= */
+/* ================= App factory (multi-tab, undo/redo, tabs, drag-drop, shell opener) ================= */
 let uid = 0, docId = 0;
 
-/** isTauri — true when running inside the Tauri webview (not a plain browser). */
-function isTauri() {
+/** isShell — true when running inside the desktop shell (not a plain browser). */
+function isShell() {
   if (typeof window === "undefined") return false;
-  // A Vite/bundler Tauri app injects `__TAURI_INTERNALS__` (this is where
-  // __TAURI_INTERNALS__.invoke lives and where every plugin/API call in this
-  // file goes through). `window.__TAURI__` only exists for the vanilla
-  // withGlobalTauri setup, so checking that alone (as it once did) made every
-  // native call silently fall through to its browser fallback in the real app —
-  // e.g. save() used a blob download (ignored by WebKitGTK) and the window-close
-  // guard never wired up. Detect the internals global first; also accept the
-  // global-tauri marker for completeness. Never true in a plain browser.
-  return !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+  // electron/preload.cjs installs `__SHELL_INTERNALS__` before the bundle runs;
+  // every native call in this file goes through it. A plain browser has no such
+  // global, so all shell branches fall through to their browser fallbacks.
+  return !!window.__SHELL_INTERNALS__;
 }
 
 /**
@@ -88,7 +81,7 @@ function isTauri() {
  *
  * Creates the toolbar, tab strip, and split panes, defines every tab/lifecycle
  * function in the closure (tabs, save/open, undo/redo, formatting, scroll-sync,
- * keybinds, modals, session persistence), wires the Tauri IPC, and returns the
+ * keybinds, modals, session persistence), wires the shell IPC, and returns the
  * top-level app element. See AGENTS.md invariants 2/3/8 for the invariants the
  * code below relies on (static imports, close-handling, single-bundle).
  * @param {Element} root The container to mount into (e.g. `#app`).
@@ -680,15 +673,15 @@ export function createApp(root) {
   }
 
   const { showSaveDiscardDialog, showModalBase, messageModal, confirmOverwriteIfNeeded } = createDialogHandlers({
-    isTauri,
-    exists: tauriExists,
+    isShell,
+    exists: shellExists,
   });
 
   const { pickPath: pickPathBase } = createPathPicker({
     showModalBase,
-    readDir: tauriReadDir,
-    homeDir: tauriHomeDir,
-    isTauri,
+    readDir: shellReadDir,
+    homeDir: shellHomeDir,
+    isShell,
   });
 
   /**
@@ -1208,9 +1201,9 @@ export function createApp(root) {
     wrapFor,
   });
 
-  const { findLinkToken, tauriOpenUrl, openAtCaret } = createLinkHandlers({
+  const { findLinkToken, shellOpenUrl, openAtCaret } = createLinkHandlers({
     getActiveDoc: () => activeTab,
-    isTauri,
+    isShell,
     openUrl: (url, target) => window.open(url, target),
   });
 
@@ -1388,18 +1381,18 @@ export function createApp(root) {
       app-owned active document, picker, and native write callbacks local. */
   const exportHandlers = createExportHandlers({
     getActiveDoc: () => activeTab,
-    isTauri,
+    isShell,
     pickPath,
     confirmOverwriteIfNeeded,
-    writeTextFile: tauriWriteTextFile,
-    writeFile: tauriWriteFile,
+    writeTextFile: shellWriteTextFile,
+    writeFile: shellWriteFile,
     messageModal,
   });
 
     /**
      * exportAsHtml — render the current doc to a standalone HTML file.
      *
-     * Tauri path: use the in-app save picker for a destination, then
+     * Desktop-shell path: use the in-app save picker for a destination, then
      * `fs.writeFile` the doctyped HTML. Browser path: download a `text/html`
      * blob. Returns true on success, false on user cancel or error.
      * @returns {Promise<boolean>}
@@ -1413,8 +1406,8 @@ export function createApp(root) {
      * preview into A4 page bands.
      *
      * Each band is a JPEG at 92% quality drawn onto a fresh A4 page (multi-page
-     * docs split across `ceil(height / pxPerA4Page)` pages). Tauri path writes
-     * the `Uint8Array` via `fs.writeFile`; browser path downloads a `blob`.
+     * docs split across `ceil(height / pxPerA4Page)` pages). Desktop-shell path
+     * writes the `Uint8Array` via `fs.writeFile`; browser path downloads a `blob`.
      * Returns true on success, false on user cancel or error.
      * @returns {Promise<boolean>}
      */
@@ -1429,13 +1422,13 @@ export function createApp(root) {
      * Resolves `true` once the content has been persisted (or handed to the
      * browser download manager); `false` if the user cancelled the Save-As
      * picker or a write failed. Path:
-     *  - Tauri + known `doc.path` → write straight back to that file.
-     *  - Tauri + no `doc.path`  → in-app Save-As picker, then `fs.writeFile`.
-     *  - Browser  → `Blob`-download (WebKitGTK-style).
+     *  - Desktop shell + known `doc.path` → write straight back to that file.
+     *  - Desktop shell + no `doc.path`  → in-app Save-As picker, then `fs.writeFile`.
+     *  - Browser  → `Blob`-download (the fallback when no shell is present).
      *
-     * The picker (and "Save failed" modals) are in-app, never the native rfd
-     * GTK chooser: rfd's GTK3 backend never calls set_transient_for, so it
-     * opens off-window. In-app renders over the app by construction.
+     * The picker (and "Save failed" modals) are in-app, never a native OS
+     * dialog: an OS chooser neither parents to our window nor matches the app
+     * theme. In-app renders over the app by construction.
      * @param {object} [doc] Target doc; defaults to `activeTab`.
      * @returns {Promise<boolean>} true on success, false on cancel/error.
      */
@@ -1443,13 +1436,13 @@ export function createApp(root) {
      const d = doc || activeTab;
     if (!d) return false;
     const t = d.input.value;
-    if (isTauri()) {
+    if (isShell()) {
       // Static imports — always loaded, no runtime chunk fetch.
       try {
         // Known location: write straight back to that file.
         if (d.path) {
           if (!(await confirmOverwriteIfNeeded(d.path))) return false;
-          await tauriWriteTextFile(d.path, t);
+          await shellWriteTextFile(d.path, t);
           d.dirty = false; syncDom(d); updateStatus(d); saveSession();
           rememberRecent(d.path, d.name); // successful save → recent-files entry
           return true;
@@ -1466,13 +1459,13 @@ export function createApp(root) {
           return false;
         }
         if (!(await confirmOverwriteIfNeeded(p))) return false;
-        await tauriWriteTextFile(p, t);
+        await shellWriteTextFile(p, t);
         d.name = name || d.name; d.path = p; d.dirty = false;
         syncDom(d); updateStatus(d); saveSession();
         rememberRecent(p, d.name); // successful Save-As → recent-files entry
         return true;
       } catch (e) {
-        const msg = "Tauri save failed: " + ((e && (e.message || e)) || "unknown error");
+        const msg = "Save failed: " + ((e && (e.message || e)) || "unknown error");
         await messageModal({
           title: "Save failed",
           message: msg,
@@ -1516,13 +1509,13 @@ export function createApp(root) {
   /**
    * open — pick a markdown file and open it in a new tab.
    *
-   * Tauri: use the in-app picker (centered over the app) + `fs.readFile`.
+   * Desktop shell: use the in-app picker (centered over the app) + `fs.readFile`.
    * Browser: a native `<input type="file">` picker (multi-select). Reads text and
    * delegates to openFile (per the "always a new tab" invariant).
    * @returns {Promise<void>}
    */
   async function open() {
-     if (isTauri()) {
+     if (isShell()) {
        // In-app picker — centered over the app (see save() for the why).
        const { path } = await pickPath({
         mode: "open",
@@ -1530,7 +1523,7 @@ export function createApp(root) {
       });
       if (!path) return; // cancelled
       try {
-        const txt = await tauriReadTextFile(path);
+        const txt = await shellReadTextFile(path);
         const base = String(path).replace(/[\\/]+/g, "/").split("/").pop() || "file.md";
         openFile({ name: base, text: txt, path });
         return;
@@ -1562,7 +1555,7 @@ export function createApp(root) {
      shared success points: openFile() (covers the Open dialog AND drag-drop —
      both call it with a path; session restore uses makeTab directly and does
      NOT record) and save()'s two native success paths. The list lives in
-     localStorage ("me.recentPaths") so it survives restarts in BOTH the Tauri
+     localStorage ("me.recentPaths") so it survives restarts in BOTH the desktop
      app and the browser fallback; every access is guarded because storage can
      be unavailable (cleared, file:// restrictions). */
   const RECENT_KEY = "me.recentPaths";
@@ -1652,9 +1645,9 @@ export function createApp(root) {
     const list = loadRecent();
     const entry = list[idx];
     if (!entry || !entry.path) return;
-    if (!isTauri()) return; // browser fallback: recents exist but cannot be re-read
+    if (!isShell()) return; // browser fallback: recents exist but cannot be re-read
     try {
-      const txt = await tauriReadTextFile(entry.path);
+      const txt = await shellReadTextFile(entry.path);
       openFile({ name: entry.name || basenameOf(entry.path), text: txt, path: entry.path });
     } catch (e) {
       await messageModal({
@@ -1698,13 +1691,13 @@ export function createApp(root) {
     for (const f of Array.from(files)) {
       if (!/\.(md|markdown|mdx|txt)$/i.test(f.name || "") && f.type !== "text/markdown" && f.type !== "text/plain") continue;
       let path = null, text;
-      if (isTauri()) {
+      if (isShell()) {
         try {
           // Electron removed File.path; the preload exposes webUtils'
           // getPathForFile (shellapi.pathForFile). Fake files (tests, drops of
           // in-memory blobs) have no path — fall through to f.text() below.
           path = pathForFile(f);
-          if (path) text = await tauriReadTextFile(path);
+          if (path) text = await shellReadTextFile(path);
         } catch { /* ignore */ }
       }
       if (text === undefined && f.text) { try { text = await f.text(); } catch { continue; } }
@@ -1873,8 +1866,8 @@ export function createApp(root) {
    * word (`step|\n- **Diagrams**` → `step\n-| …`). Only the document edges
    * fall through to the native move (a no-op there).
    *
-   * Tab/Shift+Tab used to be bound here, but on WebKitGTK (the Tauri shell on
-   * Linux; WebView2 behaves the same on Windows) Shift+Tab escaped the editor
+   * Tab/Shift+Tab used to be bound here, but on WebKitGTK (and WebView2 on
+   * Windows) Shift+Tab escaped the editor
    * to browser focus traversal — it now lives in the CAPTURE-phase window
    * listener directly below, which runs before everything else and is the
    * earliest possible preventDefault point in the DOM pipeline.
@@ -2046,13 +2039,13 @@ export function createApp(root) {
     activate,
     focusEditor: () => { if (activeTab) focusKeepScroll(activeTab); },
     saveSessionSoon,
-    isTauri,
-    revealItemInDir: tauriRevealItemInDir,
+    isShell,
+    revealItemInDir: shellRevealItemInDir,
     messageModal,
   });
 
-  /* ---- Tauri window close confirm ----
-    * Close-requested contract (see @tauri-apps/api window.js onCloseRequested):
+  /* ---- window close confirm ----
+    * Close-requested contract (see src/shellapi.js onCloseRequested):
     * the wrapper does  `await handler(evt); if (!evt.isPreventDefault())
     * await this.destroy();`  i.e. it AUTO-CLOSES the window unless we call
     * preventDefault(). So the ONLY correct way to actually close is to let the
@@ -2069,15 +2062,15 @@ export function createApp(root) {
     * chunk silently skipped this registration, letting the window close with
     * unsaved data. If registration itself throws we fall back to a plain
     * document-level guard so we never close silently. */
-  if (isTauri()) {
+  if (isShell()) {
     let win = null;
     try { win = getCurrentWindow(); } catch { win = null; }
     if (win) {
       let closing = false; // re-entry guard for a second close request mid-walk
       /**
-       * win.onCloseRequested — Tauri window close interceptor.
+       * win.onCloseRequested — native window close interceptor.
        *
-       * The Tauri wrapper's contract: `await handler(evt); if (!evt.isPreventDefault())
+       * The shell wrapper's contract: `await handler(evt); if (!evt.isPreventDefault())
        * await this.destroy()`. So the handler should call preventDefault ONLY
        * when the user cancels / an error occurs; on success it must do NOTHING
        * (the wrapper auto-calls destroy). Calling win.close() here would
@@ -2085,7 +2078,7 @@ export function createApp(root) {
        * deadlock the window open. Re-entry is guarded (a second close request
        * while the dialog is open is swallowed). If registration itself fails
        * (IPC not ready), fall back to a document-level `beforeunload` guard.
-       * @param {object} event The Tauri CloseRequestedEvent.
+       * @param {object} event The shell CloseRequestedEvent.
        */
       win.onCloseRequested(async (event) => {
         if (closing) { event.preventDefault(); return; } // dialog already open — hold
@@ -2304,7 +2297,7 @@ export function createApp(root) {
     // ("when the open/save dialog opens the current file scrolls to the
     // bottom"). And under any picker backdrop the editor must not steal focus
     // back at all (the dialog owns the keyboard; native pickers mount the
-    // backdrop synchronously, so it is already up here on the Tauri path).
+    // backdrop synchronously, so it is already up here on the native path).
     // So: stand down under a backdrop; for save/open use focusKeepScroll so
     // the browser-fallback's OS file dialog path ALSO cannot move either
     // pane; everyday actions keep the plain trailing focus untouched.

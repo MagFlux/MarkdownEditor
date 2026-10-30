@@ -1,10 +1,9 @@
 /**
  * shellapi.js — the desktop-shell IPC layer for the editor bundle.
  *
- * The app was converted from the Tauri shell to Electron (electron/main.cjs +
- * electron/preload.cjs). To keep the conversion low-risk, the frontend keeps
- * speaking the SAME wire contract the Playwright harnesses stub — every native
- * operation is a command over `window.__TAURI_INTERNALS__.invoke`:
+ * Electron (electron/main.cjs + electron/preload.cjs) hosts the frontend and
+ * answers the shell-IPC wire contract the Playwright harnesses stub — every
+ * native operation is a command over `window.__SHELL_INTERNALS__.invoke`:
  *
  *   plugin:fs|read_text_file   { path, options }                → BYTES (decoded below)
  *   plugin:fs|write_text_file  <bytes>, { headers: { path } }  → null   (UTF-8 text write)
@@ -20,16 +19,15 @@
  *   plugin:window|destroy      { label }                       → force-close
  *
  * The preload shim (electron/preload.cjs) implements the renderer side of this
- * contract; `test/verifyTauriClose.mjs` (+ verifyExport / verifyMath /
+ * contract; `test/verifyShellIpc.mjs` (+ verifyExport / verifyMath /
  * verifyDialogScroll / verifyRecent) stub it with the same command names, so
  * the Playwright harnesses exercise the same code paths the real app runs.
  *
- * The functions below replicate — verbatim where possible — the wrapper
- * semantics of the previously-used @tauri-apps/api + plugin packages:
- * readTextFile treats the invoke result as BYTES (Uint8Array + TextDecoder);
- * the write wrappers TextEncoder/encode text and carry the destination path
- * URL-encoded in `options.headers.path` (a Windows path like `C:\Users\…`
- * survives URL-encoding; a header value is never mangled by the transport).
+ * The functions below define the wire semantics: readTextFile treats the invoke
+ * result as BYTES (Uint8Array + TextDecoder); the write wrappers
+ * TextEncoder/encode text and carry the destination path URL-encoded in
+ * `options.headers.path` (a Windows path like `C:\Users\…` survives
+ * URL-encoding; a header value is never mangled by the transport).
  *
  * IMPORTANT (invariants 2 & 8 in AGENTS.md): this module is imported
  * STATICALLY into the single Vite bundle. Never convert it to a dynamic
@@ -37,7 +35,7 @@
  * and the window-close guard.
  *
  * Node-importable (test.mjs loads this graph): no top-level `window` access —
- * the shell global is read lazily inside each call, after the isTauri() gates.
+ * the shell global is read lazily inside each call, after the isShell() gates.
  */
 
 /**
@@ -47,13 +45,13 @@
  * @param {object} [options] Request options (the write wrappers carry the
  *   destination path URL-encoded in `options.headers.path`).
  * @returns {Promise<any>} The command's result; rejects with the shell's error message.
- * @throws When there is no shell bridge (plain browser — callers must guard with isTauri()).
+ * @throws When there is no shell bridge (plain browser — callers must guard with isShell()).
  */
 async function invoke(cmd, args = {}, options) {
-  if (typeof window === "undefined" || !window.__TAURI_INTERNALS__) {
+  if (typeof window === "undefined" || !window.__SHELL_INTERNALS__) {
     throw new Error("shell bridge unavailable");
   }
-  return window.__TAURI_INTERNALS__.invoke(cmd, args, options);
+  return window.__SHELL_INTERNALS__.invoke(cmd, args, options);
 }
 
 /**
@@ -64,14 +62,14 @@ async function invoke(cmd, args = {}, options) {
  * @returns {number} The callback id.
  */
 function transformCallback(cb, once = false) {
-  return window.__TAURI_INTERNALS__.transformCallback(cb, once);
+  return window.__SHELL_INTERNALS__.transformCallback(cb, once);
 }
 
 /**
  * readTextFile — read an entire file as a UTF-8 string.
  *
- * The bridge returns BYTES (as the old Tauri plugin did — a plain string would
- * iterate as chars → garbage via Uint8Array.from), so decode them here.
+ * The bridge returns BYTES (a plain string would iterate as chars → garbage via
+ * Uint8Array.from), so decode them here.
  * @param {string} path Absolute file path.
  * @param {object} [options] Options forwarded with the command (unused today).
  * @returns {Promise<string>} The file contents as text.
@@ -139,8 +137,7 @@ async function exists(path, options) {
 /**
  * homeDir — resolve the user's home directory (the picker's opening dir).
  *
- * `21` is the shell's BaseDirectory.Home ordinal (the same value the old
- * @tauri-apps/api path.js sent for homeDir()).
+ * `21` is the shell's BaseDirectory.Home ordinal.
  * @returns {Promise<string>} The home directory path.
  */
 async function homeDir() {
@@ -162,7 +159,7 @@ async function openUrl(url, openWith) {
  *
  * The Electron main process answers `plugin:opener|reveal_item_in_dir` with
  * `shell.showItemInFolder(paths[0])`; the browser fallback has no equivalent
- * (the tab context menu disables the item when `isTauri()` is false).
+ * (the tab context menu disables the item when `isShell()` is false).
  * @param {string} path Absolute path of the file to reveal.
  * @returns {Promise<void>} Resolves when the shell accepted the request.
  */
@@ -188,7 +185,7 @@ function pathForFile(file) {
   return (file && file.path) || null;
 }
 
-/* ---- window API (mirrors @tauri-apps/api window.js) ---- */
+/* ---- window API ---- */
 
 /**
  * shellWindow — a minimal Window facade for the current shell window.
@@ -207,7 +204,7 @@ function shellWindow(label) {
     label,
     /**
      * listen — register an event listener on this window.
-     * @param {string} event Event name (e.g. "tauri://close-requested").
+     * @param {string} event Event name (e.g. "shell://close-requested").
      * @param {Function} handler Called with {event, id, payload}.
      * @returns {Promise<Function>} Resolves to the unlisten function.
      */
@@ -231,7 +228,7 @@ function shellWindow(label) {
      * @returns {Promise<Function>} Resolves to the unlisten function.
      */
     async onCloseRequested(handler) {
-      return this.listen("tauri://close-requested", async (event) => {
+      return this.listen("shell://close-requested", async (event) => {
         const evt = {
           event: event.event,
           id: event.id,
@@ -249,7 +246,7 @@ function shellWindow(label) {
     },
     /**
      * destroy — force-close the window (no close-requested re-emit; the
-     * shell skips the renderer's beforeunload, exactly like the old shell).
+     * shell skips the renderer's beforeunload — the shell's force-close).
      * @returns {Promise<void>} Resolves when the close was requested.
      */
     async destroy() {
@@ -267,7 +264,7 @@ function shellWindow(label) {
  * @returns {{label: string, listen: Function, onCloseRequested: Function, destroy: Function}} The window facade.
  */
 function getCurrentWindow() {
-  return shellWindow(window.__TAURI_INTERNALS__.metadata.currentWindow.label);
+  return shellWindow(window.__SHELL_INTERNALS__.metadata.currentWindow.label);
 }
 
 export {

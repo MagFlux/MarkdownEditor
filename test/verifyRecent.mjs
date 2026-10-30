@@ -7,7 +7,7 @@
  * opens the file in a NEW tab (invariant 6), a STALE entry (unreadable file)
  * shows the "Open failed" modal AND is dropped from the list, the section is
  * hidden entirely when empty, entries persist across a page reload, and the
- * browser fallback (no __TAURI_INTERNALS__) never shows the section (it has
+ * browser fallback (no __SHELL_INTERNALS__) never shows the section (it has
  * no paths to re-read). Run with `npm run verify-recent`.
  */
 import { chromium } from "playwright";
@@ -26,7 +26,7 @@ let pass = 0, fail = 0;
 const ok = (n, c, extra) => { if (c) { pass++; console.log("ok  ", n, extra ? "→ " + extra : ""); } else { fail++; console.log("FAIL", n, extra ? "→ " + extra : ""); } };
 
 /**
- * installInternals — stub `window.__TAURI_INTERNALS__` + `window.__state`.
+ * installInternals — stub `window.__SHELL_INTERNALS__` + `window.__state`.
  * Must be FULLY self-contained (addInitScript serializes the function, so
  * node-side closures do not survive): the file map lives inside the stub and
  * is exposed as `window.__files` so scenarios can mutate it (mark entries
@@ -43,11 +43,11 @@ function installInternals() {
     "/home/user/notes/gone.md": null, // stale entry: read throws
   };
   const internals = {
-    __TAURI_METADATA__: { currentWindow: { label: "main", id: 1 } },
+    __SHELL_METADATA__: { currentWindow: { label: "main", id: 1 } },
     metadata: { currentWindow: { label: "main", id: 1 } },
     transformCallback(fn) { const id = ++cbid; return id; },
     unregisterCallback() {},
-    convertFileSrc() { return "tauri://local/"; },
+    convertFileSrc() { return "asset://localhost/"; },
     async invoke(cmd, args, options) {
       S.ipc.push(cmd);
       const files = window.__files || {};
@@ -72,7 +72,7 @@ function installInternals() {
       }
     },
   };
-  window.__TAURI_INTERNALS__ = internals;
+  window.__SHELL_INTERNALS__ = internals;
 }
 
 /**
@@ -106,12 +106,12 @@ const openMenu = async (page) => {
 /**
  * scenario — run one recent-files case in a fresh context (optionally stubbed).
  * @param {string} name — the case label.
- * @param {boolean} tauri — install the __TAURI_INTERNALS__ stub first.
+ * @param {boolean} native — install the __SHELL_INTERNALS__ stub first.
  * @param {(env: {page: any, ok: any, wait: any}) => Promise<void>} run — the body.
  */
-async function scenario(name, tauri, run) {
+async function scenario(name, native, run) {
   const context = await browser.newContext();
-  if (tauri) await context.addInitScript(installInternals);
+  if (native) await context.addInitScript(installInternals);
   const page = await context.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));

@@ -44,7 +44,7 @@ const ok = (n, c, extra) => {
 };
 
 /**
- * installInternals — stub `window.__TAURI_INTERNALS__` so the NATIVE picker
+ * installInternals — stub `window.__SHELL_INTERNALS__` so the NATIVE picker
  * path (createPathPicker over plugin-fs read_dir + api/path homeDir) actually
  * runs. Fully self-contained (addInitScript serializes the function). The
  * directory map lives in `window.__dirs`, the readable file bodies in
@@ -64,11 +64,11 @@ function installInternals() {
   };
   window.__bodies = { "/home/user/notes/report.md": "# Report\n\nbody of the opened file\n" };
   window.__exists = ["/home/user/doc1.md"];
-  window.__TAURI_INTERNALS__ = {
-    __TAURI_METADATA__: { currentWindow: { label: "main", id: 1 } },
+  window.__SHELL_INTERNALS__ = {
+    __SHELL_METADATA__: { currentWindow: { label: "main", id: 1 } },
     transformCallback() { return ++cbid; },
     unregisterCallback() {},
-    convertFileSrc() { return "tauri://local/"; },
+    convertFileSrc() { return "asset://localhost/"; },
     async invoke(cmd, args, options) {
       S.ipc.push(cmd);
       // plugin-fs serves disk paths through request headers (headers.path,

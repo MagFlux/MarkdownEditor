@@ -1,4 +1,4 @@
-/* Selection + format-detection helpers — pure string functions (no DOM, no Tauri,
+/* Selection + format-detection helpers — pure string functions (no DOM, no shell,
    no libraries): extracted verbatim from the old monolithic src/markdown.js so it
    can shrink to just the createApp closure. Behaviour must stay byte-identical:
    the round-trip invariant and the verifyToolbar / verify paste suites depend on
@@ -6,7 +6,7 @@
 /**
  * format.js — pure selection + format-detection helpers.
  *
- * Zero dependencies, zero DOM, zero Tauri: just string math. These fns power
+ * Zero dependencies, zero DOM, zero shell: just string math. These fns power
  * the toolbar's bold / italic / strike / code / underline / link toggles: they
  * find the word/token under the caret, detect whether it already has a
  * markdown format, and compute the exact span to wrap or unwrap. `wordJump`

@@ -1,10 +1,10 @@
 /**
  * main.cjs — the Electron main process (the desktop shell).
  *
- * Replaces the former Tauri Rust shell. The frontend (dist bundle) speaks the
- * same shell-IPC wire contract the Playwright harnesses stub
- * (test/verifyTauriClose.mjs): every native operation is a `plugin:*` command
- * over `window.__TAURI_INTERNALS__.invoke`, installed by electron/preload.cjs
+ * The frontend (dist bundle) speaks the shell-IPC wire contract the Playwright
+ * harnesses stub (test/verifyShellIpc.mjs): every native operation is a
+ * `plugin:*` command over `window.__SHELL_INTERNALS__.invoke`, installed by
+ * electron/preload.cjs
  * and answered HERE by the `shell:invoke` IPC router below:
  *
  *   plugin:fs|read_text_file   { path }                → file BYTES (Uint8Array)
@@ -18,8 +18,8 @@
  *   plugin:event|listen        { event }               → event id (registry)
  *   plugin:event|unlisten      { event, eventId }      → null
  *   plugin:window|destroy      { label }               → FORCE close (skips
- *                                 beforeunload — the same semantics the
- *                                 Tauri destroy() had; see the close handler)
+ *                                 beforeunload — the shell destroy()
+ *                                 semantics; see the close handler)
  *
  * The window-close confirm walk is preserved exactly: the OS close is
  * preventDefault-ed and the renderer's close-requested listener (registered
@@ -41,9 +41,9 @@ const os = require("node:os");
 
 const DIST = path.join(__dirname, "..", "dist");
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || null;
-// The close-requested event name (the shell window API's TauriEvent constant,
-// kept verbatim: src/shellapi.js and the test stubs register listeners for it).
-const CLOSE_REQUESTED = "tauri://close-requested";
+// The close-requested event name (src/shellapi.js and the test stubs register
+// listeners for it).
+const CLOSE_REQUESTED = "shell://close-requested";
 
 /** trace — opt-in main-process lifecycle journal (ELECTRON_TRACE=1). The
     close-chain (intercept → event delivery → destroy) is otherwise invisible
@@ -61,9 +61,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
-/* Run NATIVE WAYLAND whenever the display server offers it — mirroring the
-   Tauri shell (GTK3 under a Wayland session is a native Wayland client), so
-   the app speaks the same input/compositing protocol the old shell did.
+/* Run NATIVE WAYLAND whenever the display server offers it, so the app speaks
+   the compositor's input/compositing protocol directly.
    FORCE, not hint=auto: Chromium's "auto" consults XDG_SESSION_TYPE, which
    is EMPTY under WSLg, so auto silently resolved to X11/XWayland — verified
    by an empty wayland-debug journal — and that X11 path is exactly where
@@ -142,9 +141,9 @@ if (process.env.WAYLAND_DISPLAY && !fs.existsSync("/dev/dri")) {
    for GPU-compositing comparison with MD_ELECTRON_GPU=1. */
 if (!process.env.MD_ELECTRON_GPU) app.disableHardwareAcceleration();
 
-/* Production CSP — mirrors the old Tauri config (tauri.conf.json app.security.csp)
-   plus the bits the app needs (inline styles: mermaid SVG sheets, KaTeX spans,
-   the overlay) and data: fonts/images. Dev loads via http and is not CSP'd
+/* Production CSP — the app's content policy plus the bits it needs (inline
+   styles: mermaid SVG sheets, KaTeX spans, the overlay) and data: fonts/images.
+   Dev loads via http and is not CSP'd
    (vite's HMR websocket needs ws://). Applied as a response header by the
    app:// handler, never as a page <meta>. */
 const APP_CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:";
@@ -261,8 +260,7 @@ function toBuffer(args) {
 /**
  * readDirEntries — list a directory the way the picker expects (DirEntry
  * shape: name/path/isDirectory/isFile/isSymlink). Dot (hidden) entries are
- * listed naturally — the old Tauri `requireLiteralLeadingDot:false` scope
- * quirk has no equivalent here; nothing filters them.
+ * listed naturally — nothing filters them (invariant 7).
  * @param {string} dir Absolute directory path.
  * @returns {Promise<Array<object>>} The entries.
  */
@@ -279,8 +277,8 @@ async function readDirEntries(dir) {
 }
 
 /**
- * resolveDirectory — map the shell's BaseDirectory ordinal (21 = Home, the
- * value @tauri-apps/api's homeDir() sent) to the OS home directory.
+ * resolveDirectory — map the shell's BaseDirectory ordinal (21 = Home) to the
+ * OS home directory.
  * @param {number|string} directory The directory selector.
  * @returns {Promise<string>} The resolved path.
  */
@@ -404,8 +402,8 @@ async function dispatch(event, cmd, args, options) {
     case "plugin:event|emit_to":
       return null; // renderer→shell emit is unused by this app
     case "plugin:window|destroy": {
-      // FORCE close: skips 'close' + beforeunload — matches the Tauri
-      // destroy() semantics the wrapper relies on (the close walk has already
+      // FORCE close: skips 'close' + beforeunload — the destroy() semantics
+      // the wrapper relies on (the close walk has already
       // saved the session via closeApp(), so skipping beforeunload is safe).
       const w = BrowserWindow.fromWebContents(event.sender);
       trace("plugin:window|destroy (label=" + (args && args.label) + ", found=" + !!w + ")");
@@ -446,8 +444,8 @@ function requestClose(win) {
 /**
  * createWindow — build and show the editor window.
  *
- * Dimensions/title/min sizes come from the old tauri.conf.json window config
- * (1200×780, min 720×400). The preload installs the shell bridge
+ * Dimensions/title/min sizes are the window defaults (1200×780, min 720×400).
+ * The preload installs the shell bridge
  * (contextIsolation off so page callbacks live in the same realm as the
  * bridge — no bridge serialization surprises for byte payloads or event
  * callbacks; nodeIntegration stays off so the page itself has no Node).
@@ -705,7 +703,7 @@ function createWindow() {
   // the X server delivers inside it comes back as a synthetic wheel event.
   startWheelDaemon(win);
 
-  // Dev-only nicety: F12 toggles devtools (the old Tauri dev build had logs).
+  // Dev-only nicety: F12 toggles devtools.
   if (!app.isPackaged) {
     win.webContents.on("before-input-event", (e, input) => {
       if (input.type === "keyDown" && input.key === "F12") {
@@ -722,8 +720,8 @@ function createWindow() {
 app.setName("Markdown Editor");
 if (process.platform === "win32") app.setAppUserModelId("com.mssok.markdowneditor");
 
-/* Menu: none on Windows/Linux (matches the old Tauri shell — the editor's
-   own keybinds own every shortcut). macOS needs the standard app/edit menu
+/* Menu: none on Windows/Linux (the editor's own keybinds own every shortcut).
+   macOS needs the standard app/edit menu
    (no menubar = no Cmd+C/V/Copy-Paste at all there), including Quit, which
    funnels through app.quit → window close → the close-confirm walk. */
 if (process.platform === "darwin") {

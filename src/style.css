@@ -423,11 +423,11 @@ body {
 
 /* ===== Path-picker modal (Save-As / Open) =====
    Same visual language as the save/discard dialog: one centered box, one
-   row of controls, one scrollable list. Chosen instead of a native GTK
-   dialog because rfd's GTK backend (via tauri-plugin-dialog) never attaches
-   the parent (no set_transient_for, no CENTER_ON_PARENT), so the OS
-   file-chooser opens wherever the WM places it. An in-app modal lives
-   inside the single webview and is thus always centered on the app. */
+   row of controls, one scrollable list. Chosen instead of a native OS
+   dialog because an OS file-chooser neither parents to our window nor
+   matches the app theme, so it opens wherever the WM places it. An in-app
+   modal lives inside the single webview and is thus always centered on
+   the app. */
 .savedlg.savedlg-picker { width: min(520px, 92vw); display: grid; gap: 12px; }
 .savedlg .picker-pathbar { display: flex; gap: 6px; align-items: center;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;

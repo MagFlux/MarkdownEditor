@@ -1,18 +1,18 @@
 /**
- * verifyTauriClose.mjs — shell-IPC native-path verification.
+ * verifyShellIpc.mjs — shell-IPC native-path verification.
  *
- * Injects the exact `window.__TAURI_INTERNALS__` the Electron preload installs
+ * Injects the exact `window.__SHELL_INTERNALS__` the Electron preload installs
  * and drives the real shell-IPC wire contract (the `plugin:*` commands also
  * answered by electron/main.cjs): save→picker→write+close, picker-cancel,
  * save-discard-cancel, known-path direct write, open→picker→new tab, navigate
  * into forbidden dir, Home button, the hidden (dot) folder picker entry, and
  * the picker list's scroll reset on every directory entry (top-pinned).
- * (Script name kept from the Tauri era — the wire contract it stubs is the
- * one the shipl shares; see src/shellapi.js + electron/preload.cjs.)
- * Run with `npm run verify-tauri` (needs the built dist).
+ * (The stub mirrors the wire contract the app ships; see src/shellapi.js +
+ * electron/preload.cjs.)
+ * Run with `npm run verify-shellipc` (needs the built dist).
  */
 // Shell-IPC native-path verification — injects the exact
-// `window.__TAURI_INTERNALS__` the Electron preload installs, driving the REAL
+// `window.__SHELL_INTERNALS__` the Electron preload installs, driving the REAL
 // shell wire contract (src/shellapi.js wrappers over that global).
 //
 // Command shapes (see src/shellapi.js + electron/main.cjs):
@@ -66,7 +66,7 @@ setTimeout(() => {
 }, 55000);
 
 /**
- * installInternals — install a stub `window.__TAURI_INTERNALS__` (+ `__state` log) inside
+ * installInternals — install a stub `window.__SHELL_INTERNALS__` (+ `__state` log) inside
  * the page. Injected via addInitScript so Playwright contextifies it once. Records
  * IPC, text writes, window-destroy, and close-request emissions on `__state`.
  * read_dir serves a default fake listing unless `window.__fsListings[path]`
@@ -80,16 +80,16 @@ function installInternals() {
    /** emitClose — increment the close counter and fire all close-requested listeners. */
    function emitClose() {
       S.firedClose++;
-      for (const id of (eventCbs.get("tauri://close-requested") || [])) {
-        const cb = callbacks.get(id); if (cb) cb({ event: "tauri://close-requested", payload: null, id: 1 });
+      for (const id of (eventCbs.get("shell://close-requested") || [])) {
+        const cb = callbacks.get(id); if (cb) cb({ event: "shell://close-requested", payload: null, id: 1 });
       }
     }
   const internals = {
-    __TAURI_METADATA__ : { currentWindow: { label: "main", id: 1 } },
+    __SHELL_METADATA__ : { currentWindow: { label: "main", id: 1 } },
     metadata: { currentWindow: { label: "main", id: 1 } },
     transformCallback(fn) { const id = ++cbid; callbacks.set(id, fn); return id; },
     unregisterCallback(id) { callbacks.delete(id); },
-    convertFileSrc(path, protocol) { return `tauri://` + protocol + "/" + encodeURIComponent(path); },
+    convertFileSrc(path, protocol) { return `asset://` + protocol + "/" + encodeURIComponent(path); },
     async invoke(cmd, args, options) {
       S.ipc.push(cmd);
       switch (cmd) {
@@ -139,7 +139,7 @@ function installInternals() {
           S.readText.push(args && args.path);
           // readTextFile() does `bytes instanceof ArrayBuffer ? bytes : Uint8Array.from(arr)`
           // then decodes — so return BYTES, not a string.
-          return new TextEncoder().encode("# read from tauri");
+          return new TextEncoder().encode("# read from shell");
         }
         case "plugin:window|destroy": S.destroyed = true; return null;
         case "plugin:window|close": emitClose(); return null;
@@ -147,13 +147,13 @@ function installInternals() {
       }
     },
   };
-  window.__TAURI_INTERNALS__ = internals;
+  window.__SHELL_INTERNALS__ = internals;
   window.__emitClose = emitClose;
   window.__state = S;
 }
 
 /**
- * scenario — run one test case in a fresh browser context with Tauri stubs.
+ * scenario — run one test case in a fresh browser context with shell stubs.
  * @param {string} name — the scenario label.
  * @param {(env: {page: any, st: any, emit: any, ok: any, wait: any, errors: any, log: any}) => Promise<void>} run — the case body.
  */
@@ -198,7 +198,7 @@ function byRole(page, role, name, exact = true) {
 
 // ---- A: dirty, choose SAVE → picker confirms → real write + window closes ----
 await scenario("A: SAVE → in-app picker → write + close", async ({ page, st, emit, ok, wait }) => {
-  await page.evaluate(() => { const a = window.editor.activeTab; a.input.value = "hello from tauri save"; a.dirty = true; a.name = "DocA.md"; a.path = null; });
+  await page.evaluate(() => { const a = window.editor.activeTab; a.input.value = "hello from shell save"; a.dirty = true; a.name = "DocA.md"; a.path = null; });
   await emit();
   await page.waitForSelector(".savedlg", { timeout: 2500 });
   ok("A1 close prompt appeared (registered natively)", true);
@@ -211,15 +211,15 @@ await scenario("A: SAVE → in-app picker → write + close", async ({ page, st,
   ok("A1c picker is a .savedlg inside the webview (centered by construction)",
      !!(await page.$(".savedlg.picker") || await page.$(".savedlg .picker-name")));
   // Step 3: type a filename, click the picker's Save.
-  await page.locator(".picker-name input").fill("tauri_save.md");
+  await page.locator(".picker-name input").fill("shell_save.md");
   // The picker's Save button is the `.btn.primary` inside the picker (not the
   // save-discard dialog's — that one has already closed).
   await page.locator(".savedlg button.primary").click();
   await wait(300);
   let S = await st();
   const w = S.writes[S.writes.length - 1];
-  ok("A2 Save issued a real Tauri write (fs/write_text_file)", S.writes.length >= 1, JSON.stringify(S.writes));
-  ok("A3 written contents match the document", !!(w && w.text === "hello from tauri save"), JSON.stringify(w));
+  ok("A2 Save issued a real shell write (fs/write_text_file)", S.writes.length >= 1, JSON.stringify(S.writes));
+  ok("A3 written contents match the document", !!(w && w.text === "hello from shell save"), JSON.stringify(w));
   ok("A4 picked path is under the home dir (or typed absolute path)",
      !!(w && /^\/(home\/user|tmp)\//.test(w.path || "")), JSON.stringify(w));
   S = await st();
@@ -339,7 +339,7 @@ await scenario("D: OPEN → picker → new tab from disk", async ({ page, st, ok
   const activeText = await page.evaluate(() => window.editor.activeTab && window.editor.activeTab.input.value);
   ok("D4 a new tab was created (open always opens a new tab)", tabs === beforeTabs + 1, JSON.stringify({ tabs, beforeTabs }));
   ok("D5 new tab has the file name", activeName === "existing.md", JSON.stringify({ activeName }));
-  ok("D6 new tab got the file content", activeText === "# read from tauri", JSON.stringify({ activeText }));
+  ok("D6 new tab got the file content", activeText === "# read from shell", JSON.stringify({ activeText }));
 });
 
 // ---- E: open() → picker cancelled → no new tab, no read ----
@@ -418,9 +418,8 @@ await scenario("G: Home button always available + returns to home", async ({ pag
 });
 
 // ---- H: picker must be able to ENTER a hidden (leading-dot) folder ----
-// Regression guard for the fs-scope fix in src-tauri/tauri.conf.json:
-// `plugins.fs.requireLiteralLeadingDot: false` makes the scope's `**` glob
-// match dot-path segments on Unix. The stub doesn't enforce the real scope,
+// Regression guard for hidden (dot) path reachability (invariant 7):
+// nothing filters leading-dot entries. The stub doesn't enforce the real fs,
 // so we assert the UI-level contract instead: the picker lists dot-dirs and
 // drives read_dir() into a dot-path without hiding or refusing them. A future
 // change that re-adds a leading-dot filter (in render() or goToDir()) will

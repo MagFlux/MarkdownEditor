@@ -4,7 +4,7 @@
  * The export pipeline is independent of tab state, so it lives outside the
  * createApp closure. The factory receives the few app-owned callbacks it needs
  * for the active document, in-app picker, overwrite confirmation, and errors.
- * All library imports remain static so Vite still emits one Tauri-loadable
+ * All library imports remain static so Vite still emits one shell-loadable
  * bundle.
  */
 import { jsPDF } from "jspdf";
@@ -65,7 +65,7 @@ body.preview{max-width:62rem;margin:0 auto;padding:14px 28px 60px;font-size:16px
  */
 export function createExportHandlers({
   getActiveDoc,
-  isTauri,
+  isShell,
   pickPath,
   confirmOverwriteIfNeeded,
   writeTextFile,
@@ -154,7 +154,7 @@ export function createExportHandlers({
     if (!doc) return false;
     const html = await exportHtmlDoc(doc.input.value);
     const filename = defaultExportName(doc, "html");
-    if (isTauri()) {
+    if (isShell()) {
       const { path } = await pickPath({ mode: "save", defaultFilename: filename, filters: [{ name: "HTML", extensions: ["html", "htm"] }] });
       if (!path) return false;
       try {
@@ -199,7 +199,7 @@ export function createExportHandlers({
         pdf.addImage(slice.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pageW, slicePx * ratio);
         if (y + pxPerPage >= host.height) break;
       }
-      if (isTauri()) {
+      if (isShell()) {
         const { path } = await pickPath({ mode: "save", defaultFilename: filename, filters: [{ name: "PDF", extensions: ["pdf"] }] });
         if (!path) return false;
         try {

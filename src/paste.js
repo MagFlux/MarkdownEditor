@@ -2,7 +2,7 @@
  * paste.js — rich-paste conversion (HTML clipboard → Markdown).
  *
  * Pure DOM/string helpers (`DOMParser` runs against a detached doc; safe in
- * the browser, the Tauri webview, and Node with stubs). Goal: when the user
+ * the browser, the desktop webview, and Node with stubs). Goal: when the user
  * Ctrl+V's rich content (Excel table, Word bolded paragraph, web snippet)
  * into the editor, the `text/html` clipboard payload is converted to a
  * readable Markdown representation and committed as a single, undo-able

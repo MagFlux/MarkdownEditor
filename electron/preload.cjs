@@ -2,8 +2,8 @@
  * preload.cjs — Electron preload bridge for the editor bundle.
  *
  * The frontend speaks the shell-IPC wire contract the Playwright harnesses
- * stub (test/verifyTauriClose.mjs): every native operation is a `plugin:*`
- * command over `window.__TAURI_INTERNALS__.invoke`. This preload installs that
+ * stub (test/verifyShellIpc.mjs): every native operation is a `plugin:*`
+ * command over `window.__SHELL_INTERNALS__.invoke`. This preload installs that
  * exact surface and translates it onto Electron IPC answered by
  * electron/main.cjs's `shell:invoke` router — so src/*.js needs no knowledge
  * of which shell hosts it. See src/shellapi.js for the command table.
@@ -23,7 +23,7 @@ const listeners = new Map();  // event id → { event, fn }
 const internals = {
   /* Mirrors what the shell injects. The Window wrapper (shellapi.js
      getCurrentWindow) reads `metadata.currentWindow.label`. */
-  __TAURI_METADATA__: { currentWindow: { label: "main", id: 1 } },
+  __SHELL_METADATA__: { currentWindow: { label: "main", id: 1 } },
   metadata: {
     currentWindow: { label: "main", id: 1 },
     currentWebview: { windowLabel: "main", label: "main", id: 1 },
@@ -96,7 +96,7 @@ try {
   };
 } catch { /* sandboxed preload — the panel falls back to its browser line */ }
 
-window.__TAURI_INTERNALS__ = internals;
-window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+window.__SHELL_INTERNALS__ = internals;
+window.__SHELL_EVENT_PLUGIN_INTERNALS__ = {
   unregisterListener(event, eventId) { listeners.delete(eventId); },
 };

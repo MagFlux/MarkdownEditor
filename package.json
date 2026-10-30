@@ -30,7 +30,7 @@
     "verify-mermaidflicker": "node test/verifyMermaidFlicker.mjs",
     "verify-mermaidstyle": "node test/verifyMermaidStyle.mjs",
     "verify-mermaidfade": "node test/verifyMermaidFade.mjs",
-    "verify-tauri": "node test/verifyTauriClose.mjs",
+    "verify-shellipc": "node test/verifyShellIpc.mjs",
     "verify-caret": "node test/verifyCaret.mjs",
     "verify-find": "node test/verifyFind.mjs",
     "verify-tasks": "node test/verifyTasks.mjs",

@@ -30,10 +30,9 @@
 #              Per-OS targets (electron-builder.yml): Windows NSIS installer +
 #              MSI (WiX) + portable stand-alone .exe; macOS .dmg + .zip (the
 #              .app portable, Apple Silicon); Linux AppImage + .deb + tar.gz
-#              portable. Unlike the old Tauri pipeline there is NO extra
-#              re-packaging step: electron-builder's targets ARE the
-#              installers and the portables, so the build step uploads its own
-#              output directory directly.
+#              portable. There is NO extra re-packaging step: electron-builder's
+#              targets ARE the installers and the portables, so the build step
+#              uploads its own output directory directly.
 #
 #              Electron bundles the runtime (Chromium + Node), so no OS-level
 #              GUI toolchain install is needed on any runner. The Linux
@@ -181,7 +180,7 @@ jobs:
       - name: Fenced-code highlighting (7 cases)
         run: npm run verify-codecolor
       - name: Shell-IPC native path (Electron wire contract) (55 cases)
-        run: npm run verify-tauri
+        run: npm run verify-shellipc
 
   # ----------------------------------------------------- build + release
   build:

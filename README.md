@@ -146,7 +146,7 @@ Artifacts land in `release/`: Windows NSIS + MSI + portable `.exe`; macOS `.dmg`
 - An invisible `<textarea>` shares exact font metrics with a pre-rendered highlight `<div>`; the caret never drifts.
 - **Round-trip invariant**: stripping every `<span>` from the overlay HTML reproduces the source character-for-character — that is what keeps the caret aligned (`npm test` enforces it).
 - The DOM is the single source of truth; overlay and preview both re-render from it, so undo/redo is a simple stack of snapshots.
-- All shell/export/diagram/math libraries are **statically imported**, keeping the production bundle a single `dist/assets/index-*.js`. Every shell call is guarded by `isTauri()`, which detects `__TAURI_INTERNALS__` installed by `electron/preload.cjs`; `src/shellapi.js` is the frontend wrapper over the Electron IPC bridge.
+- All shell/export/diagram/math libraries are **statically imported**, keeping the production bundle a single `dist/assets/index-*.js`. Every shell call is guarded by `isShell()`, which detects `__SHELL_INTERNALS__` installed by `electron/preload.cjs`; `src/shellapi.js` is the frontend wrapper over the Electron IPC bridge.
 
 ---
 
@@ -186,7 +186,7 @@ npm run verify                    # UI smoke test (tabs, undo, tables)
 | `verify-mermaidflicker` | 7 | no raw-code flash on prose keystrokes outside a fence |
 | `verify-mermaidstyle` | 38 | mermaid stylesheet-failure fallback + label centering |
 | `verify-mermaidfade` | 21 | dark-theme gradient outlines off, no drop shadow; both theme palettes prewarmed at load, and edits re-warm the changed diagram — the next theme toggle always restores synchronously |
-| `verify-tauri` | 55 | shell-IPC native path (stubs `__TAURI_INTERNALS__`, drives the real wire contract the Electron preload implements); the picker list re-opens at the TOP on every directory entry |
+| `verify-shellipc` | 55 | shell-IPC native path (stubs `__SHELL_INTERNALS__`, drives the real wire contract the Electron preload implements); the picker list re-opens at the TOP on every directory entry |
 | `verify-caret` | 92 | caret placement after every edit action, never a highlighted selection |
 | `verify-find` | 48 | Find & Replace bar: open/close/focus, count, wrap navigation, case/regex toggles, one-undo replace & replace-all, `$1` groups, split-view preview-follow on reveal, highlight line-box height matches the native selection, preview-mode disable |
 | `verify-tasks` | 12 | task-list checkboxes render live, click flips the source in ONE undo step, code-fence checkboxes stay inert |
@@ -208,7 +208,7 @@ MarkdownEditor/
 │   ├── main.cjs                # Electron main process: BrowserWindow, app:// protocol (serves dist/),
 │   │                           # shell-IPC router (fs read/write/list/exists + home + opener incl. reveal-in-folder + events) and
 │   │                           # the window-close intercept → close-requested walk
-│   └── preload.cjs             # renderer bridge: installs window.__TAURI_INTERNALS__ translating the
+│   └── preload.cjs             # renderer bridge: installs window.__SHELL_INTERNALS__ translating the
 │                               # plugin:* command contract onto Electron IPC (see src/shellapi.js)
 ├── scripts/
 │   └── electron-dev.cjs        # `npm run electron:dev` — starts vite, waits for the port, launches Electron
@@ -218,7 +218,7 @@ MarkdownEditor/
 ├── src/
 │   ├── main.js                 # bootstrap: createApp(#app) + sample content (feature-tour welcome doc; + katex css/asset imports)
 │   ├── markdown.js             # app shell: createApp() — tabs, undo, keybinds, save/open, DnD, modals, recent-files menu; static shell imports
-│   ├── shellapi.js             # shell-IPC layer (Electron): vendored wrappers over __TAURI_INTERNALS__.invoke — fs/path/opener (incl. reveal in folder)/window contract
+│   ├── shellapi.js             # shell-IPC layer (Electron): wrappers over __SHELL_INTERNALS__.invoke — fs/path/opener (incl. reveal in folder)/window contract
 │   ├── export.js               # static PDF/HTML export pipeline and native/browser save adapters
 │   ├── session.js              # versioned localStorage persistence and debounced saves
 │   ├── dialogs.js              # centered in-app modals and overwrite confirmation
@@ -274,7 +274,7 @@ The pipeline (`.github/workflows/ci.yml`) runs on pull requests and releases onl
 <details>
 <summary><b>Shell gotchas (do not regress — full detail in AGENTS.md)</b></summary>
 
-- `isTauri()` must detect `__TAURI_INTERNALS__` (installed by `electron/preload.cjs`) or every native branch silently no-ops in the real app.
+- `isShell()` must detect `__SHELL_INTERNALS__` (installed by `electron/preload.cjs`) or every native branch silently no-ops in the real app.
 - All shell/export libraries are **statically imported** — never `await import(...)`; a failed runtime chunk fetch means silent data loss (save becomes a dropped download, the close guard never registers).
 - The window-close handler must not self-close or `preventDefault()` unconditionally — cancel → `preventDefault()`, success → do nothing (the wrapper destroys; the main process force-closes). `closeApp()` is the single dirty-tab prompt walk.
 - The app decides the display path in `electron/main.cjs`: **native Wayland whenever `WAYLAND_DISPLAY` exists**, but on WSLg Wayland cannot paint a first frame at all, so the window force-shows after 2.5 s and relaunches once on X11 (`--md-x11`) if no frame ever arrived. Electron is **pinned to `^40` (Chromium 144)** on purpose: Chromium 146 introduced the X11/XWayland wheel-delta regression (upstream 496255940) that killed real hardware wheels here; platform overrides are **argv-only** (`npm run electron:start -- --md-x11`).
